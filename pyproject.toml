@@ -74,7 +74,7 @@ audio = [
 ml = [
     # AI / ML Models - CPU-only by default (GPU versions via requirements-gpu*.txt)
     # Note: torch 2.6.0 has local DoS CVEs (GHSA-3749-ghw9-m3mg, GHSA-887c-mr87-cxwp), fixed in 2.8.0
-    "torch>=2.6.0,<2.13.0",
+    "torch>=2.6.0,<2.14.0",
     "torchvision>=0.17.0,<0.28.0",
     "torchaudio>=2.6.0,<2.13.0",
     "transformers>=4.38.0",
@@ -136,7 +136,7 @@ full = [
     "soundfile>=0.12.0",
     "simpleaudio>=1.0.4; platform_system!='Windows'",
     # ml / voice
-    "torch>=2.6.0,<2.13.0",
+    "torch>=2.6.0,<2.14.0",
     "torchvision>=0.17.0,<0.28.0",
     "torchaudio>=2.6.0,<2.13.0",
     "transformers>=4.38.0",

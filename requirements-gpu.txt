@@ -4,7 +4,7 @@
 # PyTorch CUDA 11.8 versions (compatible set)
 # Keep the torch/torchvision/torchaudio trio on the same verified 2.6.x line.
 --extra-index-url https://download.pytorch.org/whl/cu118
-torch==2.12.0
+torch==2.13.0
 torchvision==0.21.0+cu118
 torchaudio==2.6.0+cu118
 

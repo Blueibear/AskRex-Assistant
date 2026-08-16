@@ -3,6 +3,6 @@
 numpy==1.26.4
 sounddevice==0.5.5
 soundfile==0.13.1
-torch==2.12.1
+torch==2.13.0
 openai-whisper==20250625
 imageio-ffmpeg==0.6.0
