@@ -36,7 +36,7 @@ pydantic = "==2.10.5"
 # cryptography >=44.0.2 fixes GHSA-79v4-65xg-pq4j (Subgroup Attack on SECT curves)
 cryptography = "==50.0.0"
 setuptools = "==78.1.1"
-pip = "==26.1.2"
+pip = "==26.2"
 werkzeug = "==3.1.6"
 jinja2 = "==3.1.6"
 # pillow >=11.2.0 fixes out-of-bounds write when loading PSD images
