@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 REQUIRED_BRIDGES = {
@@ -52,14 +54,75 @@ FORBIDDEN_NAMES = {
     "node.exe",
 }
 FORBIDDEN_PARTS = {"memory", "profiles", "logs", "transcripts"}
+REQUIRED_VOICE_DIST_INFO_PREFIXES = (
+    "numpy-",
+    "sounddevice-",
+    "soundfile-",
+    "torch-",
+    "openai_whisper-",
+    "imageio_ffmpeg-",
+)
+REQUIRED_RUNTIME_IMPORTS = (
+    "rex.background.supervisor",
+    "numpy",
+    "sounddevice",
+    "soundfile",
+    "torch",
+    "whisper",
+    "imageio_ffmpeg",
+)
+RuntimeProbe = Callable[[Path], list[str]]
 
 
-def verify(resources: Path) -> list[str]:
+def probe_managed_runtime(python_exe: Path) -> list[str]:
+    """Prove the installed managed runtime can import its background/Voice stack."""
+
+    modules_literal = repr(REQUIRED_RUNTIME_IMPORTS)
+    probe_code = (
+        "import importlib\n"
+        f"modules={modules_literal}\n"
+        "for name in modules:\n"
+        "    try:\n"
+        "        importlib.import_module(name)\n"
+        "    except Exception:\n"
+        "        print(name)\n"
+        "        raise SystemExit(7)\n"
+    )
+    try:
+        result = subprocess.run(
+            [str(python_exe.resolve()), "-I", "-c", probe_code],
+            cwd=python_exe.resolve().parent,
+            shell=False,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60.0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ["managed runtime import probe could not execute"]
+
+    if result.returncode == 0:
+        return []
+
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    failed_module = lines[-1] if lines else ""
+    if failed_module in REQUIRED_RUNTIME_IMPORTS:
+        return [f"managed runtime import failed: {failed_module}"]
+    return ["managed runtime import probe failed"]
+
+
+def verify(resources: Path, *, runtime_probe: RuntimeProbe | None = None) -> list[str]:
     errors: list[str] = []
     python_exe = resources / "python" / "python.exe"
+    pythonw_exe = resources / "python" / "pythonw.exe"
     metadata_path = resources / "python" / "ASKREX_RUNTIME.json"
     if not python_exe.is_file():
         errors.append("managed python/python.exe is missing")
+    if not pythonw_exe.is_file():
+        errors.append(
+            "managed python/pythonw.exe is missing (required for the windowless"
+            " background runtime supervisor)"
+        )
     if not metadata_path.is_file():
         errors.append("managed runtime metadata is missing")
     else:
@@ -96,6 +159,15 @@ def verify(resources: Path) -> list[str]:
         errors.append("installed AskRex package is missing from managed runtime")
     elif not (site_packages / "rex" / "credential_vault.py").is_file():
         errors.append("credential vault provider is missing from managed runtime")
+    background_pkg = site_packages / "rex" / "background"
+    if not (background_pkg / "__init__.py").is_file():
+        errors.append("rex.background package is missing from managed runtime")
+    for prefix in REQUIRED_VOICE_DIST_INFO_PREFIXES:
+        if not list(site_packages.glob(f"{prefix}*.dist-info")):
+            errors.append(f"managed Voice runtime is missing dependency: {prefix.rstrip('-')}")
+    if python_exe.is_file():
+        probe = runtime_probe or probe_managed_runtime
+        errors.extend(probe(python_exe))
     for relative in (
         Path("win32/win32crypt.pyd"),
         Path("win32/win32security.pyd"),

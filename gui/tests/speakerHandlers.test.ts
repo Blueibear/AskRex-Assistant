@@ -22,7 +22,6 @@ import { registerSpeakerHandlers } from '../src/main/handlers/speakers'
 const session: ElectronSessionIdentity = {
   userId: 'james',
   sessionId: 'session-media-1',
-  osPrincipal: 'DESKTOP\\James',
   authentication: 'local-os-session'
 }
 

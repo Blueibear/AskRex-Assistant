@@ -4,6 +4,7 @@ import type { Settings } from '../types/ipc'
 import { createTray, destroyTray } from './tray'
 import { appendElectronLog, writeElectronSessionStart } from './handlers/logs'
 import { validateBridges } from './bridgeResolver'
+import { ensureBackgroundRuntime } from './backgroundRuntime'
 import { readGuiSettings } from './configStore'
 import { integrationSettingsFrom } from './integrationStatus'
 import { mirrorToRexConfig } from './settingsMirror'
@@ -42,6 +43,20 @@ app.whenReady().then(() => {
     dialog.showErrorBox('AskRex needs an active user', message)
     app.quit()
     return
+  }
+  try {
+    const background = ensureBackgroundRuntime(sessionIdentity)
+    appendElectronLog(background.registrationOk ? 'INFO' : 'WARNING', 'Background Rex runtime bootstrap completed', {
+      event: 'background_runtime_bootstrap',
+      attempted: background.attempted,
+      registration_ok: background.registrationOk,
+      launched: background.launched
+    })
+  } catch {
+    appendElectronLog('WARNING', 'Background Rex runtime bootstrap degraded', {
+      event: 'background_runtime_bootstrap_failed',
+      detail_code: 'background_runtime_bootstrap_failed'
+    })
   }
   const mainWindow = createWindow()
   appendElectronLog('INFO', 'Electron user session established', {

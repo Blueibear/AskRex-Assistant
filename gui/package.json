@@ -101,6 +101,9 @@
       "signtoolOptions": {
         "rfc3161TimeStampServer": "http://timestamp.digicert.com"
       }
+    },
+    "nsis": {
+      "include": "nsis/installer.nsh"
     }
   }
 }

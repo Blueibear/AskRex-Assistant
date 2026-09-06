@@ -45,7 +45,6 @@ import { bridgeSpawnOptions } from '../src/main/bridgeResolver'
 const session: ElectronSessionIdentity = {
   userId: 'alice',
   sessionId: 'session-1',
-  osPrincipal: 'DESKTOP\\Alice',
   authentication: 'local-os-session'
 }
 const context: VaultContext = {

@@ -27,7 +27,7 @@ function callPairingBridge(
         input: JSON.stringify(
           privateSessionPayload(session, {
             ...payload,
-            approver: session.osPrincipal
+            approver: session.userId
           })
         ),
         encoding: 'utf8',

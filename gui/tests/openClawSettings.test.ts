@@ -17,7 +17,7 @@ import { testOpenClawConnection } from '../src/main/openClaw'
 import { integrationSettingsFrom } from '../src/main/integrationStatus'
 
 const session: ElectronSessionIdentity = {
-  userId: 'alice', sessionId: 'session-1', osPrincipal: 'DESKTOP\\Alice', authentication: 'local-os-session'
+  userId: 'alice', sessionId: 'session-1', authentication: 'local-os-session'
 }
 const ref = `cred_${'O'.repeat(32)}`
 const context = { scope: 'household', integration: 'openclaw_gateway', account: null, slot: 'token' }

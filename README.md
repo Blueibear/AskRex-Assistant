@@ -123,6 +123,7 @@ This is the high-level release/status view. Surface classifications mirror [SURF
 | Capability / surface | Release status | Current contract | Details |
 |---|---|---|---|
 | Electron desktop GUI | `shippable` | Primary packaged end-user interface | [UI surfaces](docs/UI_SURFACES.md) |
+| Background Rex runtime (Windows) | implemented, packaged-artifact tested | Electron-independent Core + signed-in-user Voice Agent supervisor; ONLOGON startup and GUI-close survival are automated, while physical wake/mic/reboot acceptance remains US-130 | [Running](RUNNING.md#background-rex-runtime-windows-packaged) |
 | CLI (`rex`) | `shippable` | Canonical text/command interface | [Architecture / CLI](docs/ARCHITECTURE.md#cli-command-tree) |
 | Source voice loop / wake word | `developer-only` / beta wake word | Source runner is advanced/developer-only; packaged Electron Hold-to-Talk is the supported end-user voice path | [Voice pipeline](docs/voice_pipeline.md) |
 | Flask/API (`rex-gui`) | `developer-only` | Local API plus incomplete experimental browser dashboard; not required by Electron | [UI surfaces](docs/UI_SURFACES.md) |

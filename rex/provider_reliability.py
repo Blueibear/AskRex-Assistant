@@ -180,6 +180,8 @@ class ProviderReliability:
             )
 
         remaining = max(0.0, record.cooldown_until - self._clock())
+        # Normalize sub-nanosecond binary-float noise before rounding up for diagnostics.
+        display_remaining = round(remaining, 9)
         in_cooldown = remaining > 0
         if in_cooldown:
             state = "cooldown"
@@ -198,7 +200,7 @@ class ProviderReliability:
             failures=record.failures,
             rate_limits=record.rate_limits,
             consecutive_failures=record.consecutive_failures,
-            cooldown_remaining_s=int(math.ceil(remaining)),
+            cooldown_remaining_s=int(math.ceil(display_remaining)),
         )
 
     def diagnostics(self) -> list[dict[str, object]]:

@@ -14,18 +14,18 @@ The runtime count is intentionally separate from the executable source-site coun
 
 ## Validation Snapshot
 
-- `python scripts/check_skip_inventory.py`: passed; 127 executable skip sites match the inventory exactly by file, line, type, and reason.
+- `python scripts/check_skip_inventory.py`: passed; 129 executable skip sites match the inventory exactly by file, line, type, and reason.
 - Python 3.11 US-040 full coverage validation collected 8,498 tests and completed with 8,449 passed, 49 skipped, 0 failed; total coverage was 83.26%.
 - Every remaining row has one explicit action: `keep` or `fix`; all `archive` and `replace` actions from US-039/US-040 are complete.
 - Permanent guards retain a written rationale; all non-trivial actions link to a non-circular follow-up story.
-- US-039 removed 14 retired-surface skip sites; US-040 removes two generated-artifact skip sites. The remaining 127 sites cover supported code, dedicated follow-up repair work, and legitimate platform/dependency guards.
+- US-039 removed 14 retired-surface skip sites; US-040 removes two generated-artifact skip sites. The remaining 129 sites cover supported code, dedicated follow-up repair work, and legitimate platform/dependency guards, including the two permanent Windows Job Object contract guards added by US-124.
 
 ## Classification and Action Summary
 
 | Classification | Count | Action | Follow-up |
 |---|---:|---|---|
 | `optional-dep-skip` | 22 | `keep` | permanent: optional dependency/tool/environment guard |
-| `platform-skip` | 13 | `keep` | permanent: platform/runtime-specific guard |
+| `platform-skip` | 15 | `keep` | permanent: platform/runtime-specific guard |
 | `temporary-bug-skip` | 26 | `fix` | US-089 |
 | `temporary-bug-skip` | 25 | `fix` | US-090 |
 | `temporary-bug-skip` | 22 | `fix` | US-091 |
@@ -105,6 +105,8 @@ The runtime count is intentionally separate from the executable source-site coun
 | `tests/test_event_bus.py` | 259 | `skipif` | Newer EventBus.publish(Event) API not available in this build. | `temporary-bug-skip` | `fix` | `US-092` |
 | `tests/test_event_bus.py` | 274 | `skipif` | Legacy EventBus.publish(event_type, payload) API not available in this build. | `temporary-bug-skip` | `fix` | `US-092` |
 | `tests/test_event_bus.py` | 293 | `skipif` | Newer EventBus.publish(Event) API not available in this build. | `temporary-bug-skip` | `fix` | `US-092` |
+| `tests/background/test_supervisor.py` | 546 | `skipif` | Windows Job Object contract | `platform-skip` | `keep` | permanent: Windows process-containment contract |
+| `tests/background/test_supervisor.py` | 681 | `skipif` | Windows Job Object contract | `platform-skip` | `keep` | permanent: Windows process-containment contract |
 | `tests/test_install_scripts.py` | 15 | `pytest.skip` | bash not available | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
 | `tests/test_install_scripts.py` | 24 | `pytest.skip` | bash not usable on Windows | `platform-skip` | `keep` | permanent: platform/runtime-specific guard |
 | `tests/test_openclaw_root_voice_loop_flag.py` | 19 | `skipif` | openwakeword is not installed | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |

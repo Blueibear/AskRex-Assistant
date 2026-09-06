@@ -131,6 +131,19 @@ export function resolvePythonCommand(): string {
   return existsSync(bundledVenvPython) ? bundledVenvPython : 'python'
 }
 
+/** Return windowless managed Python for detached background-runtime launches. */
+export function resolvePythonwCommand(): string {
+  if (app.isPackaged) {
+    const managedPythonw = join(process.resourcesPath, 'python', 'pythonw.exe')
+    if (!existsSync(managedPythonw)) {
+      throw new Error(`AskRex managed Python windowless runtime is missing: ${managedPythonw}`)
+    }
+    return managedPythonw
+  }
+  const bundledVenvPythonw = join(app.getAppPath(), '..', '.venv', 'Scripts', 'pythonw.exe')
+  return existsSync(bundledVenvPythonw) ? bundledVenvPythonw : 'pythonw'
+}
+
 // ---------------------------------------------------------------------------
 // Startup validation
 // ---------------------------------------------------------------------------

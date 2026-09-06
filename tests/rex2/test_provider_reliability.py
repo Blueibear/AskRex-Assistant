@@ -87,6 +87,16 @@ def test_diagnostics_are_bounded_and_content_free():
     assert "credential" not in rendered.lower()
 
 
+def test_cooldown_diagnostics_ignore_floating_point_deadline_noise():
+    clock = _Clock()
+    clock.now = 14179.124999999998
+    reliability = ProviderReliability(clock=clock)
+
+    reliability.record_failure("openai", ProviderFailureKind.AUTH)
+
+    assert reliability.status("openai").cooldown_remaining_s == 3600
+
+
 def test_router_falls_back_to_next_configured_healthy_provider():
     clock = _Clock()
     reliability = ProviderReliability(clock=clock, cooldown_seconds=90)

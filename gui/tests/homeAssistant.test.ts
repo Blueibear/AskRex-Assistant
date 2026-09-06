@@ -38,7 +38,7 @@ vi.mock('../src/main/credentialVault', () => mockVault)
 import { readSavedHomeAssistantCredentials, saveHomeAssistantCredentials } from '../src/main/homeAssistant'
 
 const session: ElectronSessionIdentity = {
-  userId: 'alice', sessionId: 'session-1', osPrincipal: 'DESKTOP\\Alice', authentication: 'local-os-session'
+  userId: 'alice', sessionId: 'session-1', authentication: 'local-os-session'
 }
 const ref = `cred_${'H'.repeat(32)}`
 const context = { scope: 'household', integration: 'home_assistant', account: null, slot: 'token' }

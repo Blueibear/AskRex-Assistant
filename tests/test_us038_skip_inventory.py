@@ -63,8 +63,8 @@ def test_validator_rejects_missing_and_stale_rows() -> None:
 def test_current_inventory_matches_current_test_tree() -> None:
     sites = checker.scan_skip_sites()
     rows = checker.parse_inventory()
-    assert len(sites) == 127
-    assert len(rows) == 127
+    assert len(sites) == 129
+    assert len(rows) == 129
     assert checker.validate_inventory(sites, rows) == []
     assert {row.action for row in rows} == {"keep", "fix"}
     assert all(row.follow_up != "US-038" for row in rows)

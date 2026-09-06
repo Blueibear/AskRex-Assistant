@@ -31,7 +31,9 @@ import {
   bridgeSpawnOptions,
   resolveBridgePath,
   resolvePythonCommand,
-  resolveRuntimeRoot
+  resolvePythonwCommand,
+  resolveRuntimeRoot,
+  validateBridges
 } from '../src/main/bridgeResolver'
 
 describe('resolveBridgePath', () => {
@@ -68,6 +70,25 @@ describe('resolveBridgePath', () => {
   it('packaged mode: fails closed when the managed runtime is missing', () => {
     mockApp.isPackaged = true
     expect(() => resolvePythonCommand()).toThrow('managed Python runtime is missing')
+  })
+
+  it('packaged mode: resolves the managed windowless Python runtime', () => {
+    mockApp.isPackaged = true
+    const pythonw = join('/fake/resources', 'python', 'pythonw.exe')
+    mockExistsSync.mockImplementation((path) => path === pythonw)
+    expect(resolvePythonwCommand()).toBe(pythonw)
+  })
+
+  it('packaged mode: fails closed when pythonw is missing', () => {
+    mockApp.isPackaged = true
+    expect(() => resolvePythonwCommand()).toThrow('managed Python windowless runtime is missing')
+  })
+
+  it('packaged bridge validation leaves background-only pythonw failure to bootstrap', () => {
+    mockApp.isPackaged = true
+    const pythonw = join('/fake/resources', 'python', 'pythonw.exe')
+    mockExistsSync.mockImplementation((path) => path !== pythonw)
+    expect(() => validateBridges()).not.toThrow()
   })
 
   it('dev mode: prefers the repository virtual environment', () => {

@@ -10,6 +10,8 @@ on:
       - "rex/**"
       - "scripts/build_managed_python_runtime.ps1"
       - "scripts/test_installed_electron_artifact.ps1"
+      - "scripts/background_lifecycle_harness.py"
+      - "scripts/background_lifecycle_fake_child.py"
       - "scripts/verify_electron_package_contents.py"
       - "requirements-electron-*.txt"
   push:

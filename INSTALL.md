@@ -8,6 +8,8 @@ Different audiences use different install methods. Read the paragraph for your u
 
 **End users (packaged Windows Electron installer):** The release artifact bundles a managed Python 3.11 runtime, the installed AskRex wheel, canonical bridge scripts, Whisper/Torch CPU dependencies, and FFmpeg. It does not require machine Python, Node.js, a source checkout, or a neighboring `.venv`. The locally validated build is currently unsigned; do not describe a public download as signed until release signing is configured and verified.
 
+After the signed-in identity is resolved, the packaged Windows app registers one per-user ONLOGON Task Scheduler entry using the absolute managed pythonw.exe and runtime-root paths, then bootstraps the same background supervisor detached from the Electron window. Closing or quitting the UI does not stop that runtime. Uninstall requests a bounded orderly background stop and removes the AskRex startup task before deleting the managed runtime; installed-artifact automation verifies startup-task creation/removal as well as supervisor lifecycle and GUI-exit survival. Physical microphone/wake-word and clean reboot/sign-in acceptance remain the separate US-130 release gate.
+
 **Developers and operators (`pip install .` from source):** `pip install .` installs:
 - The `rex` Python package library
 - All six console scripts (`rex`, `rex-gui`, `rex-config`, `rex-speak-api`, `rex-agent`, `rex-tool-server`)

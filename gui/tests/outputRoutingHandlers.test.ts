@@ -23,7 +23,6 @@ import { registerOutputRoutingHandlers } from '../src/main/handlers/outputRoutin
 const session: ElectronSessionIdentity = {
   userId: 'james',
   sessionId: 'session-routing-1',
-  osPrincipal: 'DESKTOP\\James',
   authentication: 'local-os-session'
 }
 
