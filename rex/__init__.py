@@ -1,135 +1,71 @@
-"""Core package for the Rex voice assistant.
+"""Public package surface for Rex.
 
-Importing :mod:`rex` used to configure logging immediately, which proved
-problematic for applications that need to install their own handlers before
-any log messages are emitted. The package now exposes the helper functions
-without triggering side effects so callers can opt in to
-:func:`rex.logging_utils.configure_logging` when appropriate.
+The package root stays intentionally side-effect free. In particular, importing
+``rex.background.cli`` must not load runtime configuration before the packaged
+background entrypoint has made its explicit runtime root authoritative.
 """
 
 from __future__ import annotations
 
-from .logging_utils import configure_logging
+from importlib import import_module
+from typing import Any
 
-try:
-    from .config import reload_settings, settings
-except Exception as exc:  # pragma: no cover - defensive guard for import-time config failures
-    _config_import_error = exc
+_LAZY_EXPORTS: dict[str, tuple[str, str]] = {
+    "settings": ("rex.config", "settings"),
+    "reload_settings": ("rex.config", "reload_settings"),
+    "configure_logging": ("rex.logging_utils", "configure_logging"),
+    "Credential": ("rex.credentials", "Credential"),
+    "CredentialManager": ("rex.credentials", "CredentialManager"),
+    "CredentialRefreshError": ("rex.credentials", "CredentialRefreshError"),
+    "get_credential_manager": ("rex.credentials", "get_credential_manager"),
+    "set_credential_manager": ("rex.credentials", "set_credential_manager"),
+    "mask_token": ("rex.credentials", "mask_token"),
+    "ToolMeta": ("rex.openclaw.tool_registry", "ToolMeta"),
+    "ToolRegistry": ("rex.openclaw.tool_registry", "ToolRegistry"),
+    "ToolNotFoundError": ("rex.openclaw.tool_registry", "ToolNotFoundError"),
+    "MissingCredentialError": ("rex.openclaw.tool_registry", "MissingCredentialError"),
+    "get_tool_registry": ("rex.openclaw.tool_registry", "get_tool_registry"),
+    "set_tool_registry": ("rex.openclaw.tool_registry", "set_tool_registry"),
+    "register_tool": ("rex.openclaw.tool_registry", "register_tool"),
+    "ScheduledJob": ("rex.scheduler", "ScheduledJob"),
+    "Scheduler": ("rex.scheduler", "Scheduler"),
+    "get_scheduler": ("rex.scheduler", "get_scheduler"),
+    "set_scheduler": ("rex.scheduler", "set_scheduler"),
+    "Event": ("rex.openclaw.event_bus", "Event"),
+    "EventBus": ("rex.openclaw.event_bus", "EventBus"),
+    "get_event_bus": ("rex.openclaw.event_bus", "get_event_bus"),
+    "set_event_bus": ("rex.openclaw.event_bus", "set_event_bus"),
+    "EmailSummary": ("rex.email_service", "EmailSummary"),
+    "EmailService": ("rex.email_service", "EmailService"),
+    "get_email_service": ("rex.email_service", "get_email_service"),
+    "set_email_service": ("rex.email_service", "set_email_service"),
+    "CalendarEvent": ("rex.calendar_service", "CalendarEvent"),
+    "CalendarService": ("rex.calendar_service", "CalendarService"),
+    "get_calendar_service": ("rex.calendar_service", "get_calendar_service"),
+    "set_calendar_service": ("rex.calendar_service", "set_calendar_service"),
+    "NotificationRequest": ("rex.notification", "NotificationRequest"),
+    "Notifier": ("rex.notification", "Notifier"),
+    "EscalationManager": ("rex.notification", "EscalationManager"),
+    "get_escalation_manager": ("rex.notification", "get_escalation_manager"),
+    "get_notifier": ("rex.notification", "get_notifier"),
+    "set_escalation_manager": ("rex.notification", "set_escalation_manager"),
+    "set_notifier": ("rex.notification", "set_notifier"),
+}
 
-    def reload_settings(*args, **kwargs):  # type: ignore[misc]
-        raise RuntimeError("Rex configuration failed to load.") from _config_import_error
+__all__ = list(_LAZY_EXPORTS)
 
-    settings = None  # type: ignore[assignment]
 
-# Credential management
-# Calendar service
-from .calendar_service import (
-    CalendarEvent,
-    CalendarService,
-    get_calendar_service,
-    set_calendar_service,
-)
-from .credentials import (
-    Credential,
-    CredentialManager,
-    CredentialRefreshError,
-    get_credential_manager,
-    mask_token,
-    set_credential_manager,
-)
+def __getattr__(name: str) -> Any:
+    """Resolve legacy package-root exports only when a caller asks for them."""
 
-# Email service
-from .email_service import (
-    EmailService,
-    EmailSummary,
-    get_email_service,
-    set_email_service,
-)
+    target = _LAZY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attribute_name = target
+    value = getattr(import_module(module_name), attribute_name)
+    globals()[name] = value
+    return value
 
-# Notification system
-from .notification import (
-    EscalationManager,
-    NotificationRequest,
-    Notifier,
-    get_escalation_manager,
-    get_notifier,
-    set_escalation_manager,
-    set_notifier,
-)
 
-# Event bus (US-P7-002: relocated to rex.openclaw.event_bus)
-from .openclaw.event_bus import (
-    Event,
-    EventBus,
-    get_event_bus,
-    set_event_bus,
-)
-
-# Tool registry (US-P7-006: relocated to rex.openclaw.tool_registry)
-from .openclaw.tool_registry import (
-    MissingCredentialError,
-    ToolMeta,
-    ToolNotFoundError,
-    ToolRegistry,
-    get_tool_registry,
-    register_tool,
-    set_tool_registry,
-)
-
-# Scheduler
-from .scheduler import (
-    ScheduledJob,
-    Scheduler,
-    get_scheduler,
-    set_scheduler,
-)
-
-__all__ = [
-    # Configuration
-    "settings",
-    "reload_settings",
-    "configure_logging",
-    # Credential management
-    "Credential",
-    "CredentialManager",
-    "CredentialRefreshError",
-    "get_credential_manager",
-    "set_credential_manager",
-    "mask_token",
-    # Tool registry
-    "ToolMeta",
-    "ToolRegistry",
-    "ToolNotFoundError",
-    "MissingCredentialError",
-    "get_tool_registry",
-    "set_tool_registry",
-    "register_tool",
-    # Scheduler
-    "ScheduledJob",
-    "Scheduler",
-    "get_scheduler",
-    "set_scheduler",
-    # Event bus
-    "Event",
-    "EventBus",
-    "get_event_bus",
-    "set_event_bus",
-    # Email service
-    "EmailSummary",
-    "EmailService",
-    "get_email_service",
-    "set_email_service",
-    # Calendar service
-    "CalendarEvent",
-    "CalendarService",
-    "get_calendar_service",
-    "set_calendar_service",
-    # Notification system
-    "NotificationRequest",
-    "Notifier",
-    "EscalationManager",
-    "get_notifier",
-    "set_notifier",
-    "get_escalation_manager",
-    "set_escalation_manager",
-]
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

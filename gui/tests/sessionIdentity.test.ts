@@ -14,11 +14,7 @@ describe('Electron session identity', () => {
   })
 
   it('binds private payloads to the immutable main-process identity', () => {
-    const james = createSessionIdentity(
-      'james',
-      'windows-user',
-      'session-james'
-    )
+    const james = createSessionIdentity('james', 'session-james')
     expect(
       privateSessionPayload(james, { command: 'list', user: 'cole' })
     ).toEqual({
@@ -30,7 +26,7 @@ describe('Electron session identity', () => {
   })
 
   it('marks household data as explicitly shared while preserving actor identity', () => {
-    const cole = createSessionIdentity('cole', 'windows-user', 'session-cole')
+    const cole = createSessionIdentity('cole', 'session-cole')
     expect(sharedHouseholdPayload(cole, { command: 'list' })).toMatchObject({
       user: 'cole',
       session_id: 'session-cole',

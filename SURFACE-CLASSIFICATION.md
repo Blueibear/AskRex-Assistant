@@ -37,6 +37,8 @@ The mobile API gateway is a CLI subcommand, not a `[project.scripts]` console sc
 | Entry Point | Module | Classification | Notes |
 |-------------|--------|----------------|-------|
 | `python -m rex mobile-api` | `rex.mobile_api` | `developer-only` | Authenticated mobile API gateway for the companion AskRex mobile client (issue #323). Localhost by default, JWT-authenticated (`REX_JWT_SECRET`, fails closed), rate-limited. Backend service run by an operator; not part of the packaged Electron installer. Physical-device/LAN validation is outstanding, so the mobile surface itself is pre-release. |
+| `rex background start\|status\|stop` | `rex.commands.background` -> `rex.background.cli` | `developer-only` | Operator/developer wrapper over the internal packaged background-runtime CLI (US-124). Ordinary end users never invoke this directly; Electron and the registered Windows Task Scheduler task invoke `python -m rex.background.cli` with absolute packaged paths instead. `status` is content-free JSON only. |
+| `python -m rex.background.cli supervisor\|core\|voice-agent\|status\|stop\|install-startup\|remove-startup` | `rex.background.cli` | `developer-only` | Not a documented end-user command. Invoked only by packaged Electron (`gui/src/main/backgroundRuntime.ts`) and the per-user Windows Task Scheduler startup task it registers, always with absolute managed-runtime paths. Owns the Electron-independent Core + Voice Agent supervisor lifecycle; see `rex.background` in `CLAUDE.md`. |
 
 ---
 

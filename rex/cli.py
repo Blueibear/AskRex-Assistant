@@ -28,6 +28,7 @@ This module provides the main CLI entry point with subcommands:
     rex voice-id     - Voice speaker identity enrollment, calibration, and status
     rex ha           - Home Assistant integration commands (TTS test)
     rex usage        - Show LLM usage summary (total requests, tokens, by model)
+    rex background   - Control the persistent background runtime (operator use)
 
 Usage:
     rex [command] [options]
@@ -62,6 +63,7 @@ if not is_supported_python(sys.version_info):
     )
 
 from rex.commands import (  # noqa: E402
+    background,
     commerce,
     core,
     dashboard,
@@ -107,6 +109,7 @@ from rex.commands._services import (  # noqa: E402,F401
     get_vscode_service,
     initialize_scheduler_system,
 )
+from rex.commands.background import cmd_background  # noqa: E402,F401
 from rex.commands.commerce import (  # noqa: E402,F401
     _WC_WRITE_HELP,
     _cmd_wc_coupon_create,
@@ -202,6 +205,7 @@ def create_parser() -> argparse.ArgumentParser:
     identity.register_voice_id(subparsers)
     dashboard.register(subparsers)
     mobile.register(subparsers)
+    background.register(subparsers)
 
     return parser
 
@@ -210,6 +214,13 @@ def create_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     """Main entry point for the Rex CLI."""
     check_startup_env()
+
+    # Keep legacy-environment diagnostics on the user-facing CLI path without
+    # forcing rex.config to initialize during package/background imports.
+    from rex.config_manager import get_legacy_env_warnings
+
+    for warning in get_legacy_env_warnings()[:3]:
+        print(warning, file=sys.stderr)
 
     from rex.first_run import maybe_print_welcome
 

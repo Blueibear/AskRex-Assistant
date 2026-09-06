@@ -23,7 +23,6 @@ import { registerPairingHandlers } from '../src/main/handlers/pairing'
 const session: ElectronSessionIdentity = {
   userId: 'alice',
   sessionId: 'session-1',
-  osPrincipal: 'DESKTOP\\Alice',
   authentication: 'local-os-session'
 }
 
@@ -55,7 +54,7 @@ describe('desktop pairing IPC authority', () => {
     ])
   })
 
-  it('binds challenge creation to the private desktop session and OS approver', async () => {
+  it('binds challenge creation to the private AskRex session and approver identity', async () => {
     await invoke('rex:createPairingChallenge', ['chat.send', 'voice.use'])
     expect(mockSpawnSync).toHaveBeenCalledTimes(1)
     const [python, args, options] = mockSpawnSync.mock.calls[0]
@@ -68,7 +67,7 @@ describe('desktop pairing IPC authority', () => {
       user: 'alice',
       session_id: 'session-1',
       data_scope: 'private',
-      approver: 'DESKTOP\\Alice'
+      approver: 'alice'
     })
   })
 

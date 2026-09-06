@@ -29,6 +29,30 @@ source .venv/bin/activate
 | OpenClaw tool server | `rex-tool-server` | Experimental, off by default; HTTP tool adapter service on port 18790 |
 | Windows computer agent | `rex-agent` | Optional remote PC control agent |
 
+## Background Rex Runtime (Windows, packaged)
+
+On packaged Windows installs, Electron bootstraps a persistent, Electron-independent
+background runtime (`rex.background`) after identity is resolved: a loopback-only Rex
+Core process and a signed-in-user Voice Agent process, each supervised with bounded
+restarts and content-free health. Closing or quitting the Electron window does not stop
+an already-running background runtime; automatic startup after Windows reboot/sign-in is
+registered via a single absolute-path Task Scheduler entry, with no manual terminal
+command required. The Windows uninstaller requests a bounded orderly background stop and
+removes that startup task before deleting the installed managed runtime.
+
+Developer/operator inspection and control:
+
+```powershell
+python -m rex background status --runtime-root <ASKREX_RUNTIME_DIR>
+python -m rex background stop --runtime-root <ASKREX_RUNTIME_DIR>
+```
+
+`status` prints machine-readable, content-free JSON (`ready`/`paused`/`degraded`/
+`unavailable`/`failed`/`starting`/`stopped` per component); it never includes
+transcripts, prompts, memory, credentials, or tool results. This lifecycle is proven by focused tests (`tests/background/`) and two installed-artifact checks: the real Electron-launched supervisor remains alive/queryable after the GUI exits, and a separate packaged `pythonw.exe -I` harness imports the installed `RuntimeSupervisor` and exercises ready/status/duplicate-start/orderly-stop mechanics with self-contained deterministic child fakes instead of a real LLM provider or physical microphone/speaker hardware. Wake-word activation itself remains
+beta, and the full clean-install/reboot/screenless household-voice acceptance gate is
+tracked separately by US-130 — it is not proven by this lifecycle evidence alone.
+
 ## Runtime data locations
 
 Packaged Electron bridges write only beneath Electron's `userData` directory.

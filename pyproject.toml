@@ -166,7 +166,7 @@ Repository = "https://github.com/Blueibear/AskRex-Assistant"
 Issues = "https://github.com/Blueibear/AskRex-Assistant/issues"
 
 [tool.setuptools]
-packages = {find = {include = ["rex*"]}}
+packages = {find = {include = ["rex*", "utils*"]}}
 # Top-level modules are specified in setup.py (pyproject.toml doesn't support py_modules)
 
 [tool.setuptools.package-data]

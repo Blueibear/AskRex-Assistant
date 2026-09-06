@@ -16,7 +16,7 @@ describe('installed artifact runtime isolation', () => {
     const source = readFileSync(resolve(repoRoot, 'scripts/test_installed_electron_artifact.ps1'), 'utf8')
     for (const expected of [
       "$appData = Join-Path $testRoot 'AppData'",
-      "$runtimeRoot = Join-Path $testRoot 'Runtime'",
+      "$runtimeRoot = Join-Path $appData 'rex-gui'",
       '$env:APPDATA = $appData',
       '$env:ASKREX_RUNTIME_DIR = $runtimeRoot',
       'create_user(',

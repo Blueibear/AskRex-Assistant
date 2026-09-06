@@ -1,5 +1,4 @@
 import { randomUUID } from 'crypto'
-import { userInfo } from 'os'
 import { spawnSync } from 'child_process'
 import { bridgeSpawnOptions, resolveBridgePath, resolvePythonCommand } from './bridgeResolver'
 
@@ -17,7 +16,6 @@ const WINDOWS_RESERVED_NAMES = new Set([
 export interface ElectronSessionIdentity {
   userId: string
   sessionId: string
-  osPrincipal: string
   authentication: 'local-os-session'
 }
 
@@ -44,16 +42,11 @@ export function validateSessionUserId(userId: string): string {
 
 export function createSessionIdentity(
   userId: string,
-  osPrincipal: string,
   sessionId: string = randomUUID()
 ): ElectronSessionIdentity {
-  const principal = osPrincipal.trim()
-  if (!principal)
-    throw new Error('Electron session has no operating-system principal')
   return {
     userId: validateSessionUserId(userId),
     sessionId,
-    osPrincipal: principal,
     authentication: 'local-os-session'
   }
 }
@@ -90,7 +83,7 @@ export function resolveElectronSessionIdentity(): ElectronSessionIdentity {
       'Identity bridge returned an unsupported authentication method'
     )
   }
-  return createSessionIdentity(response.user_id, userInfo().username)
+  return createSessionIdentity(response.user_id)
 }
 
 export function privateSessionPayload(

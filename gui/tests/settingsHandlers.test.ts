@@ -54,7 +54,7 @@ vi.mock('../src/main/credentialVault', () => mockVault)
 import { registerSettingsHandlers } from '../src/main/handlers/settings'
 
 const session: ElectronSessionIdentity = {
-  userId: 'alice', sessionId: 'session-1', osPrincipal: 'DESKTOP\\Alice', authentication: 'local-os-session'
+  userId: 'alice', sessionId: 'session-1', authentication: 'local-os-session'
 }
 const ref = `cred_${'S'.repeat(32)}`
 const openAiContext = { scope: 'household', integration: 'openai', account: null, slot: 'api_key' }
