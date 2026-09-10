@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import io
 import json
@@ -34,6 +35,7 @@ from rex.voice.audio_utils import (
 )
 from rex.voice.optional_imports import (
     _require_numpy,
+    _require_sounddevice,
 )
 from rex.voice.transcripts import (
     _WARMUP_PHRASE,
@@ -80,8 +82,18 @@ class TextToSpeech:
         self._provider = getattr(_vl().settings, "tts_provider", "xtts").lower()
         if self._provider == "edge-tts":
             self._provider = "edge"
+        elif self._provider == "pyttsx3":
+            self._provider = "windows"
 
         self._edge_voice = getattr(_vl().settings, "tts_voice", None) or "en-US-AndrewNeural"
+        raw_output_device = getattr(_vl().settings, "audio_output_device", None)
+        self._local_output_device = (
+            raw_output_device
+            if isinstance(raw_output_device, int)
+            and not isinstance(raw_output_device, bool)
+            and raw_output_device >= 0
+            else None
+        )
 
         # Smart speaker output device name (US-SP-002); None → local audio
         self._tts_output_device: str | None = getattr(_vl().settings, "tts_output_device", None)
@@ -90,6 +102,7 @@ class TextToSpeech:
         self._warm_manager: Any = None
         self._warm_component_name: str | None = None
         self._xtts_init_error: str | None = None
+        self._xtts_init_user_message: str | None = None
         self._speaking = threading.Event()
         if self._provider == "xtts":
             self._initialize_xtts()
@@ -131,8 +144,14 @@ class TextToSpeech:
 
         tts_class = _vl()._lazy_import_tts()
         if tts_class is None:
-            self._xtts_init_error = "Coqui XTTS is not installed"
-            _vl().logger.warning("XTTS init skipped: %s", self._xtts_init_error)
+            self._xtts_init_error = "XTTSUnavailable"
+            self._xtts_init_user_message = (
+                "Coqui XTTS is not installed; install TTS support or select another voice provider."
+            )
+            _vl().logger.warning(
+                "XTTS init skipped",
+                extra=_voice_log_extra(event="xtts_init_skipped", error_code="XTTSUnavailable"),
+            )
             return False
 
         try:
@@ -171,10 +190,17 @@ class TextToSpeech:
             self._warm_manager = manager
             self._warm_component_name = component_name
             self._xtts_init_error = None
+            self._xtts_init_user_message = None
             return True
         except Exception as exc:
-            self._xtts_init_error = str(exc)
-            _vl().logger.warning("XTTS init failed: %s", exc)
+            self._xtts_init_error = type(exc).__name__
+            self._xtts_init_user_message = (
+                "XTTS initialization failed; choose another voice provider or check Voice settings."
+            )
+            _vl().logger.warning(
+                "XTTS init failed",
+                extra=_voice_log_extra(event="xtts_init_failed", error_code=type(exc).__name__),
+            )
             return False
 
     @staticmethod
@@ -188,6 +214,27 @@ class TextToSpeech:
             except (TypeError, ValueError):
                 return default
         return default
+
+    def _play_selected_output(self, pcm_data: Any, sample_rate: int) -> None:
+        device = getattr(self, "_local_output_device", None)
+        if device is None:
+            raise AudioDeviceError("No explicit local speaker is selected")
+        sounddevice = _require_sounddevice()
+        try:
+            sounddevice.play(pcm_data, int(sample_rate), device=device)
+            sounddevice.wait()
+        except Exception as exc:
+            raise AudioDeviceError(f"Selected speaker playback failed: {exc}") from exc
+
+    def _play_wave_on_selected_output(self, wav_path: str) -> None:
+        sf = _vl()._lazy_import_soundfile()
+        if sf is None:
+            raise AudioDeviceError("soundfile is required for selected speaker playback")
+        try:
+            pcm_data, sample_rate = sf.read(wav_path, dtype="float32", always_2d=True)
+        except Exception as exc:
+            raise AudioDeviceError(f"Selected speaker audio decode failed: {exc}") from exc
+        self._play_selected_output(pcm_data, int(sample_rate))
 
     async def speak(
         self,
@@ -210,12 +257,21 @@ class TextToSpeech:
             trailing_answer = self._strip_tool_request_prefix(text)
             if trailing_answer:
                 _vl().logger.warning(
-                    "[TTS] Stripped raw TOOL_REQUEST prefix before speech: %r",
-                    text[:200],
+                    "[TTS] Stripped raw TOOL_REQUEST prefix before speech",
+                    extra=_voice_log_extra(
+                        event="tts_tool_request_prefix_stripped",
+                        request_chars=len(text),
+                    ),
                 )
                 text = trailing_answer
             else:
-                _vl().logger.error("[TTS] Suppressing raw TOOL_REQUEST from speech: %r", text[:200])
+                _vl().logger.error(
+                    "[TTS] Suppressing raw TOOL_REQUEST from speech",
+                    extra=_voice_log_extra(
+                        event="tts_tool_request_suppressed",
+                        request_chars=len(text),
+                    ),
+                )
                 return {
                     "configured_provider": self._provider,
                     "path_used": "suppressed_tool_request",
@@ -230,6 +286,7 @@ class TextToSpeech:
             prefer_fast
             and self._provider == "edge"
             and os.name == "nt"
+            and getattr(self, "_local_output_device", None) is None
             and len(text) <= self._settings_int("tts_fast_short_reply_max_chars", 140)
         )
         _vl().logger.info(
@@ -286,17 +343,16 @@ class TextToSpeech:
                     return run_metrics
                 except Exception as exc:
                     _vl().logger.warning(
-                        "[TTS] Fast local short-reply path failed; falling back to %s: %s",
+                        "[TTS] Fast local short-reply path failed; falling back to %s",
                         self._provider,
-                        exc,
                         extra=_voice_log_extra(
                             event="tts_fast_short_path_failed",
                             configured_provider=self._provider,
-                            error=str(exc),
+                            error_code=type(exc).__name__,
                         ),
                     )
                     run_metrics["fallback_used"] = True
-                    run_metrics["fast_short_failure"] = str(exc)
+                    run_metrics["fast_short_failure"] = type(exc).__name__
 
             if self._provider == "xtts":
                 run_metrics.update(
@@ -325,13 +381,19 @@ class TextToSpeech:
         except AudioDeviceError:
             raise
         except Exception as exc:
-            if self._provider == "xtts" and self._xtts_init_error:
-                reason = f"XTTS not initialized ({self._xtts_init_error})"
-                _vl().logger.error("[TTS] Failed: %s", reason)
-            else:
-                _vl().logger.error("[TTS] Failed: %s", exc)
+            error_code = self._xtts_init_error if self._provider == "xtts" else None
+            if not error_code:
+                error_code = type(exc).__name__
+            _vl().logger.error(
+                "[TTS] Failed",
+                extra=_voice_log_extra(event="tts_failed", error_code=error_code),
+            )
             run_metrics["fallback_used"] = True
             run_metrics["path_used"] = "stdout_fallback"
+            if self._provider == "xtts":
+                user_message = getattr(self, "_xtts_init_user_message", None)
+                if user_message:
+                    run_metrics["user_message"] = user_message
             print(f"Rex: {text}")
         finally:
             self._speaking.clear()
@@ -489,7 +551,12 @@ class TextToSpeech:
                 wav_path, provider=target.provider, ip=target.ip
             )
         except Exception as exc:
-            _vl().logger.warning("[TTS] Smart speaker routing failed: %s", exc)
+            _vl().logger.warning(
+                "[TTS] Smart speaker routing failed",
+                extra=_voice_log_extra(
+                    event="tts_smart_speaker_route_failed", error_code=type(exc).__name__
+                ),
+            )
             return False
 
     async def _speak_xtts(
@@ -503,11 +570,11 @@ class TextToSpeech:
         if request_started_at is None:
             request_started_at = time.perf_counter()
         if self._tts is None and not self._initialize_xtts():
-            reason = (
-                f"XTTS not initialized "
-                f"({self._xtts_init_error or 'unknown initialization error'})"
+            error_code = self._xtts_init_error or "XTTSInitializationError"
+            _vl().logger.error(
+                "[TTS] XTTS unavailable",
+                extra=_voice_log_extra(event="xtts_unavailable", error_code=error_code),
             )
-            _vl().logger.error("[TTS] Failed: %s", reason)
             _vl().logger.warning("XTTS initialization failed; falling back to edge-tts")
             try:
                 metrics = await self._speak_edge(text, request_started_at=request_started_at)
@@ -518,6 +585,9 @@ class TextToSpeech:
                 metrics = fallback_result if isinstance(fallback_result, dict) else {}
             metrics["fallback_used"] = True
             metrics["path_requested"] = "xtts"
+            user_message = getattr(self, "_xtts_init_user_message", None)
+            if user_message:
+                metrics["user_message"] = user_message
             return metrics
         sf = _vl()._lazy_import_soundfile()
         if sf is None:
@@ -552,7 +622,12 @@ class TextToSpeech:
             except FileNotFoundError:
                 return
             except OSError as exc:
-                _vl().logger.warning("Failed to remove temp file %s: %s", chunk_path, exc)
+                _vl().logger.warning(
+                    "Failed to remove TTS temp file",
+                    extra=_voice_log_extra(
+                        event="tts_temp_cleanup_failed", error_code=type(exc).__name__
+                    ),
+                )
 
         try:
 
@@ -600,20 +675,23 @@ class TextToSpeech:
             if Path(chunk_path).exists():
                 routed = await asyncio.to_thread(self._try_smart_speaker, chunk_path)
                 if not routed:
-                    if _vl().sa is None:
-                        raise AudioDeviceError(
-                            "Local speaker playback is unavailable because simpleaudio is not installed."
-                        )
+                    if getattr(self, "_local_output_device", None) is not None:
+                        await asyncio.to_thread(self._play_wave_on_selected_output, chunk_path)
+                    else:
+                        if _vl().sa is None:
+                            raise AudioDeviceError(
+                                "Local speaker playback is unavailable because simpleaudio is not installed."
+                            )
 
-                    def _play(_path=chunk_path) -> None:
-                        wave_obj = _vl().sa.WaveObject.from_wave_file(_path)
-                        play_obj = wave_obj.play()
-                        play_obj.wait_done()
+                        def _play(_path=chunk_path) -> None:
+                            wave_obj = _vl().sa.WaveObject.from_wave_file(_path)
+                            play_obj = wave_obj.play()
+                            play_obj.wait_done()
 
-                    try:
-                        await asyncio.to_thread(_play)
-                    except Exception as exc:
-                        raise AudioDeviceError(f"Speaker playback failed: {exc}") from exc
+                        try:
+                            await asyncio.to_thread(_play)
+                        except Exception as exc:
+                            raise AudioDeviceError(f"Speaker playback failed: {exc}") from exc
         finally:
             _remove_chunk_file()
 
@@ -627,7 +705,10 @@ class TextToSpeech:
             await self.speak(_WARMUP_PHRASE, speaker_wav=speaker_wav)
             _vl().logger.info("[TTS] Pre-warm complete.")
         except Exception as exc:
-            _vl().logger.warning("[TTS] Pre-warm failed (non-fatal): %s", exc)
+            _vl().logger.warning(
+                "[TTS] Pre-warm failed (non-fatal)",
+                extra=_voice_log_extra(event="tts_prewarm_failed", error_code=type(exc).__name__),
+            )
 
     async def speak_streaming(
         self,
@@ -653,13 +734,21 @@ class TextToSpeech:
                 except AudioDeviceError:
                     raise
                 except Exception as exc:
-                    _vl().logger.error("[TTS streaming] chunk failed: %s", exc)
+                    _vl().logger.error(
+                        "[TTS streaming] chunk failed",
+                        extra=_voice_log_extra(
+                            event="tts_stream_chunk_failed", error_code=type(exc).__name__
+                        ),
+                    )
         except TurnCancelledError:
             raise
         except AudioDeviceError:
             raise
         except Exception as exc:
-            _vl().logger.error("[TTS streaming] failed: %s", exc)
+            _vl().logger.error(
+                "[TTS streaming] failed",
+                extra=_voice_log_extra(event="tts_stream_failed", error_code=type(exc).__name__),
+            )
 
     async def _speak_edge(self, text: str, *, request_started_at: float) -> dict[str, object]:
         """Synthesize speech using Edge TTS."""
@@ -687,10 +776,10 @@ class TextToSpeech:
             ),
         )
         _vl().logger.debug(
-            "EDGE DEBUG: entered _speak_edge voice=%s sa=%s text=%r",
+            "EDGE DEBUG: entered _speak_edge voice=%s sa=%s text_chars=%d",
             voice,
             _vl().sa is not None,
-            text[:120],
+            len(text),
         )
 
         audio_bytes = bytearray()
@@ -721,9 +810,10 @@ class TextToSpeech:
         except Exception as exc:
             used_streaming = False
             _vl().logger.warning(
-                "[TTS:edge] Streaming synthesis failed; falling back to file save: %s",
-                exc,
-                extra=_voice_log_extra(event="tts_edge_stream_failed", error=str(exc)),
+                "[TTS:edge] Streaming synthesis failed; falling back to file save",
+                extra=_voice_log_extra(
+                    event="tts_edge_stream_failed", error_code=type(exc).__name__
+                ),
             )
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
                 output_path = tmp.name
@@ -735,7 +825,10 @@ class TextToSpeech:
                     os.unlink(output_path)
                 except (OSError, PermissionError) as unlink_exc:
                     _vl().logger.warning(
-                        "Failed to remove temp file %s: %s", output_path, unlink_exc
+                        "Failed to remove Edge TTS temp file",
+                        extra=_voice_log_extra(
+                            event="tts_temp_cleanup_failed", error_code=type(unlink_exc).__name__
+                        ),
                     )
 
         if not audio_bytes:
@@ -766,7 +859,10 @@ class TextToSpeech:
                         os.unlink(fallback_path)
                     except (OSError, PermissionError) as exc:
                         _vl().logger.warning(
-                            "Failed to remove temp file %s: %s", fallback_path, exc
+                            "Failed to remove Edge TTS decode temp file",
+                            extra=_voice_log_extra(
+                                event="tts_temp_cleanup_failed", error_code=type(exc).__name__
+                            ),
                         )
 
         decode_started_at = time.perf_counter()
@@ -789,19 +885,26 @@ class TextToSpeech:
             ),
         )
 
-        if _vl().sa is None:
-            raise AudioDeviceError(
-                "Local speaker playback is unavailable because simpleaudio is not installed."
-            )
+        if getattr(self, "_local_output_device", None) is not None:
 
-        def _play(_pcm=pcm_data, _sample_rate=sample_rate, _channels=channel_count) -> None:
-            play_obj = _vl().sa.play_buffer(
-                _pcm.tobytes(),
-                num_channels=_channels,
-                bytes_per_sample=2,
-                sample_rate=_sample_rate,
-            )
-            play_obj.wait_done()
+            def _play_selected(_pcm=pcm_data, _sample_rate=sample_rate) -> None:
+                self._play_selected_output(_pcm, int(_sample_rate))
+
+            _play = _play_selected
+        else:
+            if _vl().sa is None:
+                raise AudioDeviceError(
+                    "Local speaker playback is unavailable because simpleaudio is not installed."
+                )
+
+            def _play(_pcm=pcm_data, _sample_rate=sample_rate, _channels=channel_count) -> None:
+                play_obj = _vl().sa.play_buffer(
+                    _pcm.tobytes(),
+                    num_channels=_channels,
+                    bytes_per_sample=2,
+                    sample_rate=_sample_rate,
+                )
+                play_obj.wait_done()
 
         playback_started_at = time.perf_counter()
         _vl().logger.info(
@@ -939,12 +1042,45 @@ class TextToSpeech:
         try:
             import pyttsx3
         except ImportError:
+            if getattr(self, "_local_output_device", None) is not None:
+                raise AudioDeviceError(
+                    "pyttsx3 is required to route Windows speech to the selected speaker"
+                ) from None
             return await self._speak_windows_direct(
                 text,
                 request_started_at=request_started_at,
             )
 
         speech_start_delay_s: float | None = None
+        started_at = time.perf_counter()
+
+        if getattr(self, "_local_output_device", None) is not None:
+            temporary_path: str | None = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                    temporary_path = tmp.name
+
+                def _synthesize_selected() -> None:
+                    engine = pyttsx3.init()
+                    engine.save_to_file(text, temporary_path)
+                    engine.runAndWait()
+
+                await asyncio.to_thread(_synthesize_selected)
+                speech_start_delay_s = round(time.perf_counter() - request_started_at, 3)
+                await asyncio.to_thread(self._play_wave_on_selected_output, temporary_path)
+            except AudioDeviceError:
+                raise
+            except Exception as exc:
+                raise AudioDeviceError(f"Windows speaker output failed: {exc}") from exc
+            finally:
+                if temporary_path is not None:
+                    with contextlib.suppress(OSError):
+                        os.unlink(temporary_path)
+            return {
+                "path_used": "pyttsx3_selected_output",
+                "speech_start_delay_s": speech_start_delay_s,
+                "playback_duration_s": round(time.perf_counter() - started_at, 3),
+            }
 
         def _speak() -> None:
             nonlocal speech_start_delay_s
@@ -953,7 +1089,6 @@ class TextToSpeech:
             engine.say(text)
             engine.runAndWait()
 
-        started_at = time.perf_counter()
         try:
             await asyncio.to_thread(_speak)
         except Exception as exc:

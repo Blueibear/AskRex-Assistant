@@ -48,12 +48,17 @@ def _chat_response(content: str) -> dict:
 
 
 class TestRespondHttpPath:
-    def test_missing_identity_fails_before_openclaw_request(self):
+    def test_missing_identity_fails_before_openclaw_request(self, tmp_path):
         config = _make_config()
         agent = _make_agent(config)
         mock_client = MagicMock()
 
-        with patch("rex.openclaw.agent.get_openclaw_client", return_value=mock_client):
+        with (
+            patch(
+                "rex.identity._session_state_path", return_value=tmp_path / "missing-session.json"
+            ),
+            patch("rex.openclaw.agent.get_openclaw_client", return_value=mock_client),
+        ):
             import pytest
 
             with pytest.raises(PermissionError, match="identity"):

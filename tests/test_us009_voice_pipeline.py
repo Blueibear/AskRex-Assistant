@@ -3,7 +3,7 @@
 Acceptance criteria:
 - STT result is passed to Assistant.generate_reply() (not raw LanguageModel.generate())
 - LLM response is passed to the TTS engine and audio playback begins
-- If TTS fails, the text response is logged and the pipeline resets (no hang)
+- If TTS fails, bounded content-free diagnostics are logged and the pipeline resets (no hang)
 - End-to-end test covers STT transcript -> LLM -> TTS with mocks
 - Typecheck passes
 """
@@ -102,26 +102,28 @@ def test_llm_response_passed_to_tts():
     ), f"Expected LLM response in spoken text, got: {spoken_texts[0]!r}"
 
 
-def test_tts_failure_logs_text_response_and_resets(caplog):
-    """AC 3: If TTS fails, the text response is logged and pipeline resets (no hang)."""
+def test_tts_failure_logs_bounded_diagnostics_and_resets(caplog):
+    """AC 3: TTS failures log bounded diagnostics, never response/error content."""
+    private_response = "PRIVATE LLM RESPONSE 7f2c"
+    private_error = "PRIVATE TTS ERROR 9a31"
     loop, _assistant, _ = _make_voice_loop(
-        llm_response="Hello world",
-        speak_raises=TextToSpeechError("audio device unavailable"),
+        llm_response=private_response,
+        speak_raises=TextToSpeechError(private_error),
     )
 
     with caplog.at_level(logging.ERROR, logger="rex.voice_loop"):
-        # Should complete without hanging or raising
         asyncio.run(loop.run(max_interactions=1))
 
-    tts_error_records = [r for r in caplog.records if getattr(r, "event", None) == "tts_error"]
-    assert tts_error_records, "Expected tts_error log event on TTS failure"
-
-    record = tts_error_records[0]
-    llm_response_in_log = getattr(record, "llm_response", None)
-    assert llm_response_in_log is not None, "llm_response field must be present in tts_error log"
-    assert (
-        "Hello world" in llm_response_in_log
-    ), f"Expected LLM response text in log, got: {llm_response_in_log!r}"
+    records = [r for r in caplog.records if getattr(r, "event", None) == "tts_error"]
+    assert records, "Expected tts_error log event on TTS failure"
+    record = records[0]
+    assert getattr(record, "error_code", None) == "TextToSpeechError"
+    response_chars = getattr(record, "response_chars", None)
+    assert isinstance(response_chars, int) and 0 < response_chars <= 100_000
+    assert getattr(record, "llm_response", None) is None
+    assert record.exc_info is None
+    assert private_response not in caplog.text
+    assert private_error not in caplog.text
 
 
 def test_pipeline_continues_after_tts_failure():

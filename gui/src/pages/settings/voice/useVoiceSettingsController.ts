@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Settings, VoiceEnrollment, VoiceInfo, VoiceSettings, WakeWordInfo, WakeWordStatus } from '../../../types/ipc'
+import type { Settings, SetupAudioDevice, VoiceEnrollment, VoiceInfo, VoiceSettings, WakeWordInfo, WakeWordStatus } from '../../../types/ipc'
 import { useToast } from '../../../components/ui/Toast'
 import type { MediaDeviceOption } from './voiceHelpers'
 import { ENROLLMENT_SAMPLE_TARGET, WW_POSITIVE_TARGET, WW_NEGATIVE_TARGET, FALLBACK_BUILTIN_WAKE_WORDS, sleep, captureEnrollmentSample, runEnrollmentCountdown } from './voiceHelpers'
@@ -7,6 +7,9 @@ import { ENROLLMENT_SAMPLE_TARGET, WW_POSITIVE_TARGET, WW_NEGATIVE_TARGET, FALLB
 export function useVoiceSettingsController() {
   const addToast = useToast()
   const [form, setForm] = useState<VoiceSettings>({
+    backgroundVoiceEnabled: false,
+    microphoneDeviceIndex: null,
+    speakerDeviceIndex: null,
     microphoneDeviceId: '',
     speakerDeviceId: '',
     ttsEngine: 'pyttsx3',
@@ -26,6 +29,7 @@ export function useVoiceSettingsController() {
   const [loading, setLoading] = useState(true)
   const [mics, setMics] = useState<MediaDeviceOption[]>([])
   const [speakers, setSpeakers] = useState<MediaDeviceOption[]>([])
+  const [runtimeAudioDevices, setRuntimeAudioDevices] = useState<SetupAudioDevice[]>([])
   const [savedField, setSavedField] = useState<keyof VoiceSettings | null>(null)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<'ok' | 'error' | null>(null)
@@ -129,6 +133,14 @@ export function useVoiceSettingsController() {
         })
     }
 
+    window.rex.getSetupAudioDevices()
+      .then((result) => {
+        setRuntimeAudioDevices(result.ok ? result.devices : [])
+      })
+      .catch(() => {
+        setRuntimeAudioDevices([])
+      })
+
     // Load settings
     window.rex
       .getSettings('voice')
@@ -146,6 +158,15 @@ export function useVoiceSettingsController() {
         const sttDevice: VoiceSettings['sttDevice'] =
           rawSttDevice === 'cpu' || rawSttDevice === 'cuda' ? rawSttDevice : 'auto'
         setForm({
+          backgroundVoiceEnabled: settings.backgroundVoiceEnabled === true,
+          microphoneDeviceIndex:
+            typeof settings.microphoneDeviceIndex === 'number' && Number.isInteger(settings.microphoneDeviceIndex) && settings.microphoneDeviceIndex >= 0
+              ? settings.microphoneDeviceIndex
+              : null,
+          speakerDeviceIndex:
+            typeof settings.speakerDeviceIndex === 'number' && Number.isInteger(settings.speakerDeviceIndex) && settings.speakerDeviceIndex >= 0
+              ? settings.speakerDeviceIndex
+              : null,
           microphoneDeviceId:
             typeof settings.microphoneDeviceId === 'string' ? settings.microphoneDeviceId : '',
           speakerDeviceId:
@@ -569,6 +590,7 @@ export function useVoiceSettingsController() {
     loading,
     mics,
     speakers,
+    runtimeAudioDevices,
     savedField,
     testing,
     testResult,

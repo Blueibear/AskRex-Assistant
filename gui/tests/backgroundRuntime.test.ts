@@ -7,12 +7,14 @@ const {
   mockExecFileSync,
   mockBridge,
   mockAppendElectronLog,
+  mockRequestPaused,
 } = vi.hoisted(() => ({
   mockApp: { isPackaged: true },
   mockSpawn: vi.fn(),
   mockSpawnSync: vi.fn(),
   mockExecFileSync: vi.fn(),
   mockAppendElectronLog: vi.fn(),
+  mockRequestPaused: vi.fn(),
   mockBridge: {
     python: 'C:\\Program Files\\AskRex\\python\\python.exe',
     pythonw: 'C:\\Program Files\\AskRex\\python\\pythonw.exe',
@@ -32,6 +34,9 @@ vi.mock('child_process', () => ({
   spawnSync: mockSpawnSync,
 }))
 vi.mock('../src/main/handlers/logs', () => ({ appendElectronLog: mockAppendElectronLog }))
+vi.mock('../src/main/backgroundListening', () => ({
+  requestBackgroundListeningPaused: mockRequestPaused,
+}))
 vi.mock('../src/main/bridgeResolver', () => ({
   resolvePythonCommand: () => mockBridge.python,
   resolvePythonwCommand: () => mockBridge.pythonw,
@@ -42,7 +47,10 @@ vi.mock('../src/main/bridgeResolver', () => ({
   }),
 }))
 
-import { ensureBackgroundRuntime } from '../src/main/backgroundRuntime'
+import {
+  applyBackgroundVoicePreference,
+  ensureBackgroundRuntime,
+} from '../src/main/backgroundRuntime'
 
 const identity = {
   userId: 'james',
@@ -66,6 +74,7 @@ describe('ensureBackgroundRuntime', () => {
     mockSpawnSync.mockReset()
     mockExecFileSync.mockReset().mockReturnValue('CONTOSO\\james\r\n')
     mockAppendElectronLog.mockReset()
+    mockRequestPaused.mockReset().mockReturnValue(true)
     Object.defineProperty(process, 'platform', {
       value: 'win32',
       configurable: true,
@@ -250,6 +259,28 @@ describe('ensureBackgroundRuntime', () => {
       expect.objectContaining({ event: 'background_runtime_spawn_failed' }),
     )
   })
+  it('disables auto-start by pausing voice and removing startup registration', () => {
+    mockSpawnSync.mockReturnValueOnce(result(0))
+
+    const outcome = applyBackgroundVoicePreference(identity, false)
+
+    expect(outcome).toEqual({ ok: true })
+    expect(mockRequestPaused).toHaveBeenCalledWith(true)
+    expect(mockSpawnSync).toHaveBeenCalledTimes(1)
+    expect(mockSpawnSync.mock.calls[0][1]).toContain('remove-startup')
+  })
+
+  it('enables auto-start by clearing pause and ensuring the background runtime', () => {
+    mockSpawnSync.mockReturnValueOnce(result(0)).mockReturnValueOnce(result(0))
+
+    const outcome = applyBackgroundVoicePreference(identity, true)
+
+    expect(outcome).toEqual({ ok: true })
+    expect(mockRequestPaused).toHaveBeenCalledWith(false)
+    expect(mockSpawnSync.mock.calls[0][1]).toContain('install-startup')
+    expect(mockSpawnSync.mock.calls[1][1]).toContain('status')
+  })
+
   it('surfaces a detached spawn failure to the GUI bootstrap caller', () => {
     mockSpawnSync.mockReturnValueOnce(result(0)).mockReturnValueOnce(result(1))
     mockSpawn.mockImplementation(() => {

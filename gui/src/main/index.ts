@@ -9,7 +9,7 @@ import {
   unregisterSetupPreviewHandlers
 } from './handlers/setupPreview'
 import { validateBridges } from './bridgeResolver'
-import { ensureBackgroundRuntime } from './backgroundRuntime'
+import { applyBackgroundVoicePreference, ensureBackgroundRuntime } from './backgroundRuntime'
 import { readGuiSettings } from './configStore'
 import { planElectronStartup } from './firstRunStartup'
 import { integrationSettingsFrom } from './integrationStatus'
@@ -101,9 +101,18 @@ app.whenReady().then(async () => {
         })
       }
     } else {
-      appendElectronLog('INFO', 'Background Rex runtime remains disabled by user choice', {
-        event: 'background_runtime_disabled_by_user'
-      })
+      const disabled = applyBackgroundVoicePreference(sessionIdentity, false)
+      appendElectronLog(
+        disabled.ok ? 'INFO' : 'WARNING',
+        disabled.ok
+          ? 'Background Rex runtime remains disabled by user choice'
+          : 'Background Rex runtime disable reconciliation degraded',
+        {
+          event: disabled.ok
+            ? 'background_runtime_disabled_by_user'
+            : 'background_runtime_disable_reconcile_failed'
+        }
+      )
     }
 
     appendElectronLog('INFO', 'Electron user session established', {
@@ -120,7 +129,9 @@ app.whenReady().then(async () => {
     if (!bootstrapAuthenticatedRuntime(completedStatus.background_voice_enabled)) {
       throw new Error('Setup was saved, but the authenticated Rex runtime could not start.')
     }
-    if (mainWindow) createTray(mainWindow)
+    if (mainWindow) {
+      createTray(mainWindow)
+    }
   })
 
   mainWindow = createWindow()
@@ -141,7 +152,9 @@ app.whenReady().then(async () => {
       return
     }
     const runningArtifactSmoke = runInstalledArtifactSmoke(mainWindow)
-    if (!runningArtifactSmoke) createTray(mainWindow)
+    if (!runningArtifactSmoke) {
+      createTray(mainWindow)
+    }
   }
 
   appendElectronLog('INFO', 'Electron GUI main window created', {

@@ -7,6 +7,7 @@ import json
 import os
 import tempfile
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,9 @@ from rex.identity import resolve_active_user, validate_user_id
 from rex.voice_loop import build_voice_loop
 
 _VOICE_HEALTH_HEARTBEAT_SECONDS = 1.0
+_RUNTIME_AUDIO_DETAIL_CODES = frozenset(
+    {"microphone_unavailable", "speaker_unavailable", "wakeword_unavailable"}
+)
 
 
 class _CoreUnavailable(RuntimeError):
@@ -40,6 +44,7 @@ def build_voice_agent(
     *,
     activation_mode: str = "wake-word",
     origin_device_id: str | None = None,
+    diagnostic_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> VoiceAgentRuntime:
     """Build the canonical voice loop with Core as the Assistant implementation."""
 
@@ -58,7 +63,11 @@ def build_voice_agent(
         user_resolver=resolve_active_user,
         origin_device_id=origin_device_id,
     )
-    loop = build_voice_loop(proxy, activation_mode=activation_mode)
+    loop = build_voice_loop(
+        proxy,
+        activation_mode=activation_mode,
+        diagnostic_callback=diagnostic_callback,
+    )
     return VoiceAgentRuntime(proxy=proxy, loop=loop)
 
 
@@ -77,12 +86,23 @@ async def run_voice_agent(
     if activation_mode not in {"hold-to-talk", "wake-word"}:
         raise ValueError(f"Unsupported voice activation mode: {activation_mode!r}")
 
+    terminal_detail_code: str | None = None
+
+    def _handle_runtime_diagnostic(diagnostic: dict[str, object]) -> None:
+        nonlocal terminal_detail_code
+        code = diagnostic.get("code")
+        if not isinstance(code, str) or code not in _RUNTIME_AUDIO_DETAIL_CODES:
+            return
+        terminal_detail_code = code
+        _publish_health(paths, HealthState.UNAVAILABLE, code)
+
     try:
         runtime = build_voice_agent(
             user_id,
             paths,
             activation_mode=activation_mode,
             origin_device_id=origin_device_id,
+            diagnostic_callback=_handle_runtime_diagnostic,
         )
     except _CoreUnavailable:
         return _publish_health(paths, HealthState.DEGRADED, "core_unavailable")
@@ -95,6 +115,8 @@ async def run_voice_agent(
 
     _publish_health(paths, HealthState.READY, None)
     await _run_loop_with_health_heartbeat(runtime.loop, paths)
+    if terminal_detail_code is not None:
+        return _publish_health(paths, HealthState.UNAVAILABLE, terminal_detail_code)
     return _publish_health(paths, HealthState.STOPPED, None)
 
 

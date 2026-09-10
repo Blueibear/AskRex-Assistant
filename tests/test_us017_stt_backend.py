@@ -83,7 +83,8 @@ def test_stt_runtime_error_logged_with_traceback(caplog):
     stt._loaded = True
 
     fake_model = MagicMock()
-    fake_model.transcribe.side_effect = RuntimeError("GPU out of memory")
+    private_error = "PRIVATE STT ERROR 4d91"
+    fake_model.transcribe.side_effect = RuntimeError(private_error)
     stt._model = fake_model
 
     # Provide a minimal WAV buffer so format check passes
@@ -102,23 +103,26 @@ def test_stt_runtime_error_logged_with_traceback(caplog):
         with pytest.raises(Exception):  # noqa: B017
             asyncio.run(stt.transcribe(audio=wav_bytes, sample_rate=16000))
 
-    error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
-    assert error_records, "Expected at least one ERROR log record"
-    # exc_info=True means the record has exc_info tuple (not all None)
-    assert any(
-        r.exc_info and r.exc_info[0] is not None for r in error_records
-    ), "ERROR log must include traceback (exc_info)"
+    error_records = [
+        r for r in caplog.records if getattr(r, "event", None) == "stt_transcription_failed"
+    ]
+    assert error_records, "Expected bounded STT failure diagnostics"
+    record = error_records[0]
+    assert getattr(record, "error_code", None) == "RuntimeError"
+    assert record.exc_info is None
+    assert private_error not in caplog.text
 
 
-def test_stt_error_in_voice_loop_logs_traceback(caplog):
-    """SpeechToTextError in voice loop is logged with full traceback."""
+def test_stt_error_in_voice_loop_logs_bounded_diagnostics(caplog):
+    """SpeechToTextError is logged without raw error text or traceback."""
     pytest.importorskip("numpy")
     from rex.assistant_errors import SpeechToTextError
     from rex.voice_loop import VoiceLoop
 
-    # transcribe raises SpeechToTextError immediately
+    private_error = "PRIVATE VOICE STT ERROR c41e"
+
     async def _bad_transcribe(_audio):
-        raise SpeechToTextError("forced test failure")
+        raise SpeechToTextError(private_error)
 
     # record_phrase returns a dummy buffer
     async def _record():
@@ -151,10 +155,9 @@ def test_stt_error_in_voice_loop_logs_traceback(caplog):
     with caplog.at_level(logging.ERROR, logger="rex.voice_loop"):
         asyncio.run(loop.run(max_interactions=1))
 
-    stt_errors = [
-        r for r in caplog.records if r.levelno == logging.ERROR and "stt" in r.getMessage().lower()
-    ]
-    assert stt_errors, "Expected STT error to be logged"
-    assert any(
-        r.exc_info and r.exc_info[0] is not None for r in stt_errors
-    ), "STT ERROR log must include traceback (exc_info)"
+    stt_errors = [r for r in caplog.records if getattr(r, "event", None) == "stt_error"]
+    assert stt_errors, "Expected bounded STT error diagnostics"
+    record = stt_errors[0]
+    assert getattr(record, "error_code", None) == "SpeechToTextError"
+    assert record.exc_info is None
+    assert private_error not in caplog.text

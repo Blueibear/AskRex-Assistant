@@ -67,7 +67,10 @@ def _build_voice_id_callback() -> IdentifySpeakerCallable | None:
             model_id=str(vi_dict.get("model_id", "synthetic")),
         )
     except Exception as exc:
-        _vl().logger.debug("Could not load voice_identity config: %s", exc)
+        _vl().logger.debug(
+            "Could not load voice_identity config",
+            extra={"event": "voice_identity_config_failed", "error_code": type(exc).__name__},
+        )
         return None
 
     if not vi_cfg.enabled:
@@ -101,13 +104,15 @@ def _build_voice_id_callback() -> IdentifySpeakerCallable | None:
         )
     except ImportError as exc:
         _vl().logger.warning(
-            "Voice identity backend unavailable: %s. "
-            "Install optional extras: pip install '.[voice-id]'",
-            exc,
+            "Voice identity backend unavailable. Install optional extras: pip install '.[voice-id]'",
+            extra={"event": "voice_identity_backend_unavailable", "error_code": type(exc).__name__},
         )
         return None
     except Exception as exc:
-        _vl().logger.warning("Failed to initialise voice identity: %s", exc)
+        _vl().logger.warning(
+            "Failed to initialise voice identity",
+            extra={"event": "voice_identity_init_failed", "error_code": type(exc).__name__},
+        )
         return None
 
     def _identify(audio: AudioArray) -> str | None:
@@ -129,21 +134,21 @@ def _build_voice_id_callback() -> IdentifySpeakerCallable | None:
 
             if result.decision.value == "recognized":
                 _vl().logger.info(
-                    "Voice recognized: user=%s score=%.3f",
-                    result.best_user_id,
-                    result.score,
+                    "Voice recognized",
+                    extra={"event": "voice_identity_recognized", "score": round(result.score, 3)},
                 )
             elif result.decision.value == "review":
                 _vl().logger.info(
-                    "Voice uncertain (review): best_match=%s score=%.3f. "
-                    "Run 'rex identify' to set user manually.",
-                    result.best_user_id,
-                    result.score,
+                    "Voice uncertain; run 'rex identify' to set user manually",
+                    extra={"event": "voice_identity_review", "score": round(result.score, 3)},
                 )
 
             return resolved
         except Exception as exc:
-            _vl().logger.warning("Voice identity check failed: %s", exc)
+            _vl().logger.warning(
+                "Voice identity check failed",
+                extra={"event": "voice_identity_check_failed", "error_code": type(exc).__name__},
+            )
             return None
 
     return _identify
@@ -153,6 +158,7 @@ def build_voice_loop(
     assistant,
     *,
     activation_mode: str = "wake-word",
+    diagnostic_callback: Callable[[dict[str, object]], None] | None = None,
     sample_rate: int = 16000,
     detection_seconds: float = 1.0,
     capture_seconds: float | None = None,
@@ -183,9 +189,12 @@ def build_voice_loop(
         input_device_index = _vl()._validate_input_device_index(_vl().settings.audio_input_device)
     except AudioDeviceError as exc:
         _vl().logger.error(
-            "[Pipeline] Audio device stage failed: %s",
-            exc,
-            extra={"event": "pipeline_stage_failed", "stage": "audio_device", "error": str(exc)},
+            "[Pipeline] Audio device stage failed",
+            extra={
+                "event": "pipeline_stage_failed",
+                "stage": "audio_device",
+                "error_code": type(exc).__name__,
+            },
         )
         raise
     _vl().logger.info(
@@ -220,7 +229,8 @@ def build_voice_loop(
                 if smart_mic.connect():
                     smart_mic_recorder = cast(RecorderCallable, smart_mic.read_frame)
                     _vl().logger.info(
-                        "[voice] Wake word input routed to %r (%s).", target.name, target.ip
+                        "[voice] Wake word input routed to configured smart speaker",
+                        extra={"event": "smart_speaker_mic_selected", "provider": target.provider},
                     )
                 else:
                     _vl().logger.warning(
@@ -234,7 +244,8 @@ def build_voice_loop(
                 )
         except Exception as exc:
             _vl().logger.warning(
-                "[voice] Smart speaker mic setup failed: %s — using local mic.", exc
+                "[voice] Smart speaker mic setup failed; using local mic",
+                extra={"event": "smart_speaker_mic_setup_failed", "error_code": type(exc).__name__},
             )
 
     mic = _vl().AsyncMicrophone(
@@ -281,12 +292,11 @@ def build_voice_loop(
             )
         except Exception as exc:
             _vl().logger.error(
-                "[Pipeline] Wake-word stage failed: %s",
-                exc,
+                "[Pipeline] Wake-word stage failed",
                 extra={
                     "event": "pipeline_stage_failed",
                     "stage": "wake_word",
-                    "error": str(exc),
+                    "error_code": type(exc).__name__,
                 },
             )
             raise
@@ -407,6 +417,7 @@ def build_voice_loop(
             acknowledge=ack.play,
             post_stt_acknowledge=post_stt_ack,
             identify_speaker=identify_speaker,
+            diagnostic_callback=diagnostic_callback,
             sample_rate=sample_rate,
         ),
     )
@@ -436,5 +447,8 @@ def _resolve_voice_reference() -> str | None:
 
         return None
     except Exception as exc:
-        _vl().logger.warning("Failed to resolve voice reference: %s", exc)
+        _vl().logger.warning(
+            "Failed to resolve voice reference",
+            extra={"event": "voice_reference_resolution_failed", "error_code": type(exc).__name__},
+        )
         return None

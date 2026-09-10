@@ -6,7 +6,12 @@ from unittest.mock import MagicMock
 import pytest
 
 import rex.voice_loop as _rvl
-from rex.assistant_errors import AudioDeviceError, AudioFormatError, SpeechToTextError
+from rex.assistant_errors import (
+    AudioDeviceError,
+    AudioFormatError,
+    SpeechToTextError,
+    TextToSpeechError,
+)
 from rex.voice_loop import AsyncMicrophone, TextToSpeech, VoiceLoop
 
 np = pytest.importorskip("numpy")
@@ -205,6 +210,106 @@ def test_voice_loop_processes_interaction():
 
     assert assistant.calls == ["hello world"]
     assert spoken == ["ok."]  # Voice loop adds period for TTS
+
+
+@pytest.mark.unit
+def test_voice_loop_diagnostics_do_not_log_transcript_or_response_content(caplog):
+    transcript_marker = "private command marker zeta"
+    response_marker = "private response marker omega"
+
+    class PrivateAssistant(DummyAssistant):
+        async def generate_reply(self, transcript, *, voice_mode: bool = False):
+            self.calls.append(transcript)
+            return response_marker
+
+    assistant = PrivateAssistant()
+    listener = DummyListener()
+
+    async def transcribe_private(_: np.ndarray) -> str:
+        return transcript_marker
+
+    async def fail_speak(_: str) -> None:
+        raise TextToSpeechError("bounded synthesis failure")
+
+    loop = VoiceLoop(
+        assistant,
+        wake_listener=listener,
+        detection_source=_constant_frame,
+        record_phrase=_record_phrase,
+        transcribe=transcribe_private,
+        speak=fail_speak,
+        acknowledge=_ack,
+    )
+
+    with caplog.at_level("INFO"):
+        asyncio.run(loop.run(max_interactions=1))
+
+    assert assistant.calls == [transcript_marker]
+    serialized_logs = caplog.text + repr([record.__dict__ for record in caplog.records])
+    assert transcript_marker not in serialized_logs
+    assert response_marker not in serialized_logs
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("failure_stage", ["stt", "tts"])
+def test_voice_loop_error_diagnostics_do_not_log_exception_content(caplog, failure_stage):
+    private_marker = "private exception marker sigma"
+    assistant = DummyAssistant()
+    listener = DummyListener()
+
+    async def transcribe(_: np.ndarray) -> str:
+        if failure_stage == "stt":
+            raise SpeechToTextError(private_marker)
+        return "hello rex"
+
+    async def speak(_: str) -> None:
+        if failure_stage == "tts":
+            raise TextToSpeechError(private_marker)
+
+    loop = VoiceLoop(
+        assistant,
+        wake_listener=listener,
+        detection_source=_constant_frame,
+        record_phrase=_record_phrase,
+        transcribe=transcribe,
+        speak=speak,
+        acknowledge=_ack,
+    )
+
+    with caplog.at_level("INFO"):
+        asyncio.run(loop.run(max_interactions=1))
+
+    serialized_logs = caplog.text + repr([record.__dict__ for record in caplog.records])
+    assert private_marker not in serialized_logs
+
+
+@pytest.mark.unit
+def test_wake_priming_diagnostic_does_not_log_exception_content(caplog):
+    private_marker = "private priming path marker tau"
+
+    class DetectionSource:
+        async def prime_detection_buffer(self, *, reason: str) -> None:
+            raise RuntimeError(f"{private_marker}: {reason}")
+
+        async def read(self) -> np.ndarray:
+            return await _constant_frame()
+
+    source = DetectionSource()
+    loop = VoiceLoop(
+        DummyAssistant(),
+        wake_listener=DummyListener(),
+        detection_source=source.read,
+        record_phrase=_record_phrase,
+        transcribe=_transcribe,
+        speak=_speak,
+        acknowledge=_ack,
+    )
+
+    with caplog.at_level("INFO"):
+        asyncio.run(loop._prime_wake_detection(reason="privacy-test"))
+
+    serialized_logs = caplog.text + repr([record.__dict__ for record in caplog.records])
+    assert private_marker not in serialized_logs
 
 
 @pytest.mark.unit
@@ -656,7 +761,10 @@ def test_voice_loop_handles_audio_format_error(caplog):
         asyncio.run(loop.run(max_interactions=1))
 
     assert assistant.calls == []
-    assert "STT error: Expected WAV, got ID3" in caplog.text
+    assert "Expected WAV, got ID3" not in caplog.text
+    assert any(
+        getattr(record, "error_code", None) == "AudioFormatError" for record in caplog.records
+    )
 
 
 @pytest.mark.unit

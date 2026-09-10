@@ -237,6 +237,20 @@ def _request_stop(paths: BackgroundPaths) -> None:
     paths.stop_file.touch(exist_ok=True)
 
 
+def _request_pause(paths: BackgroundPaths) -> None:
+    paths.state_dir.mkdir(parents=True, exist_ok=True)
+    paths.pause_file.touch(exist_ok=True)
+
+
+def _request_resume(paths: BackgroundPaths) -> None:
+    paths.pause_file.unlink(missing_ok=True)
+
+
+def _request_voice_recovery(paths: BackgroundPaths) -> None:
+    paths.state_dir.mkdir(parents=True, exist_ok=True)
+    paths.voice_recovery_file.touch(exist_ok=True)
+
+
 def _supervisor_is_running(paths: BackgroundPaths) -> bool:
     lock = SingleInstanceLock(paths.supervisor_lock)
     try:
@@ -308,6 +322,15 @@ def create_parser() -> argparse.ArgumentParser:
     status = subparsers.add_parser("status")
     _add_runtime_root(status)
 
+    pause = subparsers.add_parser("pause")
+    _add_runtime_root(pause)
+
+    resume = subparsers.add_parser("resume")
+    _add_runtime_root(resume)
+
+    recover_voice = subparsers.add_parser("recover-voice")
+    _add_runtime_root(recover_voice)
+
     stop = subparsers.add_parser("stop")
     _add_runtime_root(stop)
     stop.add_argument("--wait-seconds", type=float, default=0.0)
@@ -366,6 +389,18 @@ def _dispatch(args: argparse.Namespace, paths: BackgroundPaths) -> int:
         payload, result = _read_status(paths)
         print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
         return result
+    if args.command == "pause":
+        _request_pause(paths)
+        print(json.dumps({"ok": True, "requested": True}, separators=(",", ":")))
+        return 0
+    if args.command == "resume":
+        _request_resume(paths)
+        print(json.dumps({"ok": True, "requested": True}, separators=(",", ":")))
+        return 0
+    if args.command == "recover-voice":
+        _request_voice_recovery(paths)
+        print(json.dumps({"ok": True, "requested": True}, separators=(",", ":")))
+        return 0
     if args.command == "stop":
         wait_seconds = float(args.wait_seconds)
         if (
