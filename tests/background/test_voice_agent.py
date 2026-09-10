@@ -164,6 +164,56 @@ def test_audio_startup_failures_are_content_free_and_do_not_mutate_core_state(
     asyncio.run(_run())
 
 
+@pytest.mark.parametrize(
+    ("detail_code", "expected_state"),
+    [
+        ("microphone_unavailable", HealthState.UNAVAILABLE),
+        ("speaker_unavailable", HealthState.UNAVAILABLE),
+    ],
+)
+def test_runtime_audio_loss_publishes_content_free_terminal_health(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    detail_code: str,
+    expected_state: HealthState,
+) -> None:
+    async def _run() -> None:
+        paths = BackgroundPaths.from_runtime_root(tmp_path)
+        _patch_core(monkeypatch, paths.core_endpoint_file)
+
+        class _DiagnosticLoop:
+            async def run(self) -> None:
+                callback = captured.get("diagnostic_callback")
+                assert callable(callback)
+                callback(
+                    {
+                        "code": detail_code,
+                        "error": "private device path and user detail",
+                        "user_message": "private replacement hint",
+                    }
+                )
+
+        captured: dict[str, object] = {}
+
+        def _build(_assistant, **kwargs):
+            captured.update(kwargs)
+            return _DiagnosticLoop()
+
+        monkeypatch.setattr("rex.background.voice_agent.build_voice_loop", _build)
+        health = await run_voice_agent("james", paths)
+
+        assert health.state is expected_state
+        assert health.detail_code == detail_code
+        payload = json.loads(paths.voice_agent_health_file.read_text(encoding="utf-8"))
+        assert payload["state"] == expected_state.value
+        assert payload["detail_code"] == detail_code
+        serialized = json.dumps(payload)
+        assert "private" not in serialized
+        assert "user_message" not in serialized
+
+    asyncio.run(_run())
+
+
 def test_voice_agent_runs_canonical_loop_once(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -105,8 +105,8 @@ The runtime count is intentionally separate from the executable source-site coun
 | `tests/test_event_bus.py` | 259 | `skipif` | Newer EventBus.publish(Event) API not available in this build. | `temporary-bug-skip` | `fix` | `US-092` |
 | `tests/test_event_bus.py` | 274 | `skipif` | Legacy EventBus.publish(event_type, payload) API not available in this build. | `temporary-bug-skip` | `fix` | `US-092` |
 | `tests/test_event_bus.py` | 293 | `skipif` | Newer EventBus.publish(Event) API not available in this build. | `temporary-bug-skip` | `fix` | `US-092` |
-| `tests/background/test_supervisor.py` | 546 | `skipif` | Windows Job Object contract | `platform-skip` | `keep` | permanent: Windows process-containment contract |
-| `tests/background/test_supervisor.py` | 681 | `skipif` | Windows Job Object contract | `platform-skip` | `keep` | permanent: Windows process-containment contract |
+| `tests/background/test_supervisor.py` | 615 | `skipif` | Windows Job Object contract | `platform-skip` | `keep` | permanent: Windows process-containment contract |
+| `tests/background/test_supervisor.py` | 750 | `skipif` | Windows Job Object contract | `platform-skip` | `keep` | permanent: Windows process-containment contract |
 | `tests/test_install_scripts.py` | 15 | `pytest.skip` | bash not available | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
 | `tests/test_install_scripts.py` | 24 | `pytest.skip` | bash not usable on Windows | `platform-skip` | `keep` | permanent: platform/runtime-specific guard |
 | `tests/test_openclaw_root_voice_loop_flag.py` | 19 | `skipif` | openwakeword is not installed | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |

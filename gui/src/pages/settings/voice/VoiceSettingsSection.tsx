@@ -3,6 +3,7 @@ import type { VoiceSettings, WakeWordStatus } from '../../../types/ipc'
 import { PageLoadingFallback } from '../../../components/ui/PageLoadingFallback'
 import { Tooltip } from '../../../components/ui/Tooltip'
 import { SavedIndicator } from '../shared'
+import { RuntimeAudioDeviceSelectors } from './RuntimeAudioDeviceSelectors'
 import { useVoiceSettingsController } from './useVoiceSettingsController'
 import { ENROLLMENT_SAMPLE_TARGET, WW_POSITIVE_TARGET, WW_NEGATIVE_TARGET, defaultCustomWakeWordAssetPath } from './voiceHelpers'
 
@@ -56,8 +57,8 @@ export function VoiceSettingsSection(): React.ReactElement {
     form,
     setForm,
     loading,
+    runtimeAudioDevices,
     mics,
-    speakers,
     savedField,
     testing,
     testResult,
@@ -116,48 +117,55 @@ export function VoiceSettingsSection(): React.ReactElement {
     <div className="p-6 max-w-lg">
       <h2 className="text-lg font-semibold text-text-primary mb-6">Voice</h2>
 
-      {/* Microphone device */}
-      <div className="mb-5">
+      <div className="mb-6 rounded-xl border border-border bg-surface-raised/40 p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <label htmlFor="backgroundVoiceEnabled" className="text-sm font-medium text-text-primary">
+              Start wake-word listening automatically when I sign in
+            </label>
+            <p className="mt-1 text-xs text-text-secondary">
+              You can pause listening at any time from the tray. Text and mobile access stay available.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <SavedIndicator visible={savedField === 'backgroundVoiceEnabled'} />
+            <input
+              id="backgroundVoiceEnabled"
+              type="checkbox"
+              checked={form.backgroundVoiceEnabled}
+              onChange={(e) => handleFieldChange('backgroundVoiceEnabled', e.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-border text-accent accent-accent cursor-pointer"
+            />
+          </div>
+        </div>
+      </div>
+
+      <RuntimeAudioDeviceSelectors
+        form={form}
+        devices={runtimeAudioDevices}
+        savedField={savedField}
+        onChange={handleFieldChange}
+      />
+
+      <div className="mb-6 rounded-xl border border-border bg-surface-raised/40 p-4">
         <div className="flex items-center justify-between mb-1.5">
           <label htmlFor="microphoneDeviceId" className="text-sm font-medium text-text-primary">
-            Microphone
+            Browser capture microphone
           </label>
           <SavedIndicator visible={savedField === 'microphoneDeviceId'} />
         </div>
+        <p className="mb-2 text-xs text-text-secondary">
+          Used only for wake-word training and voice enrollment recordings.
+        </p>
         <select
           id="microphoneDeviceId"
           value={form.microphoneDeviceId}
           onChange={(e) => handleFieldChange('microphoneDeviceId', e.target.value)}
-          className="w-full bg-surface-raised border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+          className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
         >
-          <option value="">System default</option>
-          {mics.map((d) => (
-            <option key={d.deviceId} value={d.deviceId}>
-              {d.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Speaker device */}
-      <div className="mb-5">
-        <div className="flex items-center justify-between mb-1.5">
-          <label htmlFor="speakerDeviceId" className="text-sm font-medium text-text-primary">
-            Speaker
-          </label>
-          <SavedIndicator visible={savedField === 'speakerDeviceId'} />
-        </div>
-        <select
-          id="speakerDeviceId"
-          value={form.speakerDeviceId}
-          onChange={(e) => handleFieldChange('speakerDeviceId', e.target.value)}
-          className="w-full bg-surface-raised border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
-        >
-          <option value="">System default</option>
-          {speakers.map((d) => (
-            <option key={d.deviceId} value={d.deviceId}>
-              {d.label}
-            </option>
+          <option value="">System default (browser capture)</option>
+          {mics.map((device) => (
+            <option key={device.deviceId} value={device.deviceId}>{device.label}</option>
           ))}
         </select>
       </div>

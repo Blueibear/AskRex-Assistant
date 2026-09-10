@@ -84,6 +84,33 @@ describe('mirrorToRexConfig truthful failures (S4)', () => {
     const result = mirrorToRexConfig('unmapped-section', {} as never)
     expect(result).toEqual({ ok: true })
   })
+  it('mirrors background voice auto-start into canonical runtime config', () => {
+    mockReadRexConfig.mockReturnValue({ runtime: { background_voice_enabled: true } })
+    const result = mirrorToRexConfig('voice', { backgroundVoiceEnabled: false } as never)
+    expect(result).toEqual({ ok: true })
+    expect(mockWriteRexConfig).toHaveBeenCalledWith(expect.objectContaining({
+      runtime: expect.objectContaining({ background_voice_enabled: false })
+    }))
+  })
+
+  it('mirrors replacement audio device indices into canonical Python audio config', () => {
+    mockReadRexConfig.mockReturnValue({
+      audio: { input_device_index: 1, output_device_index: 2 },
+    })
+    const result = mirrorToRexConfig('voice', {
+      microphoneDeviceIndex: 4,
+      speakerDeviceIndex: 7,
+    } as never)
+
+    expect(result).toEqual({ ok: true })
+    expect(mockWriteRexConfig).toHaveBeenCalledWith(expect.objectContaining({
+      audio: {
+        input_device_index: 4,
+        output_device_index: 7,
+      },
+    }))
+  })
+
   it('mirrors OpenClaw URL and enabled flags into the canonical block', () => {
     const result = mirrorToRexConfig('integrations', {
       openclawGatewayUrl: 'http://127.0.0.1:18789',

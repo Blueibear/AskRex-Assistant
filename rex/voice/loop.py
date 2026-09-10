@@ -148,21 +148,26 @@ class VoiceLoop:
         interaction_id: int | None = None,
     ) -> None:
         diagnostic = build_audio_device_diagnostic(device_kind, exc)
+        bounded_diagnostic: dict[str, object] = {
+            "event": diagnostic["event"],
+            "code": diagnostic["code"],
+            "device_kind": diagnostic["device_kind"],
+            "user_message": diagnostic["user_message"],
+        }
         extra: dict[str, object] = {
-            **diagnostic,
+            **bounded_diagnostic,
             "session_id": self._session_id,
         }
         if interaction_id is not None:
             extra["interaction_id"] = interaction_id
         _vl().logger.error(
-            "Audio %s error: %s",
-            diagnostic["device_kind"],
-            exc,
+            "Audio %s unavailable",
+            bounded_diagnostic["device_kind"],
             extra=extra,
         )
         if self._diagnostic_callback is not None:
             try:
-                self._diagnostic_callback(diagnostic)
+                self._diagnostic_callback(bounded_diagnostic)
             except Exception:
                 _vl().logger.exception("Voice diagnostic callback failed")
 
@@ -196,7 +201,10 @@ class VoiceLoop:
             if ack is not None:
                 await ack()
         except Exception as exc:
-            _vl().logger.warning("[Ack] Acknowledgement tone failed (non-fatal): %s", exc)
+            _vl().logger.warning(
+                "[Ack] Acknowledgement tone failed (non-fatal)",
+                extra=_voice_log_extra(event="wake_ack_failed", error_code=type(exc).__name__),
+            )
 
     async def _settle_wake_acknowledgement(
         self,
@@ -273,12 +281,11 @@ class VoiceLoop:
             await prime_detection_buffer(reason=reason)
         except Exception as exc:
             _vl().logger.warning(
-                "[Wake] Wake listener audio priming failed; continuing unprimed: %s",
-                exc,
+                "[Wake] Wake listener audio priming failed; continuing unprimed",
                 extra=_voice_log_extra(
                     event="wake_listen_prime_failed",
                     reason=reason,
-                    error=str(exc),
+                    error_code=type(exc).__name__,
                 ),
             )
             return
@@ -306,12 +313,11 @@ class VoiceLoop:
                 )
         except Exception as exc:
             _vl().logger.warning(
-                "[Ack] Post-STT acknowledgement failed (non-fatal): %s",
-                exc,
+                "[Ack] Post-STT acknowledgement failed (non-fatal)",
                 extra=_voice_log_extra(
                     event="post_stt_ack_failed",
                     duration_s=round(time.perf_counter() - started_at, 3),
-                    error=str(exc),
+                    error_code=type(exc).__name__,
                 ),
             )
 
@@ -410,14 +416,13 @@ class VoiceLoop:
         raw_transcript = transcript.strip()
         transcript = _strip_wake_prefix(raw_transcript)
         _vl().logger.info(
-            "[Voice] Immediate follow-up transcript: %r",
-            transcript,
+            "[Voice] Immediate follow-up transcript captured",
             extra=_voice_log_extra(
                 event="voice_followup_transcript",
                 interaction_id=interaction_id,
                 reason=reason,
-                raw_transcript=raw_transcript,
-                transcript=transcript,
+                raw_transcript_chars=len(raw_transcript),
+                transcript_chars=len(transcript),
             ),
         )
         return transcript
@@ -556,7 +561,13 @@ class VoiceLoop:
                             else:
                                 cast(Any, self._identify_speaker)()
                         except Exception as exc:
-                            _vl().logger.warning("Voice identity check failed: %s", exc)
+                            _vl().logger.warning(
+                                "Voice identity check failed",
+                                extra=_voice_log_extra(
+                                    event="voice_identity_check_failed",
+                                    error_code=type(exc).__name__,
+                                ),
+                            )
 
                     # Transcribe to text
                     _vl().logger.debug(
@@ -608,8 +619,8 @@ class VoiceLoop:
                             extra={
                                 "event": "stt_wake_prefix_stripped",
                                 "interaction_id": interaction_id,
-                                "raw_transcript": raw_transcript,
-                                "transcript": transcript,
+                                "raw_transcript_chars": len(raw_transcript),
+                                "transcript_chars": len(transcript),
                             },
                         )
                     if not transcript:
@@ -620,23 +631,21 @@ class VoiceLoop:
                         continue
 
                     _vl().logger.info(
-                        "[STT] Transcript: %r",
-                        transcript,
+                        "[STT] Transcript captured",
                         extra={
                             "event": "stt_transcript",
                             "interaction_id": interaction_id,
-                            "transcript": transcript,
+                            "transcript_chars": len(transcript),
                         },
                     )
                     if _is_weak_transcript_fragment(transcript):
                         initial_fragment = transcript
                         _vl().logger.warning(
-                            "[STT] Asking for repeat after weak transcript fragment: %r",
-                            transcript,
+                            "[STT] Asking for repeat after weak transcript fragment",
                             extra={
                                 "event": "stt_weak_transcript",
                                 "interaction_id": interaction_id,
-                                "transcript": transcript,
+                                "transcript_chars": len(transcript),
                             },
                         )
                         _emit("thinking")
@@ -661,8 +670,8 @@ class VoiceLoop:
                                 extra={
                                     "event": "stt_weak_transcript_followup_failed",
                                     "interaction_id": interaction_id,
-                                    "initial_transcript": initial_fragment,
-                                    "followup_transcript": transcript,
+                                    "initial_transcript_chars": len(initial_fragment),
+                                    "followup_transcript_chars": len(transcript),
                                 },
                             )
                             _emit("cooldown")
@@ -674,20 +683,19 @@ class VoiceLoop:
                             extra={
                                 "event": "voice_followup_continued",
                                 "interaction_id": interaction_id,
-                                "initial_transcript": initial_fragment,
-                                "followup_transcript": transcript,
+                                "initial_transcript_chars": len(initial_fragment),
+                                "followup_transcript_chars": len(transcript),
                             },
                         )
 
                     if _is_suspicious_voice_transcript(transcript):
                         suspicious_transcript = transcript
                         _vl().logger.warning(
-                            "[STT] Asking for confirmation after suspicious transcript: %r",
-                            transcript,
+                            "[STT] Asking for confirmation after suspicious transcript",
                             extra={
                                 "event": "stt_suspicious_transcript",
                                 "interaction_id": interaction_id,
-                                "transcript": transcript,
+                                "transcript_chars": len(transcript),
                             },
                         )
                         _emit("thinking")
@@ -717,8 +725,8 @@ class VoiceLoop:
                                 extra={
                                     "event": "stt_suspicious_transcript_followup_failed",
                                     "interaction_id": interaction_id,
-                                    "initial_transcript": suspicious_transcript,
-                                    "followup_transcript": transcript,
+                                    "initial_transcript_chars": len(suspicious_transcript),
+                                    "followup_transcript_chars": len(transcript),
                                 },
                             )
                             _emit("cooldown")
@@ -730,19 +738,18 @@ class VoiceLoop:
                             extra={
                                 "event": "voice_suspicious_transcript_continued",
                                 "interaction_id": interaction_id,
-                                "initial_transcript": suspicious_transcript,
-                                "followup_transcript": transcript,
+                                "initial_transcript_chars": len(suspicious_transcript),
+                                "followup_transcript_chars": len(transcript),
                             },
                         )
 
                     if _is_low_value_transcript(transcript):
                         _vl().logger.warning(
-                            "[STT] Ignoring likely filler transcript: %r",
-                            transcript,
+                            "[STT] Ignoring likely filler transcript",
                             extra={
                                 "event": "stt_transcript_ignored",
                                 "interaction_id": interaction_id,
-                                "transcript": transcript,
+                                "transcript_chars": len(transcript),
                             },
                         )
                         _emit("cooldown")
@@ -888,7 +895,7 @@ class VoiceLoop:
                                     "event": "pipeline_timeout",
                                     "interaction_id": interaction_id,
                                     "stage": "tts",
-                                    "llm_response": llm_response,
+                                    "response_chars": len(llm_response),
                                 },
                             )
                             continue
@@ -914,9 +921,9 @@ class VoiceLoop:
                                     extra={
                                         "event": "voice_clarification_followup",
                                         "interaction_id": interaction_id,
-                                        "initial_transcript": transcript,
-                                        "followup_transcript": followup_transcript,
-                                        "continued_transcript": continued_transcript,
+                                        "initial_transcript_chars": len(transcript),
+                                        "followup_transcript_chars": len(followup_transcript),
+                                        "continued_transcript_chars": len(continued_transcript),
                                     },
                                 )
                                 _emit("executing")
@@ -979,8 +986,8 @@ class VoiceLoop:
                                     extra={
                                         "event": "voice_clarification_followup_empty",
                                         "interaction_id": interaction_id,
-                                        "initial_transcript": transcript,
-                                        "followup_transcript": followup_transcript,
+                                        "initial_transcript_chars": len(transcript),
+                                        "followup_transcript_chars": len(followup_transcript),
                                     },
                                 )
                     tracker.mark("tts_synthesis_end")
@@ -992,25 +999,22 @@ class VoiceLoop:
 
                 except SpeechToTextError as exc:
                     _vl().logger.error(
-                        "STT error: %s — resetting pipeline",
-                        exc,
-                        exc_info=True,
-                        extra={"event": "stt_error", "error": str(exc)},
+                        "STT error — resetting pipeline",
+                        extra={"event": "stt_error", "error_code": type(exc).__name__},
                     )
                     _emit("error")
                     # Continue loop on transcription errors
                 except TextToSpeechError as exc:
                     _vl().logger.error(
-                        "TTS error: %s — resetting pipeline",
-                        exc,
+                        "TTS error — resetting pipeline",
                         extra={
                             "event": "tts_error",
-                            "error": str(exc),
-                            "llm_response": llm_response,
+                            "error_code": type(exc).__name__,
+                            "response_chars": len(llm_response or ""),
                         },
                     )
                     _emit("error")
-                    # Continue loop on TTS errors; text response preserved in log
+                    # Continue loop on TTS errors without logging response content
                 except AudioDeviceError as exc:
                     self._report_audio_device_error(
                         audio_device_kind,
@@ -1020,7 +1024,12 @@ class VoiceLoop:
                     _emit("idle" if self._diagnostic_callback is not None else "error")
                     break
                 except Exception as exc:
-                    _vl().logger.error("Unexpected error in voice loop: %s", exc)
+                    _vl().logger.error(
+                        "Unexpected error in voice loop",
+                        extra=_voice_log_extra(
+                            event="voice_loop_unexpected_error", error_code=type(exc).__name__
+                        ),
+                    )
                     _emit("error")
 
                 interactions += 1
@@ -1029,8 +1038,7 @@ class VoiceLoop:
         except AudioDeviceError as exc:
             self._report_audio_device_error("microphone", exc)
             _vl().logger.error(
-                "Audio device error — pipeline halted: %s",
-                exc,
-                extra={"event": "pipeline_blocker", "stage": "audio_device", "error": str(exc)},
+                "Audio device unavailable — pipeline halted",
+                extra={"event": "pipeline_blocker", "stage": "audio_device"},
             )
             _emit("idle" if self._diagnostic_callback is not None else "error")

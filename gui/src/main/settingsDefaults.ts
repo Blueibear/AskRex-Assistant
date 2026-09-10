@@ -22,6 +22,9 @@ export const defaultSettingsMap: Record<string, Settings> = {
     startMinimized: false
   } satisfies GeneralSettings,
   voice: {
+    backgroundVoiceEnabled: false,
+    microphoneDeviceIndex: null,
+    speakerDeviceIndex: null,
     microphoneDeviceId: '',
     speakerDeviceId: '',
     ttsEngine: 'pyttsx3',
