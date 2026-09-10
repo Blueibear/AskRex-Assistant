@@ -96,9 +96,144 @@ function outputRoutingError(error: string | undefined): Error {
   return new Error(error ?? 'Output routing service is unavailable')
 }
 
+type SettingsResult = { ok: boolean; error?: string }
+
+type AudioDeviceIndices = {
+  microphone: number | null
+  speaker: number | null
+}
+
+type PreviousVoiceState = {
+  backgroundEnabled: boolean
+  audioDevices: AudioDeviceIndices
+}
+
+type VoiceLifecycleState = {
+  pendingBackgroundVoicePreference: boolean | null
+  pendingVoiceRecovery: boolean
+}
+
+function readPreviousVoiceState(section: string): PreviousVoiceState | null {
+  if (section !== 'voice') return null
+  const config = readRexConfigStrict() as Record<string, unknown>
+  return {
+    backgroundEnabled: backgroundVoiceEnabled(config),
+    audioDevices: audioDeviceIndices(config)
+  }
+}
+
+function normalizeSettingsValues(section: string, values: Settings): Settings {
+  if (section === 'ai') return buildAiSettingsForSave(values) as unknown as Settings
+  if (section === 'voice') return buildVoiceSettings(values) as unknown as Settings
+  return values
+}
+
+async function handleOutputRoutingSettings(
+  session: ElectronSessionIdentity,
+  section: string,
+  values: Settings
+): Promise<SettingsResult | null> {
+  if (section === 'outputRouting') {
+    const response = await callOutputRoutingBridge(session, {
+      command: 'update_policy',
+      policy: values
+    })
+    return { ok: response.ok, error: response.error }
+  }
+  if (section !== 'outputRoutingTest') return null
+  const targetId = values.target_id
+  if (typeof targetId !== 'string' || !targetId) {
+    return { ok: false, error: 'A routing target is required' }
+  }
+  const response = await callOutputRoutingBridge(session, {
+    command: 'test_playback',
+    target_id: targetId
+  })
+  return { ok: response.ok, error: response.error }
+}
+
+function nextAudioDeviceIndices(values: Settings): AudioDeviceIndices {
+  return {
+    microphone: canonicalDeviceIndex(values.microphoneDeviceIndex),
+    speaker: canonicalDeviceIndex(values.speakerDeviceIndex)
+  }
+}
+
+function audioDevicesChanged(previous: AudioDeviceIndices, next: AudioDeviceIndices): boolean {
+  return previous.microphone !== next.microphone || previous.speaker !== next.speaker
+}
+
+function reconcileVoiceLifecycle(
+  session: ElectronSessionIdentity,
+  state: VoiceLifecycleState,
+  previous: PreviousVoiceState,
+  values: Settings
+): SettingsResult | null {
+  const nextBackgroundVoice = values.backgroundVoiceEnabled === true
+  if (
+    state.pendingBackgroundVoicePreference !== null &&
+    state.pendingBackgroundVoicePreference !== nextBackgroundVoice
+  ) {
+    state.pendingBackgroundVoicePreference = null
+  }
+
+  const backgroundChanged = nextBackgroundVoice !== previous.backgroundEnabled
+  const shouldReconcileBackground =
+    backgroundChanged || state.pendingBackgroundVoicePreference === nextBackgroundVoice
+  if (shouldReconcileBackground) {
+    const lifecycle = applyBackgroundVoicePreference(session, nextBackgroundVoice)
+    if (!lifecycle.ok) {
+      state.pendingBackgroundVoicePreference = nextBackgroundVoice
+      return lifecycle
+    }
+    state.pendingBackgroundVoicePreference = null
+    state.pendingVoiceRecovery = false
+    return null
+  }
+
+  if (!nextBackgroundVoice) {
+    state.pendingVoiceRecovery = false
+    return null
+  }
+
+  const audioChanged = audioDevicesChanged(
+    previous.audioDevices,
+    nextAudioDeviceIndices(values)
+  )
+  if (!audioChanged && !state.pendingVoiceRecovery) return null
+
+  const recovery = recoverBackgroundVoice()
+  if (!recovery.ok) {
+    state.pendingVoiceRecovery = true
+    return recovery
+  }
+  state.pendingVoiceRecovery = false
+  return null
+}
+
+async function handleSetSettings(
+  session: ElectronSessionIdentity,
+  state: VoiceLifecycleState,
+  section: string,
+  values: Settings
+): Promise<SettingsResult> {
+  const routed = await handleOutputRoutingSettings(session, section, values)
+  if (routed !== null) return routed
+
+  const previousVoice = readPreviousVoiceState(section)
+  const normalizedValues = normalizeSettingsValues(section, values)
+  const persisted = await persistSettingsSection(session, section, normalizedValues)
+  if (!persisted.ok) return persisted
+  if (previousVoice === null) return persisted
+
+  return reconcileVoiceLifecycle(session, state, previousVoice, normalizedValues) ?? persisted
+}
+
 export function registerSettingsHandlers(session: ElectronSessionIdentity): void {
-  let pendingBackgroundVoicePreference: boolean | null = null
-  let pendingVoiceRecovery = false
+  const voiceLifecycleState: VoiceLifecycleState = {
+    pendingBackgroundVoicePreference: null,
+    pendingVoiceRecovery: false
+  }
 
   ipcMain.handle('rex:getSettings', async (_event, section: string): Promise<Settings> => {
     if (section === 'outputRouting') {
@@ -157,84 +292,8 @@ export function registerSettingsHandlers(session: ElectronSessionIdentity): void
 
   ipcMain.handle(
     'rex:setSettings',
-    async (_event, section: string, values: Settings): Promise<{ ok: boolean; error?: string }> => {
-      if (section === 'outputRouting') {
-        const response = await callOutputRoutingBridge(session, {
-          command: 'update_policy',
-          policy: values
-        })
-        return { ok: response.ok, error: response.error }
-      }
-      if (section === 'outputRoutingTest') {
-        const targetId = values.target_id
-        if (typeof targetId !== 'string' || !targetId) {
-          return { ok: false, error: 'A routing target is required' }
-        }
-        const response = await callOutputRoutingBridge(session, {
-          command: 'test_playback',
-          target_id: targetId
-        })
-        return { ok: response.ok, error: response.error }
-      }
-
-      const previousVoiceConfig =
-        section === 'voice'
-          ? (readRexConfigStrict() as Record<string, unknown>)
-          : null
-      const previousBackgroundVoice =
-        previousVoiceConfig === null ? null : backgroundVoiceEnabled(previousVoiceConfig)
-      const previousAudioDevices =
-        previousVoiceConfig === null ? null : audioDeviceIndices(previousVoiceConfig)
-      const normalizedValues =
-        section === 'ai'
-          ? (buildAiSettingsForSave(values) as unknown as Settings)
-          : section === 'voice'
-            ? (buildVoiceSettings(values) as unknown as Settings)
-            : values
-      const persisted = await persistSettingsSection(session, section, normalizedValues)
-      if (!persisted.ok) return persisted
-      if (section === 'voice' && previousBackgroundVoice !== null) {
-        const nextBackgroundVoice = normalizedValues.backgroundVoiceEnabled === true
-        if (
-          pendingBackgroundVoicePreference !== null &&
-          pendingBackgroundVoicePreference !== nextBackgroundVoice
-        ) {
-          pendingBackgroundVoicePreference = null
-        }
-        const backgroundChanged = nextBackgroundVoice !== previousBackgroundVoice
-        const shouldReconcileBackground =
-          backgroundChanged || pendingBackgroundVoicePreference === nextBackgroundVoice
-
-        if (shouldReconcileBackground) {
-          const lifecycle = applyBackgroundVoicePreference(session, nextBackgroundVoice)
-          if (!lifecycle.ok) {
-            pendingBackgroundVoicePreference = nextBackgroundVoice
-            return lifecycle
-          }
-          pendingBackgroundVoicePreference = null
-          pendingVoiceRecovery = false
-        } else if (nextBackgroundVoice && previousAudioDevices !== null) {
-          const nextAudioDevices = {
-            microphone: canonicalDeviceIndex(normalizedValues.microphoneDeviceIndex),
-            speaker: canonicalDeviceIndex(normalizedValues.speakerDeviceIndex),
-          }
-          const audioChanged =
-            nextAudioDevices.microphone !== previousAudioDevices.microphone ||
-            nextAudioDevices.speaker !== previousAudioDevices.speaker
-          if (audioChanged || pendingVoiceRecovery) {
-            const recovery = recoverBackgroundVoice()
-            if (!recovery.ok) {
-              pendingVoiceRecovery = true
-              return recovery
-            }
-            pendingVoiceRecovery = false
-          }
-        } else if (!nextBackgroundVoice) {
-          pendingVoiceRecovery = false
-        }
-      }
-      return persisted
-    }
+    (_event, section: string, values: Settings): Promise<SettingsResult> =>
+      handleSetSettings(session, voiceLifecycleState, section, values)
   )
 
   ipcMain.handle(

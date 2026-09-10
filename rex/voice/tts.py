@@ -750,42 +750,15 @@ class TextToSpeech:
                 extra=_voice_log_extra(event="tts_stream_failed", error_code=type(exc).__name__),
             )
 
-    async def _speak_edge(self, text: str, *, request_started_at: float) -> dict[str, object]:
-        """Synthesize speech using Edge TTS."""
-        try:
-            import edge_tts
-        except ImportError:
-            raise TextToSpeechError("edge-tts is not installed")
-
-        numpy = _require_numpy()
-        sf = _vl()._lazy_import_soundfile()
-        if sf is None:
-            raise TextToSpeechError("soundfile is required for Edge TTS playback")
-
-        voice = self._current_edge_voice()
-        rate = self._edge_rate()
-        edge_started_at = time.perf_counter()
-        _vl().logger.info(
-            "[TTS:edge] Synthesis request started",
-            extra=_voice_log_extra(
-                event="tts_edge_synthesis_start",
-                voice=voice,
-                rate=rate,
-                simpleaudio_available=_vl().sa is not None,
-                text_chars=len(text),
-            ),
-        )
-        _vl().logger.debug(
-            "EDGE DEBUG: entered _speak_edge voice=%s sa=%s text_chars=%d",
-            voice,
-            _vl().sa is not None,
-            len(text),
-        )
-
+    async def _collect_edge_audio(
+        self,
+        communicate: Any,
+        *,
+        request_started_at: float,
+        edge_started_at: float,
+    ) -> tuple[bytearray, bool, float | None]:
         audio_bytes = bytearray()
-        used_streaming = True
         first_audio_chunk_s: float | None = None
-        communicate = edge_tts.Communicate(text, voice, rate=rate)
         try:
             stream = communicate.stream()
             if inspect.isawaitable(stream):
@@ -807,66 +780,54 @@ class TextToSpeech:
                         ),
                     )
                 audio_bytes.extend(data)
+            return audio_bytes, True, first_audio_chunk_s
         except Exception as exc:
-            used_streaming = False
             _vl().logger.warning(
                 "[TTS:edge] Streaming synthesis failed; falling back to file save",
                 extra=_voice_log_extra(
                     event="tts_edge_stream_failed", error_code=type(exc).__name__
                 ),
             )
+            await self._save_edge_audio(communicate, audio_bytes)
+            return audio_bytes, False, first_audio_chunk_s
+
+    async def _save_edge_audio(self, communicate: Any, audio_bytes: bytearray) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+            output_path = tmp.name
+        try:
+            await communicate.save(output_path)
+            audio_bytes.extend(Path(output_path).read_bytes())
+        finally:
+            self._remove_edge_temp_file(output_path)
+
+    @staticmethod
+    def _remove_edge_temp_file(path: str) -> None:
+        try:
+            os.unlink(path)
+        except (OSError, PermissionError) as exc:
+            _vl().logger.warning(
+                "Failed to remove Edge TTS temp file",
+                extra=_voice_log_extra(
+                    event="tts_temp_cleanup_failed", error_code=type(exc).__name__
+                ),
+            )
+
+    def _read_edge_audio(self, sf: Any, audio: bytes) -> tuple[Any, Any]:
+        try:
+            return cast(tuple[Any, Any], sf.read(io.BytesIO(audio), dtype="int16", always_2d=True))
+        except Exception:
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-                output_path = tmp.name
+                tmp.write(audio)
+                fallback_path = tmp.name
             try:
-                await communicate.save(output_path)
-                audio_bytes.extend(Path(output_path).read_bytes())
+                return cast(tuple[Any, Any], sf.read(fallback_path, dtype="int16", always_2d=True))
             finally:
-                try:
-                    os.unlink(output_path)
-                except (OSError, PermissionError) as unlink_exc:
-                    _vl().logger.warning(
-                        "Failed to remove Edge TTS temp file",
-                        extra=_voice_log_extra(
-                            event="tts_temp_cleanup_failed", error_code=type(unlink_exc).__name__
-                        ),
-                    )
+                self._remove_edge_temp_file(fallback_path)
 
-        if not audio_bytes:
-            raise TextToSpeechError("Edge TTS returned no audio data")
-
-        _vl().logger.info(
-            "[TTS:edge] Synthesis audio ready",
-            extra=_voice_log_extra(
-                event="tts_edge_synthesis_ready",
-                duration_s=round(time.perf_counter() - edge_started_at, 3),
-                audio_bytes=len(audio_bytes),
-                streaming=used_streaming,
-            ),
-        )
-        synthesis_ready_s = round(time.perf_counter() - request_started_at, 3)
-
-        def _decode_from_bytes(_audio=bytes(audio_bytes)):
-            try:
-                return sf.read(io.BytesIO(_audio), dtype="int16", always_2d=True)
-            except Exception:
-                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-                    tmp.write(_audio)
-                    fallback_path = tmp.name
-                try:
-                    return sf.read(fallback_path, dtype="int16", always_2d=True)
-                finally:
-                    try:
-                        os.unlink(fallback_path)
-                    except (OSError, PermissionError) as exc:
-                        _vl().logger.warning(
-                            "Failed to remove Edge TTS decode temp file",
-                            extra=_voice_log_extra(
-                                event="tts_temp_cleanup_failed", error_code=type(exc).__name__
-                            ),
-                        )
-
+    async def _decode_edge_audio(self, audio: bytes, sf: Any) -> tuple[Any, int, int, float]:
+        numpy = _require_numpy()
         decode_started_at = time.perf_counter()
-        pcm_data, sample_rate = await asyncio.to_thread(_decode_from_bytes)
+        pcm_data, sample_rate = await asyncio.to_thread(self._read_edge_audio, sf, audio)
         pcm_data = numpy.ascontiguousarray(pcm_data)
         pcm_data = self._trim_pcm_silence(pcm_data, int(sample_rate))
         channel_count = int(pcm_data.shape[1]) if pcm_data.ndim > 1 else 1
@@ -884,28 +845,41 @@ class TextToSpeech:
                 audio_duration_s=audio_duration_s,
             ),
         )
+        return pcm_data, int(sample_rate), channel_count, audio_duration_s
 
+    def _edge_playback_callable(self, pcm_data: Any, sample_rate: int, channel_count: int) -> Any:
         if getattr(self, "_local_output_device", None) is not None:
 
-            def _play_selected(_pcm=pcm_data, _sample_rate=sample_rate) -> None:
-                self._play_selected_output(_pcm, int(_sample_rate))
+            def _play_selected() -> None:
+                self._play_selected_output(pcm_data, sample_rate)
 
-            _play = _play_selected
-        else:
-            if _vl().sa is None:
-                raise AudioDeviceError(
-                    "Local speaker playback is unavailable because simpleaudio is not installed."
-                )
+            return _play_selected
+        if _vl().sa is None:
+            raise AudioDeviceError(
+                "Local speaker playback is unavailable because simpleaudio is not installed."
+            )
 
-            def _play(_pcm=pcm_data, _sample_rate=sample_rate, _channels=channel_count) -> None:
-                play_obj = _vl().sa.play_buffer(
-                    _pcm.tobytes(),
-                    num_channels=_channels,
-                    bytes_per_sample=2,
-                    sample_rate=_sample_rate,
-                )
-                play_obj.wait_done()
+        def _play_default() -> None:
+            play_obj = _vl().sa.play_buffer(
+                pcm_data.tobytes(),
+                num_channels=channel_count,
+                bytes_per_sample=2,
+                sample_rate=sample_rate,
+            )
+            play_obj.wait_done()
 
+        return _play_default
+
+    async def _play_edge_audio(
+        self,
+        pcm_data: Any,
+        sample_rate: int,
+        channel_count: int,
+        audio_duration_s: float,
+        *,
+        request_started_at: float,
+    ) -> tuple[float, float]:
+        play = self._edge_playback_callable(pcm_data, sample_rate, channel_count)
         playback_started_at = time.perf_counter()
         _vl().logger.info(
             "[TTS:edge] Local playback started",
@@ -925,7 +899,7 @@ class TextToSpeech:
             int(pcm_data.shape[0]),
         )
         try:
-            await asyncio.to_thread(_play)
+            await asyncio.to_thread(play)
         except Exception as exc:
             raise AudioDeviceError(f"Speaker playback failed: {exc}") from exc
         playback_duration_s = round(time.perf_counter() - playback_started_at, 3)
@@ -936,6 +910,65 @@ class TextToSpeech:
                 duration_s=playback_duration_s,
                 audio_duration_s=audio_duration_s,
             ),
+        )
+        return playback_started_at, playback_duration_s
+
+    async def _speak_edge(self, text: str, *, request_started_at: float) -> dict[str, object]:
+        """Synthesize speech using Edge TTS."""
+        try:
+            import edge_tts
+        except ImportError:
+            raise TextToSpeechError("edge-tts is not installed")
+
+        sf = _vl()._lazy_import_soundfile()
+        if sf is None:
+            raise TextToSpeechError("soundfile is required for Edge TTS playback")
+        voice = self._current_edge_voice()
+        rate = self._edge_rate()
+        edge_started_at = time.perf_counter()
+        _vl().logger.info(
+            "[TTS:edge] Synthesis request started",
+            extra=_voice_log_extra(
+                event="tts_edge_synthesis_start",
+                voice=voice,
+                rate=rate,
+                simpleaudio_available=_vl().sa is not None,
+                text_chars=len(text),
+            ),
+        )
+        _vl().logger.debug(
+            "EDGE DEBUG: entered _speak_edge voice=%s sa=%s text_chars=%d",
+            voice,
+            _vl().sa is not None,
+            len(text),
+        )
+        communicate = edge_tts.Communicate(text, voice, rate=rate)
+        audio_bytes, used_streaming, first_audio_chunk_s = await self._collect_edge_audio(
+            communicate,
+            request_started_at=request_started_at,
+            edge_started_at=edge_started_at,
+        )
+        if not audio_bytes:
+            raise TextToSpeechError("Edge TTS returned no audio data")
+        _vl().logger.info(
+            "[TTS:edge] Synthesis audio ready",
+            extra=_voice_log_extra(
+                event="tts_edge_synthesis_ready",
+                duration_s=round(time.perf_counter() - edge_started_at, 3),
+                audio_bytes=len(audio_bytes),
+                streaming=used_streaming,
+            ),
+        )
+        synthesis_ready_s = round(time.perf_counter() - request_started_at, 3)
+        pcm_data, sample_rate, channel_count, audio_duration_s = await self._decode_edge_audio(
+            bytes(audio_bytes), sf
+        )
+        playback_started_at, playback_duration_s = await self._play_edge_audio(
+            pcm_data,
+            sample_rate,
+            channel_count,
+            audio_duration_s,
+            request_started_at=request_started_at,
         )
         return {
             "path_used": "edge",

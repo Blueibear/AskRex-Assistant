@@ -64,21 +64,17 @@ function componentStatus(payload: unknown): ComponentStatus | null {
   }
   return { state, detailCode: detailCode as string | null }
 }
-export function projectBackgroundListeningStatus(
-  payload: unknown,
-  nowSeconds = Date.now() / 1000,
-): BackgroundListeningStatus {
-  if (!payload || typeof payload !== 'object') return unavailable()
-  const record = payload as Record<string, unknown>
+function freshObservedAt(record: Record<string, unknown>, nowSeconds: number): boolean {
   const observedAt = record['observed_at']
-  if (typeof observedAt !== 'number' || !Number.isFinite(observedAt)) return unavailable()
+  if (typeof observedAt !== 'number' || !Number.isFinite(observedAt)) return false
   const age = nowSeconds - observedAt
-  if (age < -HEALTH_MAX_AGE_SECONDS || age > HEALTH_MAX_AGE_SECONDS) return unavailable()
+  return age >= -HEALTH_MAX_AGE_SECONDS && age <= HEALTH_MAX_AGE_SECONDS
+}
 
-  const core = componentStatus(record['core'])
-  const voice = componentStatus(record['voice_agent'])
-  if (!core || !voice) return unavailable()
-
+function projectComponentStates(
+  core: ComponentStatus,
+  voice: ComponentStatus,
+): BackgroundListeningStatus {
   if (['failed', 'stopped', 'unavailable'].includes(core.state)) {
     return unavailable(core.detailCode || 'core_unavailable')
   }
@@ -92,6 +88,19 @@ export function projectBackgroundListeningStatus(
     return { state: 'listening', detailCode: null }
   }
   return { state: 'degraded', detailCode: voice.detailCode || core.detailCode }
+}
+
+export function projectBackgroundListeningStatus(
+  payload: unknown,
+  nowSeconds = Date.now() / 1000,
+): BackgroundListeningStatus {
+  if (!payload || typeof payload !== 'object') return unavailable()
+  const record = payload as Record<string, unknown>
+  if (!freshObservedAt(record, nowSeconds)) return unavailable()
+  const core = componentStatus(record['core'])
+  const voice = componentStatus(record['voice_agent'])
+  if (!core || !voice) return unavailable()
+  return projectComponentStates(core, voice)
 }
 export function readBackgroundListeningStatus(
   nowSeconds = Date.now() / 1000,

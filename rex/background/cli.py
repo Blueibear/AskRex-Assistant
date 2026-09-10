@@ -361,7 +361,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _restore_runtime_environment(previous)
 
 
-def _dispatch(args: argparse.Namespace, paths: BackgroundPaths) -> int:
+def _dispatch_startup_command(args: argparse.Namespace, paths: BackgroundPaths) -> int | None:
     if args.command == "install-startup":
         try:
             install_startup(
@@ -384,7 +384,10 @@ def _dispatch(args: argparse.Namespace, paths: BackgroundPaths) -> int:
             return 1
         print(json.dumps({"ok": True, "removed": True}, separators=(",", ":")))
         return 0
+    return None
 
+
+def _dispatch_control_command(args: argparse.Namespace, paths: BackgroundPaths) -> int | None:
     if args.command == "status":
         payload, result = _read_status(paths)
         print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
@@ -401,22 +404,21 @@ def _dispatch(args: argparse.Namespace, paths: BackgroundPaths) -> int:
         _request_voice_recovery(paths)
         print(json.dumps({"ok": True, "requested": True}, separators=(",", ":")))
         return 0
-    if args.command == "stop":
-        wait_seconds = float(args.wait_seconds)
-        if (
-            not math.isfinite(wait_seconds)
-            or wait_seconds < 0
-            or wait_seconds > _STOP_WAIT_MAX_SECONDS
-        ):
-            print(json.dumps({"ok": False, "detail_code": "invalid_stop_wait"}))
-            return 2
-        _request_stop(paths)
-        if wait_seconds > 0 and not _wait_for_supervisor_stop(paths, wait_seconds):
-            print(json.dumps({"ok": False, "detail_code": "stop_timeout"}, separators=(",", ":")))
-            return 1
-        print(json.dumps({"ok": True, "requested": True}, separators=(",", ":")))
-        return 0
+    if args.command != "stop":
+        return None
+    wait_seconds = float(args.wait_seconds)
+    if not math.isfinite(wait_seconds) or not 0 <= wait_seconds <= _STOP_WAIT_MAX_SECONDS:
+        print(json.dumps({"ok": False, "detail_code": "invalid_stop_wait"}))
+        return 2
+    _request_stop(paths)
+    if wait_seconds > 0 and not _wait_for_supervisor_stop(paths, wait_seconds):
+        print(json.dumps({"ok": False, "detail_code": "stop_timeout"}, separators=(",", ":")))
+        return 1
+    print(json.dumps({"ok": True, "requested": True}, separators=(",", ":")))
+    return 0
 
+
+def _dispatch_runtime_command(args: argparse.Namespace, paths: BackgroundPaths) -> int | None:
     if args.command == "core":
         asyncio.run(_run_core(paths))
         return 0
@@ -446,6 +448,18 @@ def _dispatch(args: argparse.Namespace, paths: BackgroundPaths) -> int:
         except AlreadyRunningError:
             return 2
         return 0
+    return None
+
+
+def _dispatch(args: argparse.Namespace, paths: BackgroundPaths) -> int:
+    for handler in (
+        _dispatch_startup_command,
+        _dispatch_control_command,
+        _dispatch_runtime_command,
+    ):
+        result = handler(args, paths)
+        if result is not None:
+            return result
     raise AssertionError(f"Unhandled background command: {args.command}")
 
 
