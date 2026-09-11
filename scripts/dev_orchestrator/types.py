@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, replace
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 
-class WorkerStatus(str, Enum):
+class WorkerStatus(StrEnum):
     IDLE = "idle"
     PLANNING = "planning"
     IMPLEMENTING = "implementing"
@@ -46,12 +46,15 @@ class WorkerState:
     implementation_failures: int = 0
     review_failures: int = 0
     blocked_reason: str = ""
+    blocker_kind: str = ""
+    resume_status: WorkerStatus | None = None
     claude_session_id: str = ""
     codex_session_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["status"] = self.status.value
+        data["resume_status"] = self.resume_status.value if self.resume_status else None
         return data
 
 
@@ -71,12 +74,12 @@ class OrchestratorConfig:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def default(cls, coordination_root: Path) -> "OrchestratorConfig":
+    def default(cls, coordination_root: Path) -> OrchestratorConfig:
         return cls(coordination_root=coordination_root)
 
     def with_worker_root(
         self, role: str, root: Path, *, frozen_worktree: Path | None = None
-    ) -> "OrchestratorConfig":
+    ) -> OrchestratorConfig:
         frozen = frozen_worktree or self.frozen_worktree
         if frozen and root.resolve() == frozen.resolve():
             raise ValueError("frozen worktree cannot be a development worker root")

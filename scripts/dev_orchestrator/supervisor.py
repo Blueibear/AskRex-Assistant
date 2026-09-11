@@ -34,6 +34,8 @@ def _state_from_dict(role: str, data: dict | None) -> WorkerState:
         implementation_failures=int(data.get("implementation_failures", 0)),
         review_failures=int(data.get("review_failures", 0)),
         blocked_reason=str(data.get("blocked_reason", "")),
+        blocker_kind=str(data.get("blocker_kind", "")),
+        resume_status=(WorkerStatus(data["resume_status"]) if data.get("resume_status") else None),
         claude_session_id=str(data.get("claude_session_id", "")),
         codex_session_id=str(data.get("codex_session_id", "")),
     )
@@ -108,9 +110,7 @@ class Supervisor:
 
     def _plan(self, role: str, state: WorkerState, context: str) -> None:
         try:
-            result = self.invoker.lead(
-                role, replace(state, status=WorkerStatus.PLANNING), context
-            )
+            result = self.invoker.lead(role, replace(state, status=WorkerStatus.PLANNING), context)
         except AgentInvocationError as exc:
             self._handle_invocation_error(role, state, "lead", exc, context)
             return
@@ -182,9 +182,7 @@ class Supervisor:
             )
             return
         if result.outcome == "changes_required":
-            feedback = "\n\n".join(
-                part for part in (result.summary, result.next_action) if part
-            )
+            feedback = "\n\n".join(part for part in (result.summary, result.next_action) if part)
             self.save_state(
                 replace(
                     state,
@@ -268,6 +266,12 @@ class Supervisor:
                         f"{exc.provider} usage limit: {decision.action}; "
                         f"{decision.budget.banked_resets_remaining} banked resets recorded. {exc.detail}"
                     ),
+                    blocker_kind="usage_limit",
+                    resume_status={
+                        "implement": WorkerStatus.IMPLEMENTING,
+                        "review": WorkerStatus.REVIEWING,
+                        "lead": WorkerStatus.PLANNING,
+                    }.get(phase, state.status),
                 )
             )
             return
@@ -319,5 +323,7 @@ class Supervisor:
                 state,
                 status=status,
                 blocked_reason=result.blocker_reason or result.summary,
+                blocker_kind="human" if status is WorkerStatus.BLOCKED_USER else "system",
+                resume_status=state.status,
             )
         )

@@ -1,8 +1,8 @@
 import json
 import os
-from datetime import datetime, timezone
+import threading
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
 
 from .storage import AtomicJsonStore
 
@@ -64,10 +64,8 @@ def write_heartbeat(
     now: datetime | None = None,
     pid: int | None = None,
 ) -> None:
-    stamp = now or datetime.now(timezone.utc)
-    AtomicJsonStore(path).write(
-        {"pid": pid or os.getpid(), "timestamp": stamp.isoformat()}
-    )
+    stamp = now or datetime.now(UTC)
+    AtomicJsonStore(path).write({"pid": pid or os.getpid(), "timestamp": stamp.isoformat()})
 
 
 def read_heartbeat(path: Path) -> dict | None:
@@ -77,3 +75,36 @@ def read_heartbeat(path: Path) -> dict | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+
+
+class HeartbeatPump:
+    def __init__(self, path: Path, *, interval_seconds: float = 30.0) -> None:
+        if interval_seconds <= 0:
+            raise ValueError("heartbeat interval must be positive")
+        self.path = path
+        self.interval_seconds = interval_seconds
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval_seconds):
+            write_heartbeat(self.path)
+
+    def __enter__(self) -> "HeartbeatPump":
+        write_heartbeat(self.path)
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="askrex-dev-orchestrator-heartbeat",
+            daemon=True,
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._stop.set()
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=max(1.0, self.interval_seconds * 2))
+        write_heartbeat(self.path)
+        self._thread = None

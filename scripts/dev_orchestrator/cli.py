@@ -2,10 +2,10 @@ import argparse
 import json
 import time
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from .lifecycle import SupervisorLock, read_heartbeat, write_heartbeat
+from .lifecycle import HeartbeatPump, SupervisorLock, read_heartbeat
 from .runner import CliAgentInvoker
 from .storage import AtomicJsonStore
 from .supervisor import Supervisor
@@ -76,9 +76,7 @@ def load_config(root: Path) -> OrchestratorConfig:
 
 
 def save_config(config: OrchestratorConfig) -> None:
-    AtomicJsonStore(config.coordination_root / _CONFIG_NAME).write(
-        _config_payload(config)
-    )
+    AtomicJsonStore(config.coordination_root / _CONFIG_NAME).write(_config_payload(config))
 
 
 def set_observe_only(root: Path, observe_only: bool) -> OrchestratorConfig:
@@ -95,6 +93,19 @@ def record_confirmed_resets(root: Path, remaining: int) -> OrchestratorConfig:
     ).with_confirmed_remaining(remaining)
     updated = replace(config, banked_resets_remaining=budget.banked_resets_remaining)
     save_config(updated)
+    for role in ("backend", "mobile"):
+        store = AtomicJsonStore(root / "state" / f"{role}.json")
+        state = store.read(default=None)
+        if not state or state.get("status") != "blocked_user":
+            continue
+        if state.get("blocker_kind") != "usage_limit":
+            continue
+        resume = state.get("resume_status") or "implementing"
+        state["status"] = resume
+        state["blocked_reason"] = ""
+        state["blocker_kind"] = ""
+        state["resume_status"] = None
+        store.write(state)
     return updated
 
 
@@ -111,18 +122,18 @@ def heartbeat_is_stale(
         stamp = datetime.fromisoformat(str(payload["timestamp"]))
     except ValueError:
         return True
-    current = now or datetime.now(timezone.utc)
+    current = now or datetime.now(UTC)
     if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
+        stamp = stamp.replace(tzinfo=UTC)
     return (current - stamp).total_seconds() > max_age_seconds
 
 
 def render_status(config: OrchestratorConfig) -> str:
     workers: dict[str, dict] = {}
     for role in ("backend", "mobile"):
-        payload = AtomicJsonStore(
-            config.coordination_root / "state" / f"{role}.json"
-        ).read(default={})
+        payload = AtomicJsonStore(config.coordination_root / "state" / f"{role}.json").read(
+            default={}
+        )
         task = payload.get("task") or {}
         workers[role] = {
             "status": payload.get("status", "idle"),
@@ -176,15 +187,14 @@ def run_loop(
     lock = SupervisorLock(config.coordination_root / _LOCK_NAME)
     heartbeat_path = config.coordination_root / _HEARTBEAT_NAME
     cycles = 0
-    with lock:
+    with lock, HeartbeatPump(heartbeat_path):
         while max_cycles is None or cycles < max_cycles:
-            write_heartbeat(heartbeat_path)
-            run_cycle(config, invoker=invoker)
-            write_heartbeat(heartbeat_path)
+            current = load_config(config.coordination_root)
+            run_cycle(current, invoker=invoker)
             cycles += 1
             if max_cycles is not None and cycles >= max_cycles:
                 break
-            sleep_fn(config.poll_seconds)
+            sleep_fn(current.poll_seconds)
 
 
 def build_parser() -> argparse.ArgumentParser:

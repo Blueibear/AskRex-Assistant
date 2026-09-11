@@ -193,7 +193,9 @@ class CliAgentInvoker:
 
     def implement(self, role, state, task, context, model) -> AgentResult:
         repo = self._repo(role)
-        command = build_claude_command(repo, _task_prompt(role, task, self.config.coordination_root), model)
+        command = build_claude_command(
+            repo, _task_prompt(role, task, self.config.coordination_root), model
+        )
         command = _append_extra_dir(command, self.config.coordination_root)
         return self._finish("claude", self.execute(command, repo))
 

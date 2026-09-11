@@ -808,3 +808,7 @@ Before each work cycle, before starting a cross-repo contract change, and at the
 Do not edit the mobile repository to resolve a mobile-owned issue unless the owner explicitly reassigns that work. Do not modify the frozen `rex-ai-pc-test` worktree.
 
 Development may mark a live-test issue `fixed-needs-retest`, but only the testing role may mark it `verified` after the real UI/device path is retested. Never place credentials, private conversation content, or secrets in coordination files.
+
+The optional local development orchestrator in `scripts/dev_orchestrator/` may supervise backend and mobile Ralph-style workstreams through this same coordination directory. It is coordination authority, not repository or security authority: existing ownership, approval, privacy, CI, and frozen-worktree rules remain binding. Routine implementation/review must explicitly select the documented Claude/Codex models; GPT-6 Astra is reserved for event-driven lead/adjudication decisions. See `docs/claude/DEVELOPMENT_ORCHESTRATOR.md`.
+
+Never activate orchestrator CLI writers while browser-based coding workers are still writing the same worktrees. Rollout starts observe-only and requires explicit backend/mobile worker handoff before activation. Banked Work/Codex reset consumption, physical-device testing, credentials/account actions, and authority-changing operations remain human-confirmed gates.

@@ -3,7 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from scripts.dev_orchestrator.supervisor import Supervisor
-from scripts.dev_orchestrator.types import AgentResult, OrchestratorConfig, TaskItem, WorkerStatus
+from scripts.dev_orchestrator.types import (
+    AgentResult,
+    OrchestratorConfig,
+    TaskItem,
+    WorkerState,
+    WorkerStatus,
+)
 
 
 class FakeInvoker:
@@ -60,7 +66,9 @@ def make_config(tmp_path: Path, *, observe_only: bool) -> OrchestratorConfig:
     )
 
 
-def result(outcome: str, *, task_id: str = "", task_prompt: str = "", summary: str = "ok") -> AgentResult:
+def result(
+    outcome: str, *, task_id: str = "", task_prompt: str = "", summary: str = "ok"
+) -> AgentResult:
     return AgentResult(
         outcome=outcome,
         summary=summary,
@@ -116,7 +124,13 @@ def test_review_changes_required_loops_back_to_implementation(tmp_path: Path) ->
 
 def test_backend_human_blocker_does_not_stop_mobile(tmp_path: Path) -> None:
     invoker = FakeInvoker()
-    invoker.add("backend", "implement", AgentResult("blocked_user", "Need Start menu retest", "Retest", True, "physical Windows retest"))
+    invoker.add(
+        "backend",
+        "implement",
+        AgentResult(
+            "blocked_user", "Need Start menu retest", "Retest", True, "physical Windows retest"
+        ),
+    )
     invoker.add("mobile", "implement", result("continue"))
     supervisor = Supervisor(make_config(tmp_path, observe_only=False), invoker)
     supervisor.enqueue("backend", TaskItem("B-1", "Fix startup"))
@@ -145,16 +159,23 @@ def test_empty_queue_invokes_astra_lead_only_when_active(tmp_path: Path) -> None
     assert ("mobile", "lead", "") in invoker.calls
 
 
-def test_codex_usage_limit_at_review_requests_reset_and_preserves_other_workstream(tmp_path: Path) -> None:
+def test_codex_usage_limit_at_review_requests_reset_and_preserves_other_workstream(
+    tmp_path: Path,
+) -> None:
     from scripts.dev_orchestrator.runner import AgentInvocationError
+
     invoker = FakeInvoker()
-    invoker.add("backend", "review", AgentInvocationError("codex", "usage_limit", "weekly limit reached"))
+    invoker.add(
+        "backend", "review", AgentInvocationError("codex", "usage_limit", "weekly limit reached")
+    )
     invoker.add("mobile", "implement", result("continue"))
     config = make_config(tmp_path, observe_only=False)
     supervisor = Supervisor(config, invoker)
-    supervisor.save_state(__import__("scripts.dev_orchestrator.types", fromlist=["WorkerState"]).WorkerState(
-        role="backend", status=WorkerStatus.REVIEWING, task=TaskItem("B-1", "Fix backend")
-    ))
+    supervisor.save_state(
+        __import__("scripts.dev_orchestrator.types", fromlist=["WorkerState"]).WorkerState(
+            role="backend", status=WorkerStatus.REVIEWING, task=TaskItem("B-1", "Fix backend")
+        )
+    )
     supervisor.enqueue("mobile", TaskItem("M-1", "Continue mobile"))
 
     supervisor.run_cycle()
@@ -171,17 +192,22 @@ def test_codex_usage_limit_at_review_requests_reset_and_preserves_other_workstre
 
 def test_repeated_implementation_failure_triggers_astra_adjudication(tmp_path: Path) -> None:
     from scripts.dev_orchestrator.types import WorkerState
+
     invoker = FakeInvoker()
     invoker.add("backend", "implement", result("failed", summary="still failing"))
-    invoker.add("backend", "lead", result("assign", task_id="B-1", task_prompt="Reframed backend fix"))
+    invoker.add(
+        "backend", "lead", result("assign", task_id="B-1", task_prompt="Reframed backend fix")
+    )
     config = make_config(tmp_path, observe_only=False)
     supervisor = Supervisor(config, invoker)
-    supervisor.save_state(WorkerState(
-        role="backend",
-        status=WorkerStatus.IMPLEMENTING,
-        task=TaskItem("B-1", "Fix backend"),
-        implementation_failures=3,
-    ))
+    supervisor.save_state(
+        WorkerState(
+            role="backend",
+            status=WorkerStatus.IMPLEMENTING,
+            task=TaskItem("B-1", "Fix backend"),
+            implementation_failures=3,
+        )
+    )
 
     supervisor.run_cycle()
 
@@ -190,3 +216,23 @@ def test_repeated_implementation_failure_triggers_astra_adjudication(tmp_path: P
     assert state.status is WorkerStatus.IMPLEMENTING
     assert state.task is not None
     assert state.task.prompt == "Reframed backend fix"
+
+
+def test_usage_limit_records_exact_resume_phase(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.runner import AgentInvocationError
+
+    invoker = FakeInvoker()
+    invoker.add("backend", "review", AgentInvocationError("codex", "usage_limit", "weekly limit"))
+    supervisor = Supervisor(make_config(tmp_path, observe_only=False), invoker)
+    supervisor.save_state(
+        WorkerState(
+            role="backend", status=WorkerStatus.REVIEWING, task=TaskItem("B-1", "Review me")
+        )
+    )
+
+    supervisor.run_cycle()
+
+    state = supervisor.load_state("backend")
+    assert state.status is WorkerStatus.BLOCKED_USER
+    assert state.blocker_kind == "usage_limit"
+    assert state.resume_status is WorkerStatus.REVIEWING

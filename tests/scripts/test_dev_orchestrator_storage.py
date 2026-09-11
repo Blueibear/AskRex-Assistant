@@ -9,7 +9,6 @@ from scripts.dev_orchestrator.storage import AtomicJsonStore
 from scripts.dev_orchestrator.types import (
     AgentResult,
     OrchestratorConfig,
-    TaskItem,
     WorkerState,
     WorkerStatus,
 )
@@ -60,3 +59,28 @@ def test_agent_result_validation_accepts_structured_result() -> None:
     assert isinstance(result, AgentResult)
     assert result.outcome == "continue"
     assert result.needs_user is False
+
+
+def test_atomic_store_retries_windows_replace_sharing_violation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import os
+
+    from scripts.dev_orchestrator import storage as storage_module
+
+    store = AtomicJsonStore(tmp_path / "state.json")
+    real_replace = os.replace
+    calls = 0
+
+    def flaky_replace(source, destination):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise PermissionError(5, "sharing violation")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(storage_module.os, "replace", flaky_replace)
+    store.write({"status": "working"})
+
+    assert calls == 2
+    assert store.read() == {"status": "working"}

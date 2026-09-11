@@ -1,7 +1,7 @@
-from __future__ import annotations
-
 import json
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -20,10 +20,25 @@ class AtomicJsonStore:
 
     def write(self, value: Any) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_name(f"{self.path.name}.tmp")
-        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
-            json.dump(value, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, self.path)
+        temporary = self.path.with_name(
+            f".{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+        )
+        try:
+            with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+                json.dump(value, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            self._replace_with_retry(temporary)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def _replace_with_retry(self, temporary: Path) -> None:
+        for attempt in range(5):
+            try:
+                os.replace(temporary, self.path)
+                return
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.01 * (attempt + 1))
