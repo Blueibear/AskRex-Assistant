@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["outcome", "summary", "next_action", "needs_user", "blocker_reason"],
+  "properties": {
+    "outcome": {
+      "type": "string",
+      "enum": ["continue", "ready_for_review", "pass", "changes_required", "assign", "done", "blocked_user", "blocked_system", "failed"]
+    },
+    "summary": {"type": "string"},
+    "next_action": {"type": "string"},
+    "needs_user": {"type": "boolean"},
+    "blocker_reason": {"type": "string"},
+    "task_id": {"type": "string"},
+    "task_prompt": {"type": "string"}
+  }
+}
