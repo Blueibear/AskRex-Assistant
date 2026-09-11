@@ -4,10 +4,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
 
+from .alerts import AlertSink
 from .coordination import build_coordination_context
 from .routing import select_implementer_model, select_reviewer_model
+from .runner import AgentInvocationError
 from .storage import AtomicJsonStore
 from .types import AgentResult, OrchestratorConfig, TaskItem, WorkerState, WorkerStatus
+from .usage import UsageBudget, handle_usage_limit
 
 
 class AgentInvoker(Protocol):
@@ -41,6 +44,7 @@ class Supervisor:
         self.config = config
         self.invoker = invoker
         self.root = config.coordination_root
+        self.alerts = AlertSink(self.root / "alerts")
 
     def _state_store(self, role: str) -> AtomicJsonStore:
         return AtomicJsonStore(self.root / "state" / f"{role}.json")
@@ -103,7 +107,13 @@ class Supervisor:
         self._implement(role, state, context)
 
     def _plan(self, role: str, state: WorkerState, context: str) -> None:
-        result = self.invoker.lead(role, replace(state, status=WorkerStatus.PLANNING), context)
+        try:
+            result = self.invoker.lead(
+                role, replace(state, status=WorkerStatus.PLANNING), context
+            )
+        except AgentInvocationError as exc:
+            self._handle_invocation_error(role, state, "lead", exc, context)
+            return
         if result.outcome == "assign":
             if not result.task_id or not result.task_prompt:
                 raise ValueError("lead assign result requires task_id and task_prompt")
@@ -124,7 +134,11 @@ class Supervisor:
     def _implement(self, role: str, state: WorkerState, context: str) -> None:
         assert state.task is not None
         model = select_implementer_model(state, self.config)
-        result = self.invoker.implement(role, state, state.task, context, model)
+        try:
+            result = self.invoker.implement(role, state, state.task, context, model)
+        except AgentInvocationError as exc:
+            self._handle_invocation_error(role, state, "implement", exc, context)
+            return
         if result.outcome == "ready_for_review":
             self.save_state(
                 replace(state, status=WorkerStatus.REVIEWING, iteration=state.iteration + 1)
@@ -136,21 +150,27 @@ class Supervisor:
             )
             return
         if result.outcome == "failed":
-            self.save_state(
-                replace(
-                    state,
-                    status=WorkerStatus.IMPLEMENTING,
-                    implementation_failures=state.implementation_failures + 1,
-                    blocked_reason=result.summary,
-                )
+            failed_state = replace(
+                state,
+                status=WorkerStatus.IMPLEMENTING,
+                implementation_failures=state.implementation_failures + 1,
+                blocked_reason=result.summary,
             )
+            if failed_state.implementation_failures >= self.config.astra_adjudication_after:
+                self._adjudicate(role, failed_state, context)
+            else:
+                self.save_state(failed_state)
             return
         self._save_block_or_failure(state, result)
 
     def _review(self, role: str, state: WorkerState, context: str) -> None:
         assert state.task is not None
         model = select_reviewer_model(state, self.config)
-        result = self.invoker.review(role, state, state.task, context, model)
+        try:
+            result = self.invoker.review(role, state, state.task, context, model)
+        except AgentInvocationError as exc:
+            self._handle_invocation_error(role, state, "review", exc, context)
+            return
         if result.outcome == "pass":
             self.save_state(
                 WorkerState(
@@ -186,6 +206,108 @@ class Supervisor:
             )
             return
         self._save_block_or_failure(state, result)
+
+    def _adjudicate(self, role: str, state: WorkerState, context: str) -> None:
+        assert state.task is not None
+        try:
+            result = self.invoker.lead(role, state, context, task=state.task)
+        except AgentInvocationError as exc:
+            self._handle_invocation_error(role, state, "lead", exc, context)
+            return
+        if result.outcome == "assign":
+            if not result.task_id or not result.task_prompt:
+                raise ValueError("Astra adjudication requires task_id and task_prompt")
+            self.save_state(
+                replace(
+                    state,
+                    status=WorkerStatus.IMPLEMENTING,
+                    task=TaskItem(result.task_id, result.task_prompt),
+                    implementation_failures=0,
+                    review_failures=0,
+                    blocked_reason="",
+                )
+            )
+            return
+        if result.outcome == "done":
+            self.save_state(
+                replace(
+                    state,
+                    status=WorkerStatus.BLOCKED_SYSTEM,
+                    blocked_reason="Astra cannot mark an active task done before independent review",
+                )
+            )
+            return
+        self._save_block_or_failure(state, result)
+
+    def _handle_invocation_error(
+        self,
+        role: str,
+        state: WorkerState,
+        phase: str,
+        exc: AgentInvocationError,
+        context: str,
+    ) -> None:
+        if exc.kind == "usage_limit":
+            budget = UsageBudget(
+                self.config.banked_resets_remaining,
+                self.config.reserve_last_reset,
+            )
+            decision = handle_usage_limit(
+                budget,
+                self.alerts,
+                role=role,
+                provider=exc.provider,
+                reason=exc.detail,
+                claude_available=False,
+            )
+            self.save_state(
+                replace(
+                    state,
+                    status=WorkerStatus.BLOCKED_USER if decision.blocked_user else state.status,
+                    blocked_reason=(
+                        f"{exc.provider} usage limit: {decision.action}; "
+                        f"{decision.budget.banked_resets_remaining} banked resets recorded. {exc.detail}"
+                    ),
+                )
+            )
+            return
+        if exc.kind == "auth":
+            self.alerts.emit(
+                role=role,
+                kind="auth",
+                message=f"{role} needs account/login intervention for {exc.provider}: {exc.detail}",
+            )
+            self.save_state(
+                replace(state, status=WorkerStatus.BLOCKED_USER, blocked_reason=exc.detail)
+            )
+            return
+        if phase == "implement":
+            failed = replace(
+                state,
+                status=WorkerStatus.IMPLEMENTING,
+                implementation_failures=state.implementation_failures + 1,
+                blocked_reason=exc.detail,
+            )
+            if failed.implementation_failures >= self.config.astra_adjudication_after:
+                self._adjudicate(role, failed, context)
+            else:
+                self.save_state(failed)
+            return
+        if phase == "review":
+            failed = replace(
+                state,
+                status=WorkerStatus.REVIEWING,
+                review_failures=state.review_failures + 1,
+                blocked_reason=exc.detail,
+            )
+            if failed.review_failures >= self.config.astra_adjudication_after:
+                self._adjudicate(role, failed, context)
+            else:
+                self.save_state(failed)
+            return
+        self.save_state(
+            replace(state, status=WorkerStatus.BLOCKED_SYSTEM, blocked_reason=exc.detail)
+        )
 
     def _save_block_or_failure(self, state: WorkerState, result: AgentResult) -> None:
         if result.outcome == "blocked_user" or result.needs_user:

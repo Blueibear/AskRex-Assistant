@@ -18,7 +18,10 @@ class FakeInvoker:
         self.calls.append((role, phase, task_id))
         configured = self.results.get((role, phase), [])
         if configured:
-            return configured.pop(0)
+            value = configured.pop(0)
+            if isinstance(value, Exception):
+                raise value
+            return value
         if phase == "lead":
             return AgentResult("done", "No queued fake work", "")
         raise AssertionError(f"unexpected fake invocation: {role}/{phase}")
@@ -140,3 +143,50 @@ def test_empty_queue_invokes_astra_lead_only_when_active(tmp_path: Path) -> None
     assert mobile.status is WorkerStatus.DONE
     assert ("backend", "lead", "") in invoker.calls
     assert ("mobile", "lead", "") in invoker.calls
+
+
+def test_codex_usage_limit_at_review_requests_reset_and_preserves_other_workstream(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.runner import AgentInvocationError
+    invoker = FakeInvoker()
+    invoker.add("backend", "review", AgentInvocationError("codex", "usage_limit", "weekly limit reached"))
+    invoker.add("mobile", "implement", result("continue"))
+    config = make_config(tmp_path, observe_only=False)
+    supervisor = Supervisor(config, invoker)
+    supervisor.save_state(__import__("scripts.dev_orchestrator.types", fromlist=["WorkerState"]).WorkerState(
+        role="backend", status=WorkerStatus.REVIEWING, task=TaskItem("B-1", "Fix backend")
+    ))
+    supervisor.enqueue("mobile", TaskItem("M-1", "Continue mobile"))
+
+    supervisor.run_cycle()
+
+    backend = supervisor.load_state("backend")
+    mobile = supervisor.load_state("mobile")
+    assert backend.status is WorkerStatus.BLOCKED_USER
+    assert "banked reset" in backend.blocked_reason.lower()
+    assert mobile.status is WorkerStatus.IMPLEMENTING
+    alerts = list((config.coordination_root / "alerts").glob("*.json"))
+    assert len(alerts) == 1
+    assert "3 banked reset" in alerts[0].read_text(encoding="utf-8")
+
+
+def test_repeated_implementation_failure_triggers_astra_adjudication(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.types import WorkerState
+    invoker = FakeInvoker()
+    invoker.add("backend", "implement", result("failed", summary="still failing"))
+    invoker.add("backend", "lead", result("assign", task_id="B-1", task_prompt="Reframed backend fix"))
+    config = make_config(tmp_path, observe_only=False)
+    supervisor = Supervisor(config, invoker)
+    supervisor.save_state(WorkerState(
+        role="backend",
+        status=WorkerStatus.IMPLEMENTING,
+        task=TaskItem("B-1", "Fix backend"),
+        implementation_failures=3,
+    ))
+
+    supervisor.run_cycle()
+
+    state = supervisor.load_state("backend")
+    assert ("backend", "lead", "B-1") in invoker.calls
+    assert state.status is WorkerStatus.IMPLEMENTING
+    assert state.task is not None
+    assert state.task.prompt == "Reframed backend fix"
