@@ -106,6 +106,42 @@ export interface WakeWordStatus {
   detail: string
 }
 
+export interface WakeWordRuntimeStatus {
+  reason: string
+  configuredPhrase: string | null
+  activePhrase: string | null
+  configuredBackend: string | null
+  activeBackend: string | null
+  threshold: number | null
+  fallbackActive: boolean
+  fallbackPhrase: string | null
+  detectorGeneration: number
+  armed: boolean
+  microphoneLabel: string | null
+  portAudioDeviceIndex: number | null
+}
+
+export interface WakeWordAttemptEvidence {
+  attemptCount: number
+  latestConfidence: number | null
+  maxConfidence: number | null
+  threshold: number | null
+  audioRms: number | null
+  audioPeak: number | null
+  rejectReason: string | null
+  activePhrase: string | null
+  activeBackend: string | null
+  detectorGeneration: number
+  accepted: boolean
+  microphoneLabel: string | null
+  portAudioDeviceIndex: number | null
+}
+
+export interface WakeWordRuntimeSnapshots {
+  runtimeStatus: WakeWordRuntimeStatus | null
+  attemptEvidence: WakeWordAttemptEvidence | null
+}
+
 export interface VoiceTranscriptEntry {
   text: string
   role: 'user' | 'rex'
@@ -873,9 +909,12 @@ export interface RexAPI {
     onStateChange: (state: string) => void,
     onTranscript: (entry: VoiceTranscriptEntry) => void,
     onError: (error: string) => void,
-    onStatus?: (status: string, label: string) => void
+    onStatus?: (status: string, label: string) => void,
+    onWakeWordRuntimeStatus?: (status: WakeWordRuntimeStatus) => void,
+    onWakeWordAttemptEvidence?: (evidence: WakeWordAttemptEvidence) => void
   ) => (() => void)
   stopVoice: () => Promise<void>
+  getWakeWordRuntimeSnapshots: () => Promise<WakeWordRuntimeSnapshots>
   getTasks: () => Promise<Task[]>
   saveTask: (task: TaskInput) => Promise<Task>
   deleteTask: (taskId: string) => Promise<void>

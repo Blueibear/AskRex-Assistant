@@ -258,6 +258,227 @@ def emit_audio_diagnostic(diagnostic: dict[str, object]) -> None:
     )
 
 
+class WakeWordRuntimeTracker:
+    """Project privacy-safe wake detector events onto the GUI bridge."""
+
+    _PRIVATE_EXTRA_KEYS = {
+        "requested_model_path",
+        "requested_embedding_path",
+        "resolved_model_path",
+        "resolved_embedding_path",
+        "transcript",
+        "prompt",
+        "user_id",
+        "credential",
+        "credentials",
+        "token",
+    }
+
+    def __init__(
+        self,
+        *,
+        configured_phrase: str | None,
+        configured_backend: str | None,
+        fallback_phrase: str | None,
+        microphone_label: str | None,
+        portaudio_device_index: int | None,
+    ) -> None:
+        self._configured_phrase = self._clean_text(configured_phrase)
+        self._configured_backend = self._clean_text(configured_backend)
+        self._fallback_phrase = self._clean_text(fallback_phrase)
+        self._microphone_label = self._clean_text(microphone_label)
+        self._portaudio_device_index = (
+            portaudio_device_index
+            if isinstance(portaudio_device_index, int)
+            and not isinstance(portaudio_device_index, bool)
+            else None
+        )
+        self._active_phrase = self._configured_phrase
+        self._active_backend = self._configured_backend
+        self._threshold: float | None = None
+        self._detector_generation = 1
+        self._fallback_active = False
+        self._armed = False
+        self._max_confidence: float | None = None
+
+    @staticmethod
+    def _clean_text(value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+        value = value.strip()
+        return value or None
+
+    @staticmethod
+    def _finite_number(value: object) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        number = float(value)
+        return number if math.isfinite(number) else None
+
+    @staticmethod
+    def _integer(value: object) -> int | None:
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        return value
+
+    @classmethod
+    def _safe_log_extra(cls, extra: dict[str, object]) -> dict[str, object]:
+        return {
+            key: value
+            for key, value in extra.items()
+            if key not in cls._PRIVATE_EXTRA_KEYS and not key.endswith("_path")
+        }
+
+    def _update_common(self, extra: dict[str, object]) -> None:
+        phrase = self._clean_text(extra.get("keyword"))
+        backend = self._clean_text(extra.get("backend"))
+        threshold = self._finite_number(extra.get("threshold"))
+        generation = self._integer(extra.get("detector_generation"))
+        if phrase is not None:
+            self._active_phrase = phrase
+        if backend is not None:
+            self._active_backend = backend
+        if threshold is not None:
+            self._threshold = threshold
+        if generation is not None:
+            self._detector_generation = generation
+        if self._configured_backend and self._active_backend:
+            self._fallback_active = self._active_backend != self._configured_backend
+        elif self._configured_phrase and self._active_phrase and self._fallback_phrase:
+            self._fallback_active = (
+                self._active_phrase == self._fallback_phrase
+                and self._active_phrase != self._configured_phrase
+            )
+
+    def _emit_runtime(self, reason: str) -> None:
+        emit(
+            {
+                "type": "wakeword_runtime_status",
+                "runtime": {
+                    "reason": reason,
+                    "configured_phrase": self._configured_phrase,
+                    "active_phrase": self._active_phrase,
+                    "configured_backend": self._configured_backend,
+                    "active_backend": self._active_backend,
+                    "threshold": self._threshold,
+                    "fallback_active": self._fallback_active,
+                    "fallback_phrase": self._fallback_phrase,
+                    "detector_generation": self._detector_generation,
+                    "armed": self._armed,
+                    "microphone_label": self._microphone_label,
+                    "portaudio_device_index": self._portaudio_device_index,
+                },
+            }
+        )
+
+    def _emit_attempt(self, extra: dict[str, object]) -> None:
+        attempt_count = self._integer(extra.get("attempt"))
+        if attempt_count is None:
+            return
+        confidence = self._finite_number(extra.get("confidence"))
+        if attempt_count == 1:
+            self._max_confidence = confidence
+        elif confidence is not None:
+            self._max_confidence = (
+                confidence
+                if self._max_confidence is None
+                else max(self._max_confidence, confidence)
+            )
+        accepted = extra.get("accepted") is True
+        if not accepted and attempt_count > 3 and attempt_count % 10 != 0:
+            return
+        phrase = self._clean_text(extra.get("keyword"))
+        if phrase is not None:
+            self._active_phrase = phrase
+        threshold = self._finite_number(extra.get("threshold"))
+        if threshold is not None:
+            self._threshold = threshold
+        generation = self._integer(extra.get("detector_generation"))
+        if generation is not None:
+            self._detector_generation = generation
+        emit(
+            {
+                "type": "wakeword_attempt_evidence",
+                "evidence": {
+                    "attempt_count": attempt_count,
+                    "latest_confidence": confidence,
+                    "max_confidence": self._max_confidence,
+                    "threshold": self._threshold,
+                    "audio_rms": self._finite_number(extra.get("audio_rms")),
+                    "audio_peak": self._finite_number(extra.get("audio_peak")),
+                    "reject_reason": self._clean_text(extra.get("reject_reason")),
+                    "active_phrase": self._active_phrase,
+                    "active_backend": self._active_backend,
+                    "detector_generation": self._detector_generation,
+                    "accepted": accepted,
+                    "microphone_label": self._microphone_label,
+                    "portaudio_device_index": self._portaudio_device_index,
+                },
+            }
+        )
+
+    def handle(self, payload: dict[str, object]) -> None:
+        level = str(payload.get("level", "INFO"))
+        message = str(payload.get("message", "Wake-word event"))
+        raw_extra = payload.get("extra")
+        extra = raw_extra if isinstance(raw_extra, dict) else {"event": "wakeword_event"}
+        emit_log(level, message, self._safe_log_extra(extra))
+
+        event_name = self._clean_text(extra.get("event")) or "wakeword_event"
+        if event_name == "wakeword_attempt":
+            self._emit_attempt(extra)
+            return
+
+        if event_name in {
+            "wakeword_listening_cycle_started",
+            "wakeword_listener_loop_entered",
+        }:
+            self._update_common(extra)
+            self._armed = True
+            if event_name == "wakeword_listening_cycle_started":
+                self._max_confidence = None
+            self._emit_runtime(event_name)
+            return
+
+        if event_name == "wakeword_backend_fallback_activated":
+            phrase = self._clean_text(extra.get("fallback_keyword"))
+            backend = self._clean_text(extra.get("fallback_backend"))
+            generation = self._integer(extra.get("detector_generation"))
+            if phrase is not None:
+                self._active_phrase = phrase
+            if backend is not None:
+                self._active_backend = backend
+            if generation is not None:
+                self._detector_generation = generation
+            self._fallback_active = True
+            self._emit_runtime(event_name)
+            return
+
+        if event_name == "wakeword_listening_cycle_ended":
+            self._update_common(extra)
+            self._armed = False
+            self._emit_runtime(event_name)
+            return
+
+        if event_name == "wakeword_detector_rebuilt":
+            self._update_common(extra)
+            self._emit_runtime(event_name)
+            return
+
+        if event_name == "wakeword_listener_loop_exited":
+            self._update_common(extra)
+            self._armed = False
+            self._emit_runtime(event_name)
+            return
+
+        if event_name in {
+            "wakeword_detector_rebuild_failed",
+            "wakeword_backend_fallback_disabled",
+        }:
+            self._update_common(extra)
+            self._emit_runtime(event_name)
+
+
 def time_ms() -> int:
     return int(time.time() * 1000)
 
@@ -468,6 +689,22 @@ async def _run_real_loop() -> None:
     language = str(getattr(active_settings, "whisper_language", "en") or "en")
     detection_hop_seconds = max(0.125, detection_seconds / 8)
     wakeword_threshold = float(getattr(active_settings, "wakeword_threshold", None) or 0.1)
+    configured_wake_phrase = (
+        str(
+            getattr(active_settings, "wakeword_keyword", None)
+            or getattr(active_settings, "wakeword", None)
+            or ""
+        ).strip()
+        or None
+    )
+    configured_wake_backend = (
+        str(getattr(active_settings, "wakeword_backend", None) or "openwakeword").strip()
+        or "openwakeword"
+    )
+    fallback_wake_phrase = (
+        str(getattr(active_settings, "wakeword_fallback_keyword", "hey jarvis") or "").strip()
+        or None
+    )
     microphone_label = (_MICROPHONE_LABEL or "").strip() or None
     configured_device_index = getattr(active_settings, "input_device_index", None)
     microphone_device_index = (
@@ -569,27 +806,25 @@ async def _run_real_loop() -> None:
     )
 
     emit({"type": "status", "status": "loading_wakeword_detector"})
+    wake_runtime_tracker = WakeWordRuntimeTracker(
+        configured_phrase=configured_wake_phrase,
+        configured_backend=configured_wake_backend,
+        fallback_phrase=fallback_wake_phrase,
+        microphone_label=microphone_label,
+        portaudio_device_index=microphone_device_index,
+    )
     wake_listener = build_default_detector(
         sample_rate=sample_rate,
         chunk_duration=detection_seconds,
         threshold=wakeword_threshold,
         poll_interval=getattr(active_settings, "wakeword_poll_interval", 0.01),
-        keyword=getattr(active_settings, "wakeword_keyword", None)
-        or getattr(active_settings, "wakeword", None),
+        keyword=configured_wake_phrase,
         model_path=getattr(active_settings, "wakeword_model_path", None),
         embedding_path=getattr(active_settings, "wakeword_embedding_path", None),
-        backend=getattr(active_settings, "wakeword_backend", None),
+        backend=configured_wake_backend,
         fallback_to_builtin=getattr(active_settings, "wakeword_fallback_to_builtin", True),
-        fallback_keyword=getattr(active_settings, "wakeword_fallback_keyword", "hey jarvis"),
-        event_callback=lambda payload: emit_log(
-            str(payload.get("level", "INFO")),
-            str(payload.get("message", "Wake-word event")),
-            (
-                payload.get("extra", {})
-                if isinstance(payload.get("extra"), dict)
-                else {"event": "wakeword_event"}
-            ),
-        ),
+        fallback_keyword=fallback_wake_phrase,
+        event_callback=wake_runtime_tracker.handle,
     )
 
     emit({"type": "status", "status": "initializing_stt"})

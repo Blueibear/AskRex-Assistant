@@ -8,6 +8,19 @@ import { privateSessionPayload, type ElectronSessionIdentity } from '../sessionI
 let voiceProcess: ChildProcess | null = null
 let currentVoiceState = 'idle'
 
+// Latest normalized wake-word diagnostics for the currently running voice
+// process. Authority stays in this trusted main process: these are content-free
+// projections (no transcripts, prompts, paths, or identity) that let VoicePage
+// restore its panel after an unmount/remount while the same process is alive.
+// They are cleared whenever the voice process stops, restarts, or exits.
+let latestWakeWordRuntimeStatus: Record<string, unknown> | null = null
+let latestWakeWordAttemptEvidence: Record<string, unknown> | null = null
+
+function clearWakeWordDiagnosticSnapshots(): void {
+  latestWakeWordRuntimeStatus = null
+  latestWakeWordAttemptEvidence = null
+}
+
 type BridgeResult<T> = T & { ok: boolean; error?: string }
 type VoiceStartOptions = { microphoneLabel?: string }
 type VoiceBridgeEvent = {
@@ -27,6 +40,8 @@ type VoiceBridgeEvent = {
   traceback?: string
   code?: string
   device_kind?: string
+  runtime?: Record<string, unknown>
+  evidence?: Record<string, unknown>
 }
 type VoiceBridgeEventContext = {
   process: ChildProcess
@@ -56,6 +71,61 @@ function normalizeBridgeVoiceState(state: string): string {
 
 function formatVoiceStatus(status: string): string {
   return status.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
+}
+
+function boundedString(value: unknown, maxLength = 256): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed.slice(0, maxLength) : null
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function integer(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isInteger(value) ? value : fallback
+}
+
+function normalizeWakeWordRuntimeStatus(payload: unknown): Record<string, unknown> | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const value = payload as Record<string, unknown>
+  return {
+    reason: boundedString(value.reason, 128) ?? 'wakeword_runtime_update',
+    configuredPhrase: boundedString(value.configured_phrase, 128),
+    activePhrase: boundedString(value.active_phrase, 128),
+    configuredBackend: boundedString(value.configured_backend, 64),
+    activeBackend: boundedString(value.active_backend, 64),
+    threshold: finiteNumber(value.threshold),
+    fallbackActive: value.fallback_active === true,
+    fallbackPhrase: boundedString(value.fallback_phrase, 128),
+    detectorGeneration: integer(value.detector_generation, 1),
+    armed: value.armed === true,
+    microphoneLabel: boundedString(value.microphone_label, 256),
+    portAudioDeviceIndex: finiteNumber(value.portaudio_device_index)
+  }
+}
+
+function normalizeWakeWordAttemptEvidence(payload: unknown): Record<string, unknown> | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const value = payload as Record<string, unknown>
+  const attemptCount = integer(value.attempt_count, -1)
+  if (attemptCount < 0) return null
+  return {
+    attemptCount,
+    latestConfidence: finiteNumber(value.latest_confidence),
+    maxConfidence: finiteNumber(value.max_confidence),
+    threshold: finiteNumber(value.threshold),
+    audioRms: finiteNumber(value.audio_rms),
+    audioPeak: finiteNumber(value.audio_peak),
+    rejectReason: boundedString(value.reject_reason, 128),
+    activePhrase: boundedString(value.active_phrase, 128),
+    activeBackend: boundedString(value.active_backend, 64),
+    detectorGeneration: integer(value.detector_generation, 1),
+    accepted: value.accepted === true,
+    microphoneLabel: boundedString(value.microphone_label, 256),
+    portAudioDeviceIndex: finiteNumber(value.portaudio_device_index)
+  }
 }
 
 function broadcastVoiceEvent(channel: string, data: unknown): void {
@@ -128,6 +198,55 @@ function handleVoiceTurnStatusEvent(event: VoiceBridgeEvent): void {
   })
 }
 
+function handleWakeWordRuntimeStatusEvent(
+  event: VoiceBridgeEvent,
+  context: VoiceBridgeEventContext
+): void {
+  if (voiceProcess !== context.process) return
+  const status = normalizeWakeWordRuntimeStatus(event.runtime)
+  if (!status) return
+  latestWakeWordRuntimeStatus = status
+  // Attempt evidence from an older detector generation is stale once the
+  // runtime reports a rebuild/fallback; mirror the renderer's own guard.
+  if (
+    latestWakeWordAttemptEvidence &&
+    latestWakeWordAttemptEvidence.detectorGeneration !== status.detectorGeneration
+  ) {
+    latestWakeWordAttemptEvidence = null
+  }
+  appendElectronLog('DEBUG', 'GUI wake-word runtime status', {
+    event: 'wakeword_runtime_status',
+    reason: status.reason,
+    active_backend: status.activeBackend,
+    fallback_active: status.fallbackActive,
+    detector_generation: status.detectorGeneration,
+    armed: status.armed,
+    portaudio_device_index: status.portAudioDeviceIndex
+  })
+  broadcastVoiceEvent('rex:wakeWordRuntimeStatus', status)
+}
+
+function handleWakeWordAttemptEvidenceEvent(
+  event: VoiceBridgeEvent,
+  context: VoiceBridgeEventContext
+): void {
+  if (voiceProcess !== context.process) return
+  const evidence = normalizeWakeWordAttemptEvidence(event.evidence)
+  if (!evidence) return
+  latestWakeWordAttemptEvidence = evidence
+  appendElectronLog('DEBUG', 'GUI wake-word attempt evidence', {
+    event: 'wakeword_attempt_evidence',
+    attempt_count: evidence.attemptCount,
+    latest_confidence: evidence.latestConfidence,
+    max_confidence: evidence.maxConfidence,
+    threshold: evidence.threshold,
+    accepted: evidence.accepted,
+    reject_reason: evidence.rejectReason,
+    detector_generation: evidence.detectorGeneration
+  })
+  broadcastVoiceEvent('rex:wakeWordAttemptEvidence', evidence)
+}
+
 function handleVoiceLogEvent(event: VoiceBridgeEvent, context: VoiceBridgeEventContext): void {
   appendElectronLog(event.level ?? 'INFO', event.message ?? 'GUI voice bridge log', {
     ...(event.extra ?? {}),
@@ -191,6 +310,8 @@ const VOICE_BRIDGE_EVENT_HANDLERS: Record<string, VoiceBridgeEventHandler> = {
   ready: handleVoiceReadyEvent,
   status: handleVoiceStatusEvent,
   turn_status: handleVoiceTurnStatusEvent,
+  wakeword_runtime_status: handleWakeWordRuntimeStatusEvent,
+  wakeword_attempt_evidence: handleWakeWordAttemptEvidenceEvent,
   log: handleVoiceLogEvent,
   state: handleVoiceStateEvent,
   transcript: handleVoiceTranscriptEvent,
@@ -207,6 +328,7 @@ function dispatchVoiceBridgeEvent(
 function killVoiceProcess(): void {
   const py = voiceProcess
   voiceProcess = null
+  clearWakeWordDiagnosticSnapshots()
   setVoiceState('idle')
   if (py) {
     appendElectronLog('INFO', 'Stopping GUI voice bridge process', {
@@ -272,6 +394,7 @@ export function registerVoiceHandlers(session: ElectronSessionIdentity): void {
     })
 
     voiceProcess = py
+    clearWakeWordDiagnosticSnapshots()
     setVoiceState('starting')
     appendElectronLog('INFO', 'GUI voice bridge process spawned', {
       event: 'voice_bridge_spawned',
@@ -308,8 +431,9 @@ export function registerVoiceHandlers(session: ElectronSessionIdentity): void {
           })
           if (voiceProcess === py) {
             voiceProcess = null
+            clearWakeWordDiagnosticSnapshots()
+            setVoiceState('error')
           }
-          setVoiceState('error')
           try {
             py.kill()
           } catch {
@@ -357,6 +481,7 @@ export function registerVoiceHandlers(session: ElectronSessionIdentity): void {
         })
         if (voiceProcess === py) {
           voiceProcess = null
+          clearWakeWordDiagnosticSnapshots()
           setVoiceState('idle')
         }
         if (!startupSettled) {
@@ -376,8 +501,9 @@ export function registerVoiceHandlers(session: ElectronSessionIdentity): void {
         })
         if (voiceProcess === py) {
           voiceProcess = null
+          clearWakeWordDiagnosticSnapshots()
+          setVoiceState('error')
         }
-        setVoiceState('error')
         failStartup(`Failed to start voice bridge: ${err.message}`)
       })
     })
@@ -387,6 +513,25 @@ export function registerVoiceHandlers(session: ElectronSessionIdentity): void {
     killVoiceProcess()
     return { ok: true }
   })
+
+  // Trusted snapshot fetch so VoicePage can restore its diagnostics panel after
+  // an unmount/remount while the same voice process is still running. Returns
+  // null snapshots when no voice process is active.
+  ipcMain.handle(
+    'rex:getWakeWordRuntimeSnapshots',
+    async (): Promise<{
+      runtimeStatus: Record<string, unknown> | null
+      attemptEvidence: Record<string, unknown> | null
+    }> => {
+      if (!voiceProcess || voiceProcess.exitCode !== null) {
+        return { runtimeStatus: null, attemptEvidence: null }
+      }
+      return {
+        runtimeStatus: latestWakeWordRuntimeStatus,
+        attemptEvidence: latestWakeWordAttemptEvidence
+      }
+    }
+  )
 
   ipcMain.handle('rex:listVoices', async (_event, provider: string): Promise<{ ok: boolean; voices: unknown[]; error?: string }> => {
     const scriptPath = resolveBridgeScript('rex_voices_bridge.py')

@@ -532,18 +532,20 @@ class WakeWordListener:
         try:
             detector, reset_detector, keyword = self._rebuild_detector()
         except Exception as exc:  # pragma: no cover - dependency/setup dependent
-            logger.exception(
-                "Wake-word detector rebuild failed: %s",
-                exc,
-                extra={
-                    "event": "wakeword_detector_rebuild_failed",
-                    "reason": reason,
-                    "detector_generation": self._detector_generation,
-                    "threshold": self._threshold,
-                    "keyword": self._keyword,
-                    "backend": self._backend,
-                },
+            failed_extra: dict[str, object] = {
+                "event": "wakeword_detector_rebuild_failed",
+                "reason": reason,
+                "detector_generation": self._detector_generation,
+                "threshold": self._threshold,
+                "keyword": self._keyword,
+                "backend": self._backend,
+            }
+            failed_extra["error_type"] = type(exc).__name__
+            logger.error(
+                "Wake-word detector rebuild failed",
+                extra=failed_extra,
             )
+            self._emit_event("ERROR", "Wake-word detector rebuild failed", failed_extra)
             return
 
         self._detector = detector
@@ -552,19 +554,18 @@ class WakeWordListener:
             self._keyword = keyword
         self._detector_generation += 1
         self._needs_rebuild = False
-        logger.info(
-            "Wake-word detector rebuilt",
-            extra={
-                "event": "wakeword_detector_rebuilt",
-                "reason": reason,
-                "detector_generation": self._detector_generation,
-                "threshold": self._threshold,
-                "keyword": self._keyword,
-                "backend": self._backend,
-                "reset_supported": self._reset_detector is not None,
-                "duration_s": round(time.perf_counter() - started_at, 3),
-            },
-        )
+        rebuilt_extra: dict[str, object] = {
+            "event": "wakeword_detector_rebuilt",
+            "reason": reason,
+            "detector_generation": self._detector_generation,
+            "threshold": self._threshold,
+            "keyword": self._keyword,
+            "backend": self._backend,
+            "reset_supported": self._reset_detector is not None,
+            "duration_s": round(time.perf_counter() - started_at, 3),
+        }
+        logger.info("Wake-word detector rebuilt", extra=rebuilt_extra)
+        self._emit_event("INFO", "Wake-word detector rebuilt", rebuilt_extra)
 
     def stop(self) -> None:
         self._running = False
