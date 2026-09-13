@@ -27,7 +27,7 @@ import os
 import shutil
 import threading
 from importlib.util import find_spec
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from rex.mobile_api import errors as merr
 from rex.mobile_api.errors import MobileApiError
@@ -90,6 +90,39 @@ def _tts_unavailable(reason: str) -> MobileApiError:
         503,
         retryable=False,
     )
+
+
+@runtime_checkable
+class MobileSpeechToTextService(Protocol):
+    """The STT surface ``rex.mobile_api.routes.voice`` depends on.
+
+    Both the legacy :class:`SpeechToTextAdapter` and the SpeechRouter-backed
+    ``RoutedSpeechToTextAdapter`` (``rex.speech.mobile_adapter``) satisfy this
+    structurally, so routes never need to know which one is active.
+    """
+
+    def availability(self) -> tuple[bool, str]: ...
+
+    def require_available(self) -> None: ...
+
+    def decode(self, path: str) -> Any: ...
+
+    def transcribe(self, audio: Any) -> str: ...
+
+
+@runtime_checkable
+class MobileTextToSpeechService(Protocol):
+    """The TTS surface ``rex.mobile_api.routes.voice`` depends on."""
+
+    def availability(self) -> tuple[bool, str]: ...
+
+    def require_available(self) -> None: ...
+
+    def mime_type(self) -> str: ...
+
+    def resolve_voice(self, requested: str | None) -> str: ...
+
+    def synthesize(self, text: str, voice_id: str) -> bytes: ...
 
 
 def _whisper_cache_dir() -> str:
@@ -291,6 +324,11 @@ class TextToSpeechAdapter:
             return voices[0]
 
         requested = requested.strip()
+        from rex.speech.aliases import resolve_alias  # noqa: PLC0415
+
+        aliased = resolve_alias(requested, provider)
+        if aliased:
+            requested = aliased
         try:
             known = self._list_voice_ids()
         except Exception as exc:
@@ -370,6 +408,8 @@ __all__ = [
     "SUPPORTED_CONTAINERS",
     "TTS_TIMEOUT_SECONDS",
     "WHISPER_SAMPLE_RATE",
+    "MobileSpeechToTextService",
+    "MobileTextToSpeechService",
     "SpeechToTextAdapter",
     "TextToSpeechAdapter",
     "sniff_audio_container",

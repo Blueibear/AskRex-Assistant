@@ -316,12 +316,23 @@ def build_voice_loop(
             "device": device,
         },
     )
-    stt = _vl().SpeechToText(
-        model_name=whisper_model,
-        device=device,
-        language=language,
-        async_load=True,
-    )
+    speech_cfg = getattr(_vl().settings, "speech", None)
+    if speech_cfg is not None and getattr(speech_cfg, "stt_provider", "native") == "voicestudio":
+        # Explicit opt-in override (S35): the pre-existing Whisper STT path
+        # remains the default; only an explicit ``speech.stt_provider =
+        # "voicestudio"`` selects VoiceStudio, so existing configurations
+        # are unaffected.
+        from rex.speech.providers.voicestudio import VoiceStudioDesktopSTT
+        from rex.speech.registry import build_voicestudio_config
+
+        stt = VoiceStudioDesktopSTT(build_voicestudio_config(_vl().settings))
+    else:
+        stt = _vl().SpeechToText(
+            model_name=whisper_model,
+            device=device,
+            language=language,
+            async_load=True,
+        )
     _vl().logger.info(
         "[Pipeline] STT initialised (background model load in progress)",
         extra={"event": "pipeline_stage_ok", "stage": "stt"},

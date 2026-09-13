@@ -85,6 +85,15 @@ class TextToSpeech:
         elif self._provider == "pyttsx3":
             self._provider = "windows"
 
+        # Explicit opt-in override (S35): the pre-existing ``tts_provider``
+        # flat field continues to select xtts/edge/pyttsx3 unchanged; only an
+        # explicit ``speech.tts_provider = "voicestudio"`` selects the
+        # VoiceStudio provider, so existing configurations are unaffected.
+        speech_cfg = getattr(_vl().settings, "speech", None)
+        speech_tts_provider = getattr(speech_cfg, "tts_provider", "native")
+        if speech_cfg is not None and speech_tts_provider == "voicestudio":
+            self._provider = "voicestudio"
+
         self._edge_voice = getattr(_vl().settings, "tts_voice", None) or "en-US-AndrewNeural"
         raw_output_device = getattr(_vl().settings, "audio_output_device", None)
         self._local_output_device = (
@@ -103,6 +112,7 @@ class TextToSpeech:
         self._warm_component_name: str | None = None
         self._xtts_init_error: str | None = None
         self._xtts_init_user_message: str | None = None
+        self._voicestudio_provider: Any = None
         self._speaking = threading.Event()
         if self._provider == "xtts":
             self._initialize_xtts()
@@ -364,6 +374,12 @@ class TextToSpeech:
                 run_metrics.update(
                     await await_with_cancellation(
                         self._speak_edge(text, request_started_at=started_at)
+                    )
+                )
+            elif self._provider == "voicestudio":
+                run_metrics.update(
+                    await await_with_cancellation(
+                        self._speak_voicestudio(text, request_started_at=started_at)
                     )
                 )
             elif self._provider == "windows":
@@ -974,6 +990,72 @@ class TextToSpeech:
             "path_used": "edge",
             "voice": voice,
             "first_audio_chunk_s": first_audio_chunk_s,
+            "synthesis_ready_s": synthesis_ready_s,
+            "speech_start_delay_s": round(playback_started_at - request_started_at, 3),
+            "playback_duration_s": playback_duration_s,
+            "audio_duration_s": audio_duration_s,
+        }
+
+    def _get_voicestudio_provider(self) -> Any:
+        """Lazily build the VoiceStudio TTS provider from current speech config."""
+        if getattr(self, "_voicestudio_provider", None) is not None:
+            return self._voicestudio_provider
+        from rex.speech.providers.voicestudio import VoiceStudioTTSProvider  # noqa: PLC0415
+        from rex.speech.registry import build_voicestudio_config  # noqa: PLC0415
+
+        self._voicestudio_provider = VoiceStudioTTSProvider(
+            build_voicestudio_config(_vl().settings)
+        )
+        return self._voicestudio_provider
+
+    async def _speak_voicestudio(
+        self, text: str, *, request_started_at: float
+    ) -> dict[str, object]:
+        """Synthesize speech using VoiceStudio, reusing the existing decode/playback path."""
+        sf = _vl()._lazy_import_soundfile()
+        if sf is None:
+            raise TextToSpeechError("soundfile is required for VoiceStudio playback")
+
+        provider = self._get_voicestudio_provider()
+        available, reason = provider.availability()
+        if not available:
+            raise TextToSpeechError(f"VoiceStudio is unavailable: {reason}")
+
+        voicestudio_started_at = time.perf_counter()
+        # VoiceStudio owns its own voice-ID namespace; ``self._default_speaker``
+        # is an XTTS speaker-WAV path and must never leak into VoiceStudio
+        # voice selection. The provider resolves its own configured/alias
+        # default when no explicit voice is requested here.
+        voice_id = provider.resolve_voice(None)
+
+        def _synthesize() -> bytes:
+            return provider.synthesize(text, voice_id)
+
+        audio_bytes = await asyncio.to_thread(_synthesize)
+        if not audio_bytes:
+            raise TextToSpeechError("VoiceStudio returned no audio data")
+        _vl().logger.info(
+            "[TTS:voicestudio] Synthesis audio ready",
+            extra=_voice_log_extra(
+                event="tts_voicestudio_synthesis_ready",
+                duration_s=round(time.perf_counter() - voicestudio_started_at, 3),
+                audio_bytes=len(audio_bytes),
+            ),
+        )
+        synthesis_ready_s = round(time.perf_counter() - request_started_at, 3)
+        pcm_data, sample_rate, channel_count, audio_duration_s = await self._decode_edge_audio(
+            bytes(audio_bytes), sf
+        )
+        playback_started_at, playback_duration_s = await self._play_edge_audio(
+            pcm_data,
+            sample_rate,
+            channel_count,
+            audio_duration_s,
+            request_started_at=request_started_at,
+        )
+        return {
+            "path_used": "voicestudio",
+            "voice": voice_id,
             "synthesis_ready_s": synthesis_ready_s,
             "speech_start_delay_s": round(playback_started_at - request_started_at, 3),
             "playback_duration_s": playback_duration_s,

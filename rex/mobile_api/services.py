@@ -31,11 +31,40 @@ from rex.mobile_api.tls import (
     host_is_wildcard,
     resolve_mobile_tls,
 )
-from rex.mobile_api.voice import SpeechToTextAdapter, TextToSpeechAdapter
+from rex.mobile_api.voice import (
+    MobileSpeechToTextService,
+    MobileTextToSpeechService,
+    SpeechToTextAdapter,
+    TextToSpeechAdapter,
+)
 
 
 def _default_id_generator() -> str:
     return str(uuid.uuid4())
+
+
+def _default_speech_services() -> tuple[MobileSpeechToTextService, MobileTextToSpeechService]:
+    """Return the production default STT/TTS services (S35).
+
+    When ``speech.enabled`` is false (the default), this returns the
+    pre-existing :class:`SpeechToTextAdapter`/:class:`TextToSpeechAdapter`
+    unchanged -- the explicit rollback path. Enabling it routes mobile voice
+    through the provider-neutral ``SpeechRouter`` (native still registered
+    unconditionally; VoiceStudio only when separately enabled).
+    """
+    from rex.config import settings as _global_settings  # noqa: PLC0415
+
+    if not _global_settings.speech.enabled:
+        return SpeechToTextAdapter(), TextToSpeechAdapter()
+
+    from rex.speech.mobile_adapter import (  # noqa: PLC0415
+        RoutedSpeechToTextAdapter,
+        RoutedTextToSpeechAdapter,
+    )
+    from rex.speech.registry import build_default_router  # noqa: PLC0415
+
+    router = build_default_router(_global_settings)
+    return RoutedSpeechToTextAdapter(router), RoutedTextToSpeechAdapter(router)
 
 
 @dataclass
@@ -50,8 +79,8 @@ class MobileApiServices:
     pairing_authority: PairingAuthority
     strong_auth_authority: StrongAuthAuthority
     chat_service: MobileChatService
-    stt: SpeechToTextAdapter
-    tts: TextToSpeechAdapter
+    stt: MobileSpeechToTextService
+    tts: MobileTextToSpeechService
     id_generator: Callable[[], str] = field(default=_default_id_generator)
     websocket_registered: bool = False
     tls_material: TlsMaterial | None = None
@@ -75,8 +104,8 @@ class MobileApiServices:
         audit_logger: object | None = None,
         message_store: MobileMessageStore | None = None,
         chat_service: MobileChatService | None = None,
-        stt: SpeechToTextAdapter | None = None,
-        tts: TextToSpeechAdapter | None = None,
+        stt: MobileSpeechToTextService | None = None,
+        tts: MobileTextToSpeechService | None = None,
     ) -> MobileApiServices:
         """Build the default production container with optional test overrides."""
         cfg = config or MobileApiConfig()
@@ -118,6 +147,10 @@ class MobileApiServices:
             retention_hours=cfg.idempotency_retention_hours,
             clock=clock,
         )
+        default_stt: MobileSpeechToTextService | None = None
+        default_tts: MobileTextToSpeechService | None = None
+        if stt is None or tts is None:
+            default_stt, default_tts = _default_speech_services()
         return cls(
             config=cfg,
             db_path=resolved_db_path,
@@ -138,8 +171,8 @@ class MobileApiServices:
                 id_generator=id_generator,
             ),
             chat_service=chat_service or MobileChatService(),
-            stt=stt or SpeechToTextAdapter(),
-            tts=tts or TextToSpeechAdapter(),
+            stt=stt or default_stt,
+            tts=tts or default_tts,
             id_generator=id_generator or _default_id_generator,
             tls_material=tls_material,
             transport_binding=transport_binding,

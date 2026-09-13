@@ -356,6 +356,60 @@ class MobileApiConfig(BaseModel):
         return cleaned
 
 
+class SpeechConfig(BaseModel):
+    """Provider-neutral SpeechRouter policy (S35).
+
+    Canonical JSON group: ``speech`` in ``config/rex_config.json``. Disabled
+    by default: when ``enabled`` is false, both desktop and the mobile
+    gateway use the pre-existing native STT/TTS adapters unchanged, which is
+    the explicit rollback path. STT and TTS provider selection are
+    independent of each other and of ``models.llm_provider``.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = False
+    policy_mode: str = "prefer_local"  # automatic|prefer_local|local_only|prefer_cloud|custom
+    allow_cloud: bool = False
+    stt_provider: str = "native"
+    tts_provider: str = "native"
+    stt_fallback_order: List[str] = []
+    tts_fallback_order: List[str] = []
+
+    voicestudio_enabled: bool = False
+    voicestudio_base_url: str = "http://127.0.0.1:8020"
+    voicestudio_timeout_seconds: float = 30.0
+    voicestudio_stt_model: Optional[str] = None
+    voicestudio_tts_model: Optional[str] = None
+    voicestudio_default_voice: Optional[str] = None
+    voicestudio_api_key_env: Optional[str] = None
+    voicestudio_voice_aliases: Dict[str, str] = {}
+
+    @field_validator("policy_mode")
+    @classmethod
+    def _valid_policy_mode(cls, value: str) -> str:
+        value = value.strip().lower()
+        allowed = {"automatic", "prefer_local", "local_only", "prefer_cloud", "custom"}
+        if value not in allowed:
+            raise ValueError(f"speech.policy_mode must be one of {sorted(allowed)}")
+        return value
+
+    @field_validator("stt_provider", "tts_provider")
+    @classmethod
+    def _non_empty_provider(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+    @field_validator("voicestudio_timeout_seconds")
+    @classmethod
+    def _positive_timeout(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("speech.voicestudio_timeout_seconds must be positive")
+        return value
+
+
 @dataclass
 class AppConfig:
     """Application configuration combining JSON config and environment secrets."""
@@ -434,6 +488,7 @@ class AppConfig:
     conversation_export: bool = True
 
     brave_api_key: Optional[str] = None
+    voicestudio_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
     openai_model: Optional[str] = None
     openai_base_url: Optional[str] = None
@@ -574,6 +629,10 @@ class AppConfig:
     # Mobile API gateway (issue #323) — canonical nested group, parsed from the
     # ``mobile_api`` JSON section (no flat-field equivalents).
     mobile_api: MobileApiConfig = field(default_factory=MobileApiConfig, repr=False, compare=False)
+
+    # Provider-neutral SpeechRouter policy (S35) — canonical nested group,
+    # parsed from the ``speech`` JSON section (no flat-field equivalents).
+    speech: SpeechConfig = field(default_factory=SpeechConfig, repr=False, compare=False)
 
     # ---------------------------------------------------------------------------
     # US-003 — Deprecated flat-field access map (ClassVar, not a dataclass field)
@@ -721,6 +780,7 @@ class AppConfig:
         # is serialised as its validated dictionary (it contains no secrets —
         # the JWT secret lives in the credential vault).
         raw["mobile_api"] = self.mobile_api.model_dump()
+        raw["speech"] = self.speech.model_dump()
         raw["transcripts_dir"] = str(self.transcripts_dir)
         raw["log_path"] = str(self.log_path)
         raw["error_log_path"] = str(self.error_log_path)
@@ -1095,6 +1155,23 @@ def _parse_mobile_api_config(raw: object) -> MobileApiConfig:
         raise ConfigurationError(f"Invalid 'mobile_api' configuration: {exc}") from exc
 
 
+def _parse_speech_config(raw: object) -> SpeechConfig:
+    """Parse and validate the ``speech`` JSON group (S35).
+
+    Raises:
+        ConfigurationError: If any speech value fails validation, so that
+            startup fails before serving rather than running misconfigured.
+    """
+    if not isinstance(raw, dict):
+        if raw is not None:
+            raise ConfigurationError("Config group 'speech' must be a JSON object.")
+        raw = {}
+    try:
+        return SpeechConfig(**raw)
+    except Exception as exc:
+        raise ConfigurationError(f"Invalid 'speech' configuration: {exc}") from exc
+
+
 def _secret_env_or_vault(env_var: str, json_config: dict) -> str | None:
     """Resolve a secret from the household credential vault (S4).
 
@@ -1208,6 +1285,10 @@ def build_app_config(json_config: dict) -> AppConfig:
         capabilities = [str(item) for item in capabilities_value if item]
     else:
         capabilities = []
+
+    # Provider-neutral SpeechRouter policy (S35) — parsed once so its
+    # configured env var name can resolve the vault-backed API key below.
+    speech_cfg = _parse_speech_config(json_config.get("speech"))
 
     # Build config from JSON config + vault-backed secrets
     config = AppConfig(
@@ -1411,6 +1492,11 @@ def build_app_config(json_config: dict) -> AppConfig:
         ),
         # Mobile API gateway (issue #323)
         mobile_api=_parse_mobile_api_config(json_config.get("mobile_api")),
+        # Provider-neutral SpeechRouter policy (S35)
+        speech=speech_cfg,
+        voicestudio_api_key=_secret_env_or_vault(
+            speech_cfg.voicestudio_api_key_env or "VOICESTUDIO_API_KEY", json_config
+        ),
     )
 
     return config
