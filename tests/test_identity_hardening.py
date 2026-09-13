@@ -103,7 +103,9 @@ def test_invalid_persisted_or_configured_identity_fails_closed(tmp_path) -> None
     session_file.write_text('{"active_user": "CON"}', encoding="utf-8")
     with patch("rex.identity._session_state_path", return_value=session_file):
         assert resolve_active_user(config={"runtime": {"active_user": "james"}}) is None
-    assert resolve_active_user(config={"runtime": {"active_user": "COM1"}}) is None
+    session_file.unlink()
+    with patch("rex.identity._session_state_path", return_value=session_file):
+        assert resolve_active_user(config={"runtime": {"active_user": "COM1"}}) is None
 
 
 def test_display_name_is_not_reinterpreted_as_a_user_id(tmp_path) -> None:

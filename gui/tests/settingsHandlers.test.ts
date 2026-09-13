@@ -37,6 +37,14 @@ const { mockIntegrationStatus } = vi.hoisted(() => ({
 }))
 vi.mock('../src/main/integrationStatus', () => mockIntegrationStatus)
 
+const { mockBackgroundRuntime } = vi.hoisted(() => ({
+  mockBackgroundRuntime: {
+    applyBackgroundVoicePreference: vi.fn(),
+    recoverBackgroundVoice: vi.fn(),
+  }
+}))
+vi.mock('../src/main/backgroundRuntime', () => mockBackgroundRuntime)
+
 const { mockModelDiscovery } = vi.hoisted(() => ({
   mockModelDiscovery: { discoverAiModelsAtEndpoint: vi.fn() }
 }))
@@ -83,6 +91,8 @@ describe('settings vault routing (S4)', () => {
     mockConfigStore.writeRexConfig.mockReset().mockImplementation((value) => { rexConfig = value })
     mockMirror.mirrorToRexConfig.mockReset().mockReturnValue({ ok: true })
     mockIntegrationStatus.reconcileIntegrationStatuses.mockReset().mockResolvedValue(undefined)
+    mockBackgroundRuntime.applyBackgroundVoicePreference.mockReset().mockReturnValue({ ok: true })
+    mockBackgroundRuntime.recoverBackgroundVoice.mockReset().mockReturnValue({ ok: true })
     mockModelDiscovery.discoverAiModelsAtEndpoint.mockReset().mockResolvedValue({
       ok: true,
       models: []
@@ -91,6 +101,120 @@ describe('settings vault routing (S4)', () => {
     mockVault.vaultHasSecret.mockReset().mockResolvedValue(false)
     mockVault.vaultDeleteSecret.mockReset().mockResolvedValue(true)
     registerSettingsHandlers(session)
+  })
+
+  it('loads background voice consent from canonical runtime config', async () => {
+    rexConfig = { runtime: { background_voice_enabled: true } }
+
+    const loaded = await invoke('rex:getSettings', 'voice') as Record<string, unknown>
+
+    expect(loaded.backgroundVoiceEnabled).toBe(true)
+  })
+
+  it('reconciles background lifecycle only when auto-start consent changes', async () => {
+    rexConfig = { runtime: { background_voice_enabled: true } }
+
+    await expect(invoke('rex:setSettings', 'voice', {
+      backgroundVoiceEnabled: false,
+    })).resolves.toEqual({ ok: true })
+    expect(mockBackgroundRuntime.applyBackgroundVoicePreference).toHaveBeenCalledWith(session, false)
+
+    mockBackgroundRuntime.applyBackgroundVoicePreference.mockClear()
+    rexConfig = { runtime: { background_voice_enabled: true } }
+    await invoke('rex:setSettings', 'voice', {
+      backgroundVoiceEnabled: true,
+      volume: 0.5,
+    })
+    expect(mockBackgroundRuntime.applyBackgroundVoicePreference).not.toHaveBeenCalled()
+  })
+
+  it('requests voice-only recovery when an enabled runtime audio device changes', async () => {
+    rexConfig = {
+      runtime: { background_voice_enabled: true },
+      audio: { input_device_index: 1, output_device_index: 2 },
+    }
+
+    await expect(invoke('rex:setSettings', 'voice', {
+      backgroundVoiceEnabled: true,
+      microphoneDeviceIndex: 4,
+      speakerDeviceIndex: 2,
+    })).resolves.toEqual({ ok: true })
+
+    expect(mockBackgroundRuntime.recoverBackgroundVoice).toHaveBeenCalledTimes(1)
+    expect(mockBackgroundRuntime.applyBackgroundVoicePreference).not.toHaveBeenCalled()
+  })
+
+  it('does not wake a disabled background runtime merely because a device choice changed', async () => {
+    rexConfig = {
+      runtime: { background_voice_enabled: false },
+      audio: { input_device_index: 1, output_device_index: 2 },
+    }
+
+    await invoke('rex:setSettings', 'voice', {
+      backgroundVoiceEnabled: false,
+      microphoneDeviceIndex: 4,
+      speakerDeviceIndex: 2,
+    })
+
+    expect(mockBackgroundRuntime.recoverBackgroundVoice).not.toHaveBeenCalled()
+  })
+
+  it('reports a lifecycle reconcile failure instead of claiming the toggle fully applied', async () => {
+    rexConfig = { runtime: { background_voice_enabled: true } }
+    mockBackgroundRuntime.applyBackgroundVoicePreference.mockReturnValue({
+      ok: false,
+      error: 'Background listening could not be disabled',
+    })
+
+    await expect(invoke('rex:setSettings', 'voice', {
+      backgroundVoiceEnabled: false,
+    })).resolves.toEqual({
+      ok: false,
+      error: 'Background listening could not be disabled',
+    })
+  })
+
+  it('retries a failed background lifecycle change after the preference was persisted', async () => {
+    rexConfig = { runtime: { background_voice_enabled: true } }
+    mockBackgroundRuntime.applyBackgroundVoicePreference
+      .mockReturnValueOnce({ ok: false, error: 'temporary lifecycle failure' })
+      .mockReturnValueOnce({ ok: true })
+
+    await expect(invoke('rex:setSettings', 'voice', {
+      backgroundVoiceEnabled: false,
+    })).resolves.toEqual({ ok: false, error: 'temporary lifecycle failure' })
+
+    rexConfig = { runtime: { background_voice_enabled: false } }
+    await expect(invoke('rex:setSettings', 'voice', {
+      backgroundVoiceEnabled: false,
+    })).resolves.toEqual({ ok: true })
+
+    expect(mockBackgroundRuntime.applyBackgroundVoicePreference).toHaveBeenCalledTimes(2)
+    expect(mockBackgroundRuntime.applyBackgroundVoicePreference).toHaveBeenLastCalledWith(session, false)
+  })
+
+  it('retries failed voice recovery after the device selection was persisted', async () => {
+    rexConfig = {
+      runtime: { background_voice_enabled: true },
+      audio: { input_device_index: 1, output_device_index: 2 },
+    }
+    mockBackgroundRuntime.recoverBackgroundVoice
+      .mockReturnValueOnce({ ok: false, error: 'temporary recovery failure' })
+      .mockReturnValueOnce({ ok: true })
+
+    await expect(invoke('rex:setSettings', 'voice', {
+      backgroundVoiceEnabled: true, microphoneDeviceIndex: 4, speakerDeviceIndex: 2,
+    })).resolves.toEqual({ ok: false, error: 'temporary recovery failure' })
+
+    rexConfig = {
+      runtime: { background_voice_enabled: true },
+      audio: { input_device_index: 4, output_device_index: 2 },
+    }
+    await expect(invoke('rex:setSettings', 'voice', {
+      backgroundVoiceEnabled: true, microphoneDeviceIndex: 4, speakerDeviceIndex: 2,
+    })).resolves.toEqual({ ok: true })
+
+    expect(mockBackgroundRuntime.recoverBackgroundVoice).toHaveBeenCalledTimes(2)
   })
 
   it('preserves an explicit AI autonomy change through save normalization', async () => {

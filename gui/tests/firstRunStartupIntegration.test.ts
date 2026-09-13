@@ -62,6 +62,12 @@ describe('US-125 packaged first-run bootstrap', () => {
     expect(mainSource).toContain('bootstrapAuthenticatedRuntime')
   })
 
+  it('reconciles persisted disabled background voice on authenticated startup', () => {
+    expect(mainSource).toContain('applyBackgroundVoicePreference')
+    expect(mainSource).toContain('applyBackgroundVoicePreference(sessionIdentity, false)')
+    expect(mainSource).toContain('background_runtime_disable_reconcile_failed')
+  })
+
   it('does not probe authenticated backend status while the setup decision is unresolved', () => {
     expect(appSource).toContain('if (needsSetup !== false) return')
     expect(appSource).toContain('.getStatus()')

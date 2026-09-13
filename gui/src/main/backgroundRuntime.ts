@@ -8,6 +8,10 @@ import {
   resolvePythonwCommand,
   resolveRuntimeRoot,
 } from './bridgeResolver'
+import {
+  requestBackgroundListeningPaused,
+  requestBackgroundVoiceRecovery,
+} from './backgroundListening'
 import { appendElectronLog } from './handlers/logs'
 import type { ElectronSessionIdentity } from './sessionIdentity'
 
@@ -15,6 +19,11 @@ export interface BackgroundRuntimeBootstrapState {
   attempted: boolean
   registrationOk: boolean
   launched: boolean
+}
+
+export interface BackgroundVoicePreferenceResult {
+  ok: boolean
+  error?: string
 }
 
 function internalArgs(command: string): string[] {
@@ -67,6 +76,28 @@ function installStartup(identity: ElectronSessionIdentity): boolean {
         '--packaged',
         '--run-as-user',
         principal,
+      ],
+      {
+        ...bridgeSpawnOptions(),
+        encoding: 'utf8',
+        timeout: 15_000,
+        windowsHide: true,
+      },
+    )
+    return result.status === 0
+  } catch {
+    return false
+  }
+}
+
+function removeStartup(): boolean {
+  try {
+    const result = spawnSync(
+      resolvePythonCommand(),
+      [
+        ...internalArgs('remove-startup'),
+        '--runtime-root',
+        resolveRuntimeRoot(),
       ],
       {
         ...bridgeSpawnOptions(),
@@ -147,4 +178,28 @@ export function ensureBackgroundRuntime(
 
   launchDetached(identity)
   return { attempted: true, registrationOk, launched: true }
+}
+
+export function recoverBackgroundVoice(): BackgroundVoicePreferenceResult {
+  if (!app.isPackaged || process.platform !== 'win32') return { ok: true }
+  if (requestBackgroundVoiceRecovery()) return { ok: true }
+  return { ok: false, error: 'Voice recovery could not be requested' }
+}
+
+export function applyBackgroundVoicePreference(
+  identity: ElectronSessionIdentity,
+  enabled: boolean,
+): BackgroundVoicePreferenceResult {
+  if (!app.isPackaged || process.platform !== 'win32') return { ok: true }
+
+  const pauseUpdated = requestBackgroundListeningPaused(!enabled)
+  if (!enabled) {
+    const startupRemoved = removeStartup()
+    if (pauseUpdated && startupRemoved) return { ok: true }
+    return { ok: false, error: 'Background listening could not be disabled completely' }
+  }
+
+  const state = ensureBackgroundRuntime(identity)
+  if (pauseUpdated && state.registrationOk) return { ok: true }
+  return { ok: false, error: 'Background listening auto-start could not be enabled completely' }
 }

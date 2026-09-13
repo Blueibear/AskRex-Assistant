@@ -94,6 +94,10 @@ export function mirrorToRexConfig(section: string, values: Settings): MirrorResu
       if (typeof voice.sttDevice === 'string') models.whisper_device = voice.sttDevice
       if (typeof voice.sttLanguage === 'string') models.stt_language = voice.sttLanguage
       rexConfig.models = models
+      const audio = ((rexConfig.audio ?? {}) as Record<string, unknown>)
+      audio.input_device_index = voice.microphoneDeviceIndex
+      audio.output_device_index = voice.speakerDeviceIndex
+      rexConfig.audio = audio
       const wakeword = ((rexConfig.wakeword ?? {}) as Record<string, unknown>)
       delete wakeword.model
       wakeword.backend = voice.wakeWordBackend
@@ -123,6 +127,9 @@ export function mirrorToRexConfig(section: string, values: Settings): MirrorResu
           || defaultCustomWakeWordAssetPath('custom_embedding', embeddingId)
       }
       rexConfig.wakeword = wakeword
+      const runtime = ((rexConfig.runtime ?? {}) as Record<string, unknown>)
+      runtime.background_voice_enabled = voice.backgroundVoiceEnabled === true
+      rexConfig.runtime = runtime
       writeRexConfig(rexConfig)
     }
 

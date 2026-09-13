@@ -16,6 +16,8 @@ class BackgroundPaths:
     voice_agent_health_file: Path
     health_file: Path
     stop_file: Path
+    pause_file: Path
+    voice_recovery_file: Path
     supervisor_lock: Path
 
     @classmethod
@@ -31,5 +33,7 @@ class BackgroundPaths:
             voice_agent_health_file=state_dir / "voice-agent-health.json",
             health_file=state_dir / "health.json",
             stop_file=state_dir / "stop.request",
+            pause_file=state_dir / "voice-paused.request",
+            voice_recovery_file=state_dir / "voice-recovery.request",
             supervisor_lock=state_dir / "supervisor.lock",
         )

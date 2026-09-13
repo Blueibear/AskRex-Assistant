@@ -253,6 +253,9 @@ export interface VoiceStartOptions {
 }
 
 export interface VoiceSettings {
+  backgroundVoiceEnabled: boolean
+  microphoneDeviceIndex: number | null
+  speakerDeviceIndex: number | null
   microphoneDeviceId: string
   speakerDeviceId: string
   ttsEngine: 'system' | 'openai' | 'elevenlabs' | 'xtts' | 'edge-tts' | 'pyttsx3'

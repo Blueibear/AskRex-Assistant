@@ -304,6 +304,17 @@ Priority key: **P0** release blocker / security-critical, **P1** required for sh
 - DoD: a signed/packaged build passes the defined thresholds on the physical microphone/speaker matrix
 - **External dependency:** physical audio hardware
 
+**S35 - Add provider-neutral SpeechRouter and VoiceStudio provider integration** (P1)
+- Canonical design: `docs/voice/SPEECH_ROUTER_VOICESTUDIO.md`
+- Owners: backend primary; mobile participates only through the authenticated AskRex gateway contract
+- Goal: preserve the canonical Assistant/TurnEngine voice path while making STT and TTS independently routable across native/local, VoiceStudio, explicitly permitted cloud, and future providers
+- Required first steps: inspect the current backend/mobile implementations and current `debpalash/VoiceStudio`; identify/evolve existing STT/TTS abstractions rather than creating a parallel voice architecture
+- Privacy/security: `Local Only` must never silently fall back to cloud; provider transcripts remain untrusted input; provider services cannot determine identity, permissions, confirmation, action success, or verification
+- Migration: adapt existing providers first, add VoiceStudio through HTTP/WebSocket service boundaries, preserve rollback, provider-independent voice aliases (`majel`, `james`, `cole`), and keep mobile provider-neutral
+- Validation: native + VoiceStudio STT/TTS, independent provider selection, health/timeouts/errors, fallback policy, cloud permitted/prohibited, voice alias mapping, cancellation/stale output, desktop path, authenticated mobile path, privacy/logging, and reliability/latency evidence
+- Non-goals: no full-duplex Voice Mode, no VoiceStudio fork/source merge, no direct iPhone-to-VoiceStudio path, no unrelated AskRex refactor
+- DoD: desktop and mobile speech paths resolve through the canonical provider layer; VoiceStudio works as a replaceable local provider; native/cloud alternatives and Local Only remain supported; existing voice behavior and security boundaries remain intact
+
 ### Batch 9 — Unify brand, design tokens, terminology, navigation, and versions
 
 **S28 — Replace mobile OnSpace identity with canonical AskRex brand assets** (P1)
@@ -374,7 +385,7 @@ Priority key: **P0** release blocker / security-critical, **P1** required for sh
 | Runtime/data/credential isolation | Batch 2 (S3–S4) |
 | Pairing/capability broker | Batch 3 (S5–S8) |
 | Intelligence/context/model fallback | Batch 6 (S15–S19) |
-| Voice | Batch 8 (S24–S27), preserving F-14 |
+| Voice | Batch 8 (S24-S27, S35), preserving F-14 and adding provider-neutral speech routing |
 | OpenClaw | Batch 7 (S20–S23), fulfilling the active checklist |
 | Design parity | Batch 9 (S28–S30) |
 | Packaging/signing | Batch 10 (S31–S32) |

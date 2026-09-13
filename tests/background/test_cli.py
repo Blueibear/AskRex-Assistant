@@ -292,6 +292,26 @@ def test_status_accepts_bounded_listening_paused_detail_code(tmp_path: Path, cap
     assert result["voice_agent"]["detail_code"] == "listening_paused"
 
 
+def test_pause_and_resume_commands_persist_privacy_control(tmp_path: Path, capsys) -> None:
+    paths = BackgroundPaths.from_runtime_root(tmp_path)
+
+    assert background_cli.main(["pause", "--runtime-root", str(tmp_path)]) == 0
+    assert paths.pause_file.exists()
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "requested": True}
+
+    assert background_cli.main(["resume", "--runtime-root", str(tmp_path)]) == 0
+    assert not paths.pause_file.exists()
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "requested": True}
+
+
+def test_recover_voice_command_persists_bounded_recovery_request(tmp_path: Path, capsys) -> None:
+    paths = BackgroundPaths.from_runtime_root(tmp_path)
+
+    assert background_cli.main(["recover-voice", "--runtime-root", str(tmp_path)]) == 0
+    assert paths.voice_recovery_file.exists()
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "requested": True}
+
+
 def test_stop_wait_option_waits_for_supervisor_release(tmp_path: Path, capsys, monkeypatch) -> None:
     observed: dict[str, float] = {}
 

@@ -10,6 +10,10 @@ import type {
   WakeWordStatus
 } from '../../types/ipc'
 import { buildAiSettings, buildAiSettingsForSave } from '../aiSettings'
+import {
+  applyBackgroundVoicePreference,
+  recoverBackgroundVoice,
+} from '../backgroundRuntime'
 import { migrateLegacyAutonomySettings, stripLegacyAutonomyMode } from '../autonomySettings'
 import { getVaultReference, putVaultReference } from '../credentialReferences'
 import {
@@ -68,11 +72,169 @@ function objectSection(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
 }
 
+function backgroundVoiceEnabled(config: Record<string, unknown>): boolean {
+  const runtime = objectSection(config.runtime)
+  return runtime.background_voice_enabled === true
+}
+
+function canonicalDeviceIndex(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null
+}
+
+function audioDeviceIndices(config: Record<string, unknown>): {
+  microphone: number | null
+  speaker: number | null
+} {
+  const audio = objectSection(config.audio)
+  return {
+    microphone: canonicalDeviceIndex(audio.input_device_index),
+    speaker: canonicalDeviceIndex(audio.output_device_index),
+  }
+}
+
 function outputRoutingError(error: string | undefined): Error {
   return new Error(error ?? 'Output routing service is unavailable')
 }
 
+type SettingsResult = { ok: boolean; error?: string }
+
+type AudioDeviceIndices = {
+  microphone: number | null
+  speaker: number | null
+}
+
+type PreviousVoiceState = {
+  backgroundEnabled: boolean
+  audioDevices: AudioDeviceIndices
+}
+
+type VoiceLifecycleState = {
+  pendingBackgroundVoicePreference: boolean | null
+  pendingVoiceRecovery: boolean
+}
+
+function readPreviousVoiceState(section: string): PreviousVoiceState | null {
+  if (section !== 'voice') return null
+  const config = readRexConfigStrict() as Record<string, unknown>
+  return {
+    backgroundEnabled: backgroundVoiceEnabled(config),
+    audioDevices: audioDeviceIndices(config)
+  }
+}
+
+function normalizeSettingsValues(section: string, values: Settings): Settings {
+  if (section === 'ai') return buildAiSettingsForSave(values) as unknown as Settings
+  if (section === 'voice') return buildVoiceSettings(values) as unknown as Settings
+  return values
+}
+
+async function handleOutputRoutingSettings(
+  session: ElectronSessionIdentity,
+  section: string,
+  values: Settings
+): Promise<SettingsResult | null> {
+  if (section === 'outputRouting') {
+    const response = await callOutputRoutingBridge(session, {
+      command: 'update_policy',
+      policy: values
+    })
+    return { ok: response.ok, error: response.error }
+  }
+  if (section !== 'outputRoutingTest') return null
+  const targetId = values.target_id
+  if (typeof targetId !== 'string' || !targetId) {
+    return { ok: false, error: 'A routing target is required' }
+  }
+  const response = await callOutputRoutingBridge(session, {
+    command: 'test_playback',
+    target_id: targetId
+  })
+  return { ok: response.ok, error: response.error }
+}
+
+function nextAudioDeviceIndices(values: Settings): AudioDeviceIndices {
+  return {
+    microphone: canonicalDeviceIndex(values.microphoneDeviceIndex),
+    speaker: canonicalDeviceIndex(values.speakerDeviceIndex)
+  }
+}
+
+function audioDevicesChanged(previous: AudioDeviceIndices, next: AudioDeviceIndices): boolean {
+  return previous.microphone !== next.microphone || previous.speaker !== next.speaker
+}
+
+function reconcileVoiceLifecycle(
+  session: ElectronSessionIdentity,
+  state: VoiceLifecycleState,
+  previous: PreviousVoiceState,
+  values: Settings
+): SettingsResult | null {
+  const nextBackgroundVoice = values.backgroundVoiceEnabled === true
+  if (
+    state.pendingBackgroundVoicePreference !== null &&
+    state.pendingBackgroundVoicePreference !== nextBackgroundVoice
+  ) {
+    state.pendingBackgroundVoicePreference = null
+  }
+
+  const backgroundChanged = nextBackgroundVoice !== previous.backgroundEnabled
+  const shouldReconcileBackground =
+    backgroundChanged || state.pendingBackgroundVoicePreference === nextBackgroundVoice
+  if (shouldReconcileBackground) {
+    const lifecycle = applyBackgroundVoicePreference(session, nextBackgroundVoice)
+    if (!lifecycle.ok) {
+      state.pendingBackgroundVoicePreference = nextBackgroundVoice
+      return lifecycle
+    }
+    state.pendingBackgroundVoicePreference = null
+    state.pendingVoiceRecovery = false
+    return null
+  }
+
+  if (!nextBackgroundVoice) {
+    state.pendingVoiceRecovery = false
+    return null
+  }
+
+  const audioChanged = audioDevicesChanged(
+    previous.audioDevices,
+    nextAudioDeviceIndices(values)
+  )
+  if (!audioChanged && !state.pendingVoiceRecovery) return null
+
+  const recovery = recoverBackgroundVoice()
+  if (!recovery.ok) {
+    state.pendingVoiceRecovery = true
+    return recovery
+  }
+  state.pendingVoiceRecovery = false
+  return null
+}
+
+async function handleSetSettings(
+  session: ElectronSessionIdentity,
+  state: VoiceLifecycleState,
+  section: string,
+  values: Settings
+): Promise<SettingsResult> {
+  const routed = await handleOutputRoutingSettings(session, section, values)
+  if (routed !== null) return routed
+
+  const previousVoice = readPreviousVoiceState(section)
+  const normalizedValues = normalizeSettingsValues(section, values)
+  const persisted = await persistSettingsSection(session, section, normalizedValues)
+  if (!persisted.ok) return persisted
+  if (previousVoice === null) return persisted
+
+  return reconcileVoiceLifecycle(session, state, previousVoice, normalizedValues) ?? persisted
+}
+
 export function registerSettingsHandlers(session: ElectronSessionIdentity): void {
+  const voiceLifecycleState: VoiceLifecycleState = {
+    pendingBackgroundVoicePreference: null,
+    pendingVoiceRecovery: false
+  }
+
   ipcMain.handle('rex:getSettings', async (_event, section: string): Promise<Settings> => {
     if (section === 'outputRouting') {
       const response = await callOutputRoutingBridge(session, { command: 'get_policy' })
@@ -90,7 +252,10 @@ export function registerSettingsHandlers(session: ElectronSessionIdentity): void
       return buildAiSettings((stored[section] ?? {}) as Settings) as unknown as Settings
     }
     if (section === 'voice') {
-      return buildVoiceSettings((stored[section] ?? {}) as Settings) as unknown as Settings
+      const voice = buildVoiceSettings((stored[section] ?? {}) as Settings)
+      const config = readRexConfigStrict() as Record<string, unknown>
+      voice.backgroundVoiceEnabled = backgroundVoiceEnabled(config)
+      return voice as unknown as Settings
     }
     if (section === 'integrations') {
       return loadIntegrationSettings(session, stored as Record<string, Settings>)
@@ -127,34 +292,8 @@ export function registerSettingsHandlers(session: ElectronSessionIdentity): void
 
   ipcMain.handle(
     'rex:setSettings',
-    async (_event, section: string, values: Settings): Promise<{ ok: boolean; error?: string }> => {
-      if (section === 'outputRouting') {
-        const response = await callOutputRoutingBridge(session, {
-          command: 'update_policy',
-          policy: values
-        })
-        return { ok: response.ok, error: response.error }
-      }
-      if (section === 'outputRoutingTest') {
-        const targetId = values.target_id
-        if (typeof targetId !== 'string' || !targetId) {
-          return { ok: false, error: 'A routing target is required' }
-        }
-        const response = await callOutputRoutingBridge(session, {
-          command: 'test_playback',
-          target_id: targetId
-        })
-        return { ok: response.ok, error: response.error }
-      }
-
-      const normalizedValues =
-        section === 'ai'
-          ? (buildAiSettingsForSave(values) as unknown as Settings)
-          : section === 'voice'
-            ? (buildVoiceSettings(values) as unknown as Settings)
-            : values
-      return persistSettingsSection(session, section, normalizedValues)
-    }
+    (_event, section: string, values: Settings): Promise<SettingsResult> =>
+      handleSetSettings(session, voiceLifecycleState, section, values)
   )
 
   ipcMain.handle(

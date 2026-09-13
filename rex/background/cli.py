@@ -237,6 +237,20 @@ def _request_stop(paths: BackgroundPaths) -> None:
     paths.stop_file.touch(exist_ok=True)
 
 
+def _request_pause(paths: BackgroundPaths) -> None:
+    paths.state_dir.mkdir(parents=True, exist_ok=True)
+    paths.pause_file.touch(exist_ok=True)
+
+
+def _request_resume(paths: BackgroundPaths) -> None:
+    paths.pause_file.unlink(missing_ok=True)
+
+
+def _request_voice_recovery(paths: BackgroundPaths) -> None:
+    paths.state_dir.mkdir(parents=True, exist_ok=True)
+    paths.voice_recovery_file.touch(exist_ok=True)
+
+
 def _supervisor_is_running(paths: BackgroundPaths) -> bool:
     lock = SingleInstanceLock(paths.supervisor_lock)
     try:
@@ -308,6 +322,15 @@ def create_parser() -> argparse.ArgumentParser:
     status = subparsers.add_parser("status")
     _add_runtime_root(status)
 
+    pause = subparsers.add_parser("pause")
+    _add_runtime_root(pause)
+
+    resume = subparsers.add_parser("resume")
+    _add_runtime_root(resume)
+
+    recover_voice = subparsers.add_parser("recover-voice")
+    _add_runtime_root(recover_voice)
+
     stop = subparsers.add_parser("stop")
     _add_runtime_root(stop)
     stop.add_argument("--wait-seconds", type=float, default=0.0)
@@ -338,7 +361,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _restore_runtime_environment(previous)
 
 
-def _dispatch(args: argparse.Namespace, paths: BackgroundPaths) -> int:
+def _dispatch_startup_command(args: argparse.Namespace, paths: BackgroundPaths) -> int | None:
     if args.command == "install-startup":
         try:
             install_startup(
@@ -361,27 +384,41 @@ def _dispatch(args: argparse.Namespace, paths: BackgroundPaths) -> int:
             return 1
         print(json.dumps({"ok": True, "removed": True}, separators=(",", ":")))
         return 0
+    return None
 
+
+def _dispatch_control_command(args: argparse.Namespace, paths: BackgroundPaths) -> int | None:
     if args.command == "status":
         payload, result = _read_status(paths)
         print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
         return result
-    if args.command == "stop":
-        wait_seconds = float(args.wait_seconds)
-        if (
-            not math.isfinite(wait_seconds)
-            or wait_seconds < 0
-            or wait_seconds > _STOP_WAIT_MAX_SECONDS
-        ):
-            print(json.dumps({"ok": False, "detail_code": "invalid_stop_wait"}))
-            return 2
-        _request_stop(paths)
-        if wait_seconds > 0 and not _wait_for_supervisor_stop(paths, wait_seconds):
-            print(json.dumps({"ok": False, "detail_code": "stop_timeout"}, separators=(",", ":")))
-            return 1
+    if args.command == "pause":
+        _request_pause(paths)
         print(json.dumps({"ok": True, "requested": True}, separators=(",", ":")))
         return 0
+    if args.command == "resume":
+        _request_resume(paths)
+        print(json.dumps({"ok": True, "requested": True}, separators=(",", ":")))
+        return 0
+    if args.command == "recover-voice":
+        _request_voice_recovery(paths)
+        print(json.dumps({"ok": True, "requested": True}, separators=(",", ":")))
+        return 0
+    if args.command != "stop":
+        return None
+    wait_seconds = float(args.wait_seconds)
+    if not math.isfinite(wait_seconds) or not 0 <= wait_seconds <= _STOP_WAIT_MAX_SECONDS:
+        print(json.dumps({"ok": False, "detail_code": "invalid_stop_wait"}))
+        return 2
+    _request_stop(paths)
+    if wait_seconds > 0 and not _wait_for_supervisor_stop(paths, wait_seconds):
+        print(json.dumps({"ok": False, "detail_code": "stop_timeout"}, separators=(",", ":")))
+        return 1
+    print(json.dumps({"ok": True, "requested": True}, separators=(",", ":")))
+    return 0
 
+
+def _dispatch_runtime_command(args: argparse.Namespace, paths: BackgroundPaths) -> int | None:
     if args.command == "core":
         asyncio.run(_run_core(paths))
         return 0
@@ -411,6 +448,18 @@ def _dispatch(args: argparse.Namespace, paths: BackgroundPaths) -> int:
         except AlreadyRunningError:
             return 2
         return 0
+    return None
+
+
+def _dispatch(args: argparse.Namespace, paths: BackgroundPaths) -> int:
+    for handler in (
+        _dispatch_startup_command,
+        _dispatch_control_command,
+        _dispatch_runtime_command,
+    ):
+        result = handler(args, paths)
+        if result is not None:
+            return result
     raise AssertionError(f"Unhandled background command: {args.command}")
 
 

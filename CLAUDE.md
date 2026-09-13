@@ -715,6 +715,8 @@ Add a short rule here that would have prevented the mistake.
 - Vault (`rex.credential_vault`) failures fail closed. Read paths return an absent credential only when the vault is unavailable; corrupt schema, metadata, scope, account, slot, owner, or reference data raises. Plaintext config/environment is consulted only when explicit legacy mode is enabled outside packaged Electron. Write paths propagate vault, readback, registry, and mirror failures so the GUI cannot report false success.
 - An Electron `ipcMain.handle` callback returning `{ ok: true, someList: buildX() }` where `buildX()` is `async` is a silent bug, not a type error: TypeScript happily infers the handler's return type around a nested `Promise`, but the renderer receives an unresolved promise instead of the array. `tsc --noEmit` will not catch this â€” grep every call site of a function you just made `async` and confirm each one added `await`, don't rely on the type checker alone.
 
+- Always-on Voice Agent diagnostics are content-free infrastructure evidence. Never log raw transcripts, generated replies/tool payloads, voice-resolved user IDs, endpoint addresses/paths, credentials, private memory, or raw exception/traceback text. Log bounded event/stage metadata, character counts, and `type(exc).__name__`-style error codes instead; keep sanitized actionable user guidance in the user-facing result/state rather than the background log.
+
 ## OpenClaw Migration Status
 
 Rex integrates with OpenClaw over HTTP (not as a Python package). Key facts:
@@ -787,3 +789,22 @@ The first two files are the product sources of truth. The architecture file is t
 - S7 (`rex/mobile_api/tls.py`): any non-loopback mobile API bind always requires usable TLS; `mobile_api.require_tls` only opts a *loopback* bind into TLS for local testing and cannot weaken the non-loopback boundary. `MobileApiServices.build()` provisions or reuses one long-lived self-signed P-256 certificate under `<household_data_dir>/mobile_tls/` and fails closed with `MobileTlsConfigurationError` when material cannot be generated or loaded. The advertised HTTPS URL, SHA-256 certificate fingerprint, and SPKI pins are included in every pairing QR payload, signed by pairing proof transcript v2, returned by approved `/mobile/pairing/status`, and persisted immutably on device/grant records. `create_mobile_app()` independently refuses a TLS-required injected service container without material, and a TLS-owned app rejects plaintext requests with `TLS_REQUIRED`. `POST /mobile/auth/activate-device` fails closed (`PAIRING_INVALID`) when the current gateway-owned transport binding differs from the approved device/grant binding (rotated/reset certificate, changed endpoint, or a pre-S7 unbound legacy device). Loopback-only development remains unaffected unless explicitly opted into TLS. Actual client-side pin validation and physical LAN/phone hardware validation live in the separate mobile repo and are not implemented or exercised here.
 - US-088 public-ingress rule: `askrex.app` may front only the dedicated `rex.mobile_api` contract through an explicit path allowlist and loopback-only origin; never proxy `rex.gui_app`, `/api/*`, the computer agent, TTS service, OpenClaw tool server, secrets, or arbitrary localhost services. Current S7 self-signed LAN pinning must not be bypassed for a tunnel: public pairing stays disabled until a versioned `https://askrex.app` WebPKI transport-binding mode, trusted-proxy handling, deployment-appropriate rate limiting, and public-topology tests exist. OpenClaw remains optional and cannot widen mobile authority. See `docs/mobile/MOBILE_API_THREAT_MODEL.md`, `docs/mobile/EXTERNAL_SURFACE_CLASSIFICATION.md`, and `docs/mobile/ASKREX_APP_GATEWAY.md`.
 - See `docs/mobile/DEVICE_PAIRING.md`, `docs/mobile/STRONG_AUTH.md`, `docs/mobile/MOBILE_API_SETUP_WINDOWS.md`, `tests/mobile_api/test_pairing.py`, `tests/mobile_api/test_grant_enforcement.py`, `tests/mobile_api/test_strong_auth.py`, `tests/mobile_api/test_home_strong_auth.py`, `tests/mobile_api/test_tls.py`, and `tests/mobile_api/test_transport_binding.py`.
+
+## Cross-Instance Coordination
+
+AskRex desktop/backend, mobile, and live testing share an external coordination directory at:
+
+`C:\Users\james\rex-ai-test\askrex-coordination`
+
+Before each work cycle, before starting a cross-repo contract change, and at the end of each task/commit/checkpoint:
+
+1. Read `PROTOCOL.md`.
+2. Run `scripts\check-coordination.ps1 -Role backend`.
+3. Read new files in `mailbox\backend\`.
+4. Review open issues owned by `backend` or `both`.
+5. Send cross-repo API/schema/identity changes to `mailbox\mobile\` before mobile depends on them.
+6. Send live UI/hardware retest requests to `mailbox\testing\`.
+
+Do not edit the mobile repository to resolve a mobile-owned issue unless the owner explicitly reassigns that work. Do not modify the frozen `rex-ai-pc-test` worktree.
+
+Development may mark a live-test issue `fixed-needs-retest`, but only the testing role may mark it `verified` after the real UI/device path is retested. Never place credentials, private conversation content, or secrets in coordination files.

@@ -451,7 +451,12 @@ class RuntimeSupervisor:
             self._set_voice_health(HealthState.DEGRADED, "core_unavailable", pid=None)
 
     def _handle_voice(self, *, core_ready: bool) -> None:
+        if self._handle_voice_recovery_request(core_ready=core_ready):
+            return
         process = self._voice.process
+        if self.paths.pause_file.exists():
+            self._handle_voice_pause(process)
+            return
         if not core_ready:
             self._handle_voice_without_core(process)
             return
@@ -466,6 +471,47 @@ class RuntimeSupervisor:
             self._refresh_running_voice_health(child_health)
             return
         self._handle_exited_voice(child_health)
+
+    def _handle_voice_recovery_request(self, *, core_ready: bool) -> bool:
+        path = self.paths.voice_recovery_file
+        if not path.exists():
+            return False
+        try:
+            path.unlink()
+        except OSError:
+            return False
+
+        self._voice.restart_times.clear()
+        self._voice.next_restart_at = None
+        if self._voice.process is not None:
+            try:
+                self._stop_component(self._voice)
+            except Exception:
+                self._set_voice_health(HealthState.FAILED, "stop_failed")
+                return True
+        self._discard_voice_health_file()
+
+        if self.paths.pause_file.exists():
+            self._set_voice_health(HealthState.PAUSED, "listening_paused", pid=None)
+            return True
+        if not core_ready:
+            self._set_voice_health(HealthState.DEGRADED, "core_unavailable", pid=None)
+            return True
+
+        self._set_voice_health(HealthState.STARTING, None, pid=None)
+        self._relaunch_within_policy(self._voice)
+        return True
+
+    def _handle_voice_pause(self, process: Any | None) -> None:
+        if process is not None:
+            try:
+                self._stop_component(self._voice)
+            except Exception:
+                self._set_voice_health(HealthState.FAILED, "stop_failed")
+                return
+        self._discard_voice_health_file()
+        self._voice.next_restart_at = None
+        self._set_voice_health(HealthState.PAUSED, "listening_paused", pid=None)
 
     def _handle_missing_voice_process(self) -> None:
         if self._voice.health is not None and self._voice.health.state is HealthState.FAILED:

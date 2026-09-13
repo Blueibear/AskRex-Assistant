@@ -47,7 +47,10 @@ class WakeAcknowledgement:
             try:
                 _vl().ensure_wake_acknowledgment_sound(path=str(self._sound_path))
             except Exception as exc:
-                _vl().logger.warning("Failed to generate wake acknowledgment sound: %s", exc)
+                _vl().logger.warning(
+                    "Failed to generate wake acknowledgment sound",
+                    extra={"event": "wake_ack_generate_failed", "error_code": type(exc).__name__},
+                )
 
     async def play(self) -> None:
         """Play the wake acknowledgement sound or spoken filler phrase."""
@@ -59,7 +62,10 @@ class WakeAcknowledgement:
             try:
                 await self._filler_speak(self._filler_phrase)
             except Exception as exc:
-                _vl().logger.warning("Filler phrase acknowledgment failed: %s", exc)
+                _vl().logger.warning(
+                    "Filler phrase acknowledgment failed",
+                    extra={"event": "wake_ack_filler_failed", "error_code": type(exc).__name__},
+                )
             return
 
         if not self._sound_path.exists():
@@ -85,4 +91,7 @@ class WakeAcknowledgement:
         try:
             await asyncio.to_thread(_play)
         except Exception as exc:
-            _vl().logger.warning("Wake acknowledgement failed: %s", exc)
+            _vl().logger.warning(
+                "Wake acknowledgement failed",
+                extra={"event": "wake_ack_playback_failed", "error_code": type(exc).__name__},
+            )

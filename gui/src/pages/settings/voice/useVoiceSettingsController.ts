@@ -1,12 +1,69 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Settings, VoiceEnrollment, VoiceInfo, VoiceSettings, WakeWordInfo, WakeWordStatus } from '../../../types/ipc'
+import type { Settings, SetupAudioDevice, VoiceEnrollment, VoiceInfo, VoiceSettings, WakeWordInfo, WakeWordStatus } from '../../../types/ipc'
 import { useToast } from '../../../components/ui/Toast'
 import type { MediaDeviceOption } from './voiceHelpers'
 import { ENROLLMENT_SAMPLE_TARGET, WW_POSITIVE_TARGET, WW_NEGATIVE_TARGET, FALLBACK_BUILTIN_WAKE_WORDS, sleep, captureEnrollmentSample, runEnrollmentCountdown } from './voiceHelpers'
 
+function normalizeTtsEngine(value: unknown): VoiceSettings['ttsEngine'] {
+  if (value === 'xtts' || value === 'edge-tts' || value === 'pyttsx3') return value
+  if (value === 'elevenlabs') return 'xtts'
+  if (value === 'openai') return 'edge-tts'
+  return 'pyttsx3'
+}
+
+function normalizeSttDevice(value: unknown): VoiceSettings['sttDevice'] {
+  return value === 'cpu' || value === 'cuda' ? value : 'auto'
+}
+
+function normalizeWakeWordBackend(value: unknown): VoiceSettings['wakeWordBackend'] {
+  return value === 'custom_onnx' || value === 'custom_embedding' ? value : 'openwakeword'
+}
+
+function normalizeDeviceIndex(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null
+}
+
+function stringSetting(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback
+}
+
+function numberSetting(value: unknown, fallback: number): number {
+  return typeof value === 'number' ? value : fallback
+}
+
+function normalizeWakeWordPhrase(value: unknown): string {
+  return typeof value === 'string' && value.trim() ? value : 'hey rex'
+}
+
+function normalizeVoiceSettings(settings: Settings): VoiceSettings {
+  return {
+    backgroundVoiceEnabled: settings.backgroundVoiceEnabled === true,
+    microphoneDeviceIndex: normalizeDeviceIndex(settings.microphoneDeviceIndex),
+    speakerDeviceIndex: normalizeDeviceIndex(settings.speakerDeviceIndex),
+    microphoneDeviceId: stringSetting(settings.microphoneDeviceId),
+    speakerDeviceId: stringSetting(settings.speakerDeviceId),
+    ttsEngine: normalizeTtsEngine(settings.ttsEngine),
+    ttsVoice: stringSetting(settings.ttsVoice),
+    speechRate: numberSetting(settings.speechRate, 1.0),
+    volume: numberSetting(settings.volume, 1.0),
+    sttModel: stringSetting(settings.sttModel, 'base'),
+    sttLanguage: stringSetting(settings.sttLanguage, 'auto'),
+    sttDevice: normalizeSttDevice(settings.sttDevice),
+    wakeWord: stringSetting(settings.wakeWord),
+    wakeWordBackend: normalizeWakeWordBackend(settings.wakeWordBackend),
+    customWakeWordId: stringSetting(settings.customWakeWordId),
+    wakeWordPhrase: normalizeWakeWordPhrase(settings.wakeWordPhrase),
+    wakeWordModelPath: stringSetting(settings.wakeWordModelPath),
+    wakeWordEmbeddingPath: stringSetting(settings.wakeWordEmbeddingPath)
+  }
+}
+
 export function useVoiceSettingsController() {
   const addToast = useToast()
   const [form, setForm] = useState<VoiceSettings>({
+    backgroundVoiceEnabled: false,
+    microphoneDeviceIndex: null,
+    speakerDeviceIndex: null,
     microphoneDeviceId: '',
     speakerDeviceId: '',
     ttsEngine: 'pyttsx3',
@@ -26,6 +83,7 @@ export function useVoiceSettingsController() {
   const [loading, setLoading] = useState(true)
   const [mics, setMics] = useState<MediaDeviceOption[]>([])
   const [speakers, setSpeakers] = useState<MediaDeviceOption[]>([])
+  const [runtimeAudioDevices, setRuntimeAudioDevices] = useState<SetupAudioDevice[]>([])
   const [savedField, setSavedField] = useState<keyof VoiceSettings | null>(null)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<'ok' | 'error' | null>(null)
@@ -129,50 +187,19 @@ export function useVoiceSettingsController() {
         })
     }
 
+    window.rex.getSetupAudioDevices()
+      .then((result) => {
+        setRuntimeAudioDevices(result.ok ? result.devices : [])
+      })
+      .catch(() => {
+        setRuntimeAudioDevices([])
+      })
+
     // Load settings
     window.rex
       .getSettings('voice')
       .then((settings: Settings) => {
-        const rawEngine = settings.ttsEngine
-        const ttsEngine: VoiceSettings['ttsEngine'] =
-          rawEngine === 'xtts' || rawEngine === 'edge-tts' || rawEngine === 'pyttsx3'
-            ? rawEngine
-            : rawEngine === 'elevenlabs'
-              ? 'xtts'
-              : rawEngine === 'openai'
-                ? 'edge-tts'
-                : 'pyttsx3'
-        const rawSttDevice = settings.sttDevice
-        const sttDevice: VoiceSettings['sttDevice'] =
-          rawSttDevice === 'cpu' || rawSttDevice === 'cuda' ? rawSttDevice : 'auto'
-        setForm({
-          microphoneDeviceId:
-            typeof settings.microphoneDeviceId === 'string' ? settings.microphoneDeviceId : '',
-          speakerDeviceId:
-            typeof settings.speakerDeviceId === 'string' ? settings.speakerDeviceId : '',
-          ttsEngine,
-          ttsVoice: typeof settings.ttsVoice === 'string' ? settings.ttsVoice : '',
-          speechRate: typeof settings.speechRate === 'number' ? settings.speechRate : 1.0,
-          volume: typeof settings.volume === 'number' ? settings.volume : 1.0,
-          sttModel: typeof settings.sttModel === 'string' ? settings.sttModel : 'base',
-          sttLanguage: typeof settings.sttLanguage === 'string' ? settings.sttLanguage : 'auto',
-          sttDevice,
-          wakeWord: typeof settings.wakeWord === 'string' ? settings.wakeWord : '',
-          wakeWordBackend:
-            settings.wakeWordBackend === 'custom_onnx' || settings.wakeWordBackend === 'custom_embedding'
-              ? settings.wakeWordBackend
-              : 'openwakeword',
-          customWakeWordId:
-            typeof settings.customWakeWordId === 'string' ? settings.customWakeWordId : '',
-          wakeWordPhrase:
-            typeof settings.wakeWordPhrase === 'string' && settings.wakeWordPhrase.trim()
-              ? settings.wakeWordPhrase
-              : 'hey rex',
-          wakeWordModelPath:
-            typeof settings.wakeWordModelPath === 'string' ? settings.wakeWordModelPath : '',
-          wakeWordEmbeddingPath:
-            typeof settings.wakeWordEmbeddingPath === 'string' ? settings.wakeWordEmbeddingPath : ''
-        })
+        setForm(normalizeVoiceSettings(settings))
       })
       .catch(() => {
         addToast('Failed to load voice settings', 'error')
@@ -569,6 +596,7 @@ export function useVoiceSettingsController() {
     loading,
     mics,
     speakers,
+    runtimeAudioDevices,
     savedField,
     testing,
     testResult,

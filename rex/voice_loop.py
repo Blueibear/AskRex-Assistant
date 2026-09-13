@@ -162,7 +162,13 @@ async def _direct_smart_speaker_speak(
             None,
         )
     except Exception as exc:
-        logger.warning("Direct smart-speaker route discovery failed: %s", exc)
+        logger.warning(
+            "Direct smart-speaker route discovery failed",
+            extra={
+                "event": "smart_speaker_route_discovery_failed",
+                "error_code": type(exc).__name__,
+            },
+        )
         return False
     if speaker is None:
         return False
@@ -173,7 +179,10 @@ async def _direct_smart_speaker_speak(
             default_speaker=getattr(source_tts, "_default_speaker", None),
         )
     except Exception as exc:
-        logger.warning("Direct smart-speaker TTS setup failed: %s", exc)
+        logger.warning(
+            "Direct smart-speaker TTS setup failed",
+            extra={"event": "smart_speaker_tts_setup_failed", "error_code": type(exc).__name__},
+        )
         return False
     if getattr(dedicated_tts, "_provider", None) != "xtts":
         return False
@@ -198,7 +207,10 @@ async def _direct_smart_speaker_speak(
             speaker_wav=getattr(source_tts, "_default_speaker", None),
         )
     except Exception as exc:
-        logger.warning("Direct smart-speaker spoken delivery failed: %s", exc)
+        logger.warning(
+            "Direct smart-speaker spoken delivery failed",
+            extra={"event": "smart_speaker_delivery_failed", "error_code": type(exc).__name__},
+        )
         return False
 
     path_used = metrics.get("path_used") if isinstance(metrics, dict) else None

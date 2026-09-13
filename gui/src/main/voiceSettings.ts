@@ -12,6 +12,13 @@ function normalizeWakeWordId(raw: unknown): string {
   return raw.trim().replace(/\s+/g, '_').toLowerCase()
 }
 
+function normalizeAudioDeviceIndex(raw: unknown, fallback: unknown): number | null {
+  if (raw === null) return null
+  if (typeof raw === 'number' && Number.isInteger(raw) && raw >= 0) return raw
+  if (typeof fallback === 'number' && Number.isInteger(fallback) && fallback >= 0) return fallback
+  return null
+}
+
 export function wakeWordIdToPhrase(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim().replace(/_/g, ' ') : ''
 }
@@ -43,6 +50,14 @@ export function buildVoiceSettings(raw: Settings = {}): VoiceSettings {
   const wakeword =
     rexConfig.wakeword && typeof rexConfig.wakeword === 'object'
       ? (rexConfig.wakeword as Record<string, unknown>)
+      : {}
+  const runtime =
+    rexConfig.runtime && typeof rexConfig.runtime === 'object'
+      ? (rexConfig.runtime as Record<string, unknown>)
+      : {}
+  const audio =
+    rexConfig.audio && typeof rexConfig.audio === 'object'
+      ? (rexConfig.audio as Record<string, unknown>)
       : {}
 
   const rawEngine =
@@ -113,6 +128,18 @@ export function buildVoiceSettings(raw: Settings = {}): VoiceSettings {
         : ''
 
   return {
+    backgroundVoiceEnabled:
+      typeof raw.backgroundVoiceEnabled === 'boolean'
+        ? raw.backgroundVoiceEnabled
+        : runtime.background_voice_enabled === true,
+    microphoneDeviceIndex: normalizeAudioDeviceIndex(
+      raw.microphoneDeviceIndex,
+      audio.input_device_index,
+    ),
+    speakerDeviceIndex: normalizeAudioDeviceIndex(
+      raw.speakerDeviceIndex,
+      audio.output_device_index,
+    ),
     microphoneDeviceId:
       typeof raw.microphoneDeviceId === 'string' ? raw.microphoneDeviceId : '',
     speakerDeviceId:

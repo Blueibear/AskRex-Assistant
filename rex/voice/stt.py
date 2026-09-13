@@ -117,8 +117,13 @@ class SpeechToText:
             self._warm_component_name = component_name
             _vl().logger.info("[STT] Model '%s' loaded on %s", self._model_name, self._device)
         except Exception as exc:
-            self._load_error = str(exc)
-            _vl().logger.error("[STT] Model load failed: %s", exc)
+            self._load_error = type(exc).__name__
+            _vl().logger.error(
+                "[STT] Model load failed",
+                extra=_voice_log_extra(
+                    event="stt_model_load_failed", error_code=type(exc).__name__
+                ),
+            )
         finally:
             self._load_event.set()
 
@@ -219,5 +224,10 @@ class SpeechToText:
         try:
             return await asyncio.to_thread(_transcribe)
         except Exception as exc:
-            _vl().logger.error("[STT] Whisper failed: %s", exc, exc_info=True)
-            raise SpeechToTextError(str(exc)) from exc
+            _vl().logger.error(
+                "[STT] Whisper failed",
+                extra=_voice_log_extra(
+                    event="stt_transcription_failed", error_code=type(exc).__name__
+                ),
+            )
+            raise SpeechToTextError("Speech transcription failed") from exc

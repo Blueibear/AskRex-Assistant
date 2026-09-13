@@ -188,6 +188,75 @@ def test_repeated_voice_crash_becomes_failed_after_bounded_restarts(tmp_path: Pa
     supervisor.stop()
 
 
+def test_explicit_voice_recovery_resets_exhausted_voice_budget_without_restarting_core(
+    tmp_path: Path,
+) -> None:
+    factory = _FakeProcessFactory()
+    now = [100.0]
+    supervisor = _supervisor(tmp_path, factory, voice_restarts=1, now=now)
+    supervisor.start()
+    _write_core_endpoint(supervisor.paths, factory.children["core"][0].pid)
+    supervisor.tick()
+
+    factory.children["voice_agent"][0].returncode = 1
+    supervisor.tick()
+    now[0] = 101.0
+    supervisor.tick()
+    factory.children["voice_agent"][1].returncode = 1
+    supervisor.tick()
+    assert supervisor.health().voice_agent.detail_code == "restart_limit_exceeded"
+
+    supervisor.paths.voice_recovery_file.touch()
+    supervisor.tick()
+
+    assert len(factory.children["core"]) == 1
+    assert len(factory.children["voice_agent"]) == 3
+    assert supervisor.health().voice_agent.state is HealthState.STARTING
+    assert not supervisor.paths.voice_recovery_file.exists()
+    supervisor.stop()
+
+
+def test_voice_recovery_respects_privacy_pause_and_waits_for_resume(tmp_path: Path) -> None:
+    factory = _FakeProcessFactory()
+    supervisor = _supervisor(tmp_path, factory)
+    supervisor.start()
+    _write_core_endpoint(supervisor.paths, factory.children["core"][0].pid)
+    supervisor.tick()
+
+    supervisor.paths.pause_file.touch()
+    supervisor.paths.voice_recovery_file.touch()
+    supervisor.tick()
+
+    assert len(factory.children["voice_agent"]) == 1
+    assert supervisor.health().voice_agent.state is HealthState.PAUSED
+    assert supervisor.health().voice_agent.detail_code == "listening_paused"
+    assert not supervisor.paths.voice_recovery_file.exists()
+
+    supervisor.paths.pause_file.unlink()
+    supervisor.tick()
+    assert len(factory.children["voice_agent"]) == 2
+    assert supervisor.health().voice_agent.state is HealthState.STARTING
+    supervisor.stop()
+
+
+def test_recovery_of_running_voice_replaces_voice_only(tmp_path: Path) -> None:
+    factory = _FakeProcessFactory()
+    supervisor = _supervisor(tmp_path, factory)
+    supervisor.start()
+    _write_core_endpoint(supervisor.paths, factory.children["core"][0].pid)
+    supervisor.tick()
+    first_voice = factory.children["voice_agent"][0]
+
+    supervisor.paths.voice_recovery_file.touch()
+    supervisor.tick()
+
+    assert first_voice.returncode == 0
+    assert len(factory.children["core"]) == 1
+    assert len(factory.children["voice_agent"]) == 2
+    assert supervisor.health().voice_agent.state is HealthState.STARTING
+    supervisor.stop()
+
+
 def test_core_crash_degrades_voice_and_restarts_core_before_voice(tmp_path: Path) -> None:
     factory = _FakeProcessFactory()
     now = [100.0]
@@ -1236,6 +1305,49 @@ def test_supervisor_accepts_listening_paused_voice_health(tmp_path: Path) -> Non
     health = supervisor.health().voice_agent
     assert health.state is HealthState.DEGRADED
     assert health.detail_code == "listening_paused"
+    supervisor.stop()
+
+
+def test_pause_stops_only_voice_and_reports_paused(tmp_path: Path) -> None:
+    factory = _FakeProcessFactory()
+    supervisor = _supervisor(tmp_path, factory)
+    supervisor.start()
+    _write_core_endpoint(supervisor.paths, factory.children["core"][0].pid)
+    supervisor.tick()
+    voice = factory.children["voice_agent"][0]
+
+    supervisor.paths.state_dir.mkdir(parents=True, exist_ok=True)
+    supervisor.paths.pause_file.touch()
+    supervisor.tick()
+
+    health = supervisor.health()
+    assert health.core.state is HealthState.READY
+    assert health.voice_agent.state is HealthState.PAUSED
+    assert health.voice_agent.detail_code == "listening_paused"
+    assert voice.returncode == 0
+    assert len(factory.children["core"]) == 1
+    assert len(factory.children["voice_agent"]) == 1
+    supervisor.stop()
+
+
+def test_resume_restarts_voice_without_resetting_core(tmp_path: Path) -> None:
+    factory = _FakeProcessFactory()
+    supervisor = _supervisor(tmp_path, factory)
+    supervisor.start()
+    core = factory.children["core"][0]
+    _write_core_endpoint(supervisor.paths, core.pid)
+    supervisor.tick()
+    supervisor.paths.state_dir.mkdir(parents=True, exist_ok=True)
+    supervisor.paths.pause_file.touch()
+    supervisor.tick()
+
+    supervisor.paths.pause_file.unlink()
+    supervisor.tick()
+
+    assert len(factory.children["core"]) == 1
+    assert factory.children["core"][0] is core
+    assert len(factory.children["voice_agent"]) == 2
+    assert supervisor.health().voice_agent.state is HealthState.STARTING
     supervisor.stop()
 
 
