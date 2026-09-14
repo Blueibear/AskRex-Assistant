@@ -7,7 +7,9 @@ deterministically.
 
 from __future__ import annotations
 
+import io
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -17,11 +19,26 @@ from rex.speech.contracts import (
     SpeechProviderUnavailableError,
 )
 from rex.speech.providers.voicestudio import (
+    UrllibVoiceStudioTransport,
     VoiceStudioConfig,
     VoiceStudioSTTProvider,
     VoiceStudioTTSProvider,
     is_loopback_url,
 )
+
+
+class _FakeHttpResponse:
+    def __init__(self, body: bytes) -> None:
+        self._body = io.BytesIO(body)
+
+    def __enter__(self) -> "_FakeHttpResponse":
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self._body.close()
+
+    def read(self, size: int = -1) -> bytes:
+        return self._body.read(size)
 
 
 class FakeTransport:
@@ -94,6 +111,14 @@ class TestVoiceStudioSTTProvider:
         transport = FakeTransport(get_json_result={"data": []})
         provider = VoiceStudioSTTProvider(transport=transport)
         assert provider.availability() == (True, "ok")
+
+    def test_availability_uses_stt_health_when_voices_are_unavailable(self) -> None:
+        transport = FakeTransport(get_json_result={"status": "ok"})
+        config = VoiceStudioConfig(stt_health_path="/health/stt")
+        provider = VoiceStudioSTTProvider(config, transport=transport)
+
+        assert provider.availability() == (True, "ok")
+        assert transport.calls == [("get_json", "http://127.0.0.1:3900/health/stt")]
 
     def test_availability_timeout(self) -> None:
         transport = FakeTransport(get_json_error=SpeechProviderTimeoutError("timed out"))
@@ -180,3 +205,38 @@ class TestVoiceStudioTTSProvider:
         provider = VoiceStudioTTSProvider(transport=transport)
         with pytest.raises(SpeechProviderTimeoutError):
             provider.synthesize("hello", "narrator")
+
+
+class TestUrllibVoiceStudioTransportResponseBounds:
+    @pytest.mark.parametrize(
+        "operation",
+        ["health", "transcription", "tts"],
+    )
+    def test_oversized_response_is_rejected(self, operation: str) -> None:
+        transport = UrllibVoiceStudioTransport(max_response_bytes=8)
+        response = _FakeHttpResponse(b"x" * 9)
+
+        with patch(
+            "rex.speech.providers.voicestudio.urllib.request.urlopen",
+            return_value=response,
+        ):
+            with pytest.raises(SpeechProviderResponseError, match="response exceeded"):
+                if operation == "health":
+                    transport.get_json(
+                        "http://127.0.0.1:3900/health", headers={}, timeout=1
+                    )
+                elif operation == "transcription":
+                    transport.post_multipart_for_json(
+                        "http://127.0.0.1:3900/v1/audio/transcriptions",
+                        {},
+                        ("file", "audio.wav", b"audio", "audio/wav"),
+                        headers={},
+                        timeout=1,
+                    )
+                else:
+                    transport.post_json_for_bytes(
+                        "http://127.0.0.1:3900/v1/audio/speech",
+                        {"input": "hello"},
+                        headers={},
+                        timeout=1,
+                    )

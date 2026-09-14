@@ -75,8 +75,13 @@ class VoiceStudioConfig:
     tts_model: str | None = None
     default_voice: str | None = None
     transcriptions_path: str = "/v1/audio/transcriptions"
+    # This must remain separate from ``voices_path``: listing TTS voices is
+    # not evidence that STT is available.  Operators can point this at the
+    # deployed service's STT-aware health route when it differs.
+    stt_health_path: str = "/health"
     speech_path: str = "/v1/audio/speech"
     voices_path: str = "/v1/audio/voices"
+    max_response_bytes: int = 10 * 1024 * 1024
     voice_aliases: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -106,6 +111,11 @@ class VoiceStudioTransport(Protocol):
 
 class UrllibVoiceStudioTransport:
     """Default :mod:`urllib` transport (no new third-party HTTP dependency)."""
+
+    def __init__(self, *, max_response_bytes: int = 10 * 1024 * 1024) -> None:
+        if max_response_bytes <= 0:
+            raise ValueError("max_response_bytes must be positive")
+        self._max_response_bytes = max_response_bytes
 
     def get_json(self, url: str, *, headers: dict[str, str], timeout: float) -> Any:
         request = urllib.request.Request(url, headers=headers, method="GET")
@@ -162,11 +172,26 @@ class UrllibVoiceStudioTransport:
     def _send_raw(self, request: urllib.request.Request, timeout: float) -> bytes:
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
-                return response.read()
+                return self._read_limited(response)
         except TimeoutError as exc:
             raise SpeechProviderTimeoutError("VoiceStudio request timed out") from exc
         except urllib.error.URLError as exc:
             raise SpeechProviderUnavailableError(f"VoiceStudio is unreachable: {exc}") from exc
+
+    def _read_limited(self, response: Any) -> bytes:
+        """Read one response without allowing it to exceed the configured cap."""
+        chunks: list[bytes] = []
+        received = 0
+        while True:
+            chunk = response.read(min(64 * 1024, self._max_response_bytes - received + 1))
+            if not chunk:
+                return b"".join(chunks)
+            received += len(chunk)
+            if received > self._max_response_bytes:
+                raise SpeechProviderResponseError(
+                    "VoiceStudio response exceeded the configured size limit"
+                )
+            chunks.append(chunk)
 
     def _send(self, request: urllib.request.Request, timeout: float) -> Any:
         raw = self._send_raw(request, timeout)
@@ -196,7 +221,9 @@ class VoiceStudioSTTProvider:
         transport: VoiceStudioTransport | None = None,
     ) -> None:
         self._config = config or VoiceStudioConfig()
-        self._transport = transport or UrllibVoiceStudioTransport()
+        self._transport = transport or UrllibVoiceStudioTransport(
+            max_response_bytes=self._config.max_response_bytes
+        )
 
     @property
     def is_local(self) -> bool:
@@ -205,7 +232,7 @@ class VoiceStudioSTTProvider:
     def availability(self) -> tuple[bool, str]:
         try:
             self._transport.get_json(
-                self._config.base_url + self._config.voices_path,
+                self._config.base_url + self._config.stt_health_path,
                 headers=_auth_headers(self._config),
                 timeout=min(5.0, self._config.timeout_seconds),
             )
@@ -257,7 +284,9 @@ class VoiceStudioTTSProvider:
         transport: VoiceStudioTransport | None = None,
     ) -> None:
         self._config = config or VoiceStudioConfig()
-        self._transport = transport or UrllibVoiceStudioTransport()
+        self._transport = transport or UrllibVoiceStudioTransport(
+            max_response_bytes=self._config.max_response_bytes
+        )
 
     @property
     def is_local(self) -> bool:
