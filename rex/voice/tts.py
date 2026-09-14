@@ -154,29 +154,32 @@ class TextToSpeech:
         """Return True while TTS audio playback is in progress."""
         return self._speaking.is_set()
 
-    def _resolve_active_provider(self) -> tuple[str, Any]:
-        """Return ``(engine_key, routed_provider)`` for this synthesis request.
+    def _resolve_active_provider_chain(self) -> list[tuple[str, Any]]:
+        """Return every ``(engine_key, routed_provider)`` policy permits, in order.
 
-        When the SpeechRouter is disabled this is exactly
-        ``(self._provider, None)`` -- zero behaviour change. When enabled,
-        policy (mode, ``allow_cloud``, fallback order, provider health) is
-        resolved fresh on every call so a Local-Only/cloud-permission
-        decision is never stale; a ``native`` resolution defers to the
-        existing configured engine (xtts/edge/windows) and any other
-        provider ID (for example ``voicestudio``) is returned together with
-        the concrete provider instance to dispatch to.
+        When the SpeechRouter is disabled this is exactly the single
+        pre-existing ``self._provider`` entry -- zero behaviour change. When
+        enabled, a provider that passes health resolution but then fails or
+        times out once actually invoked must recover to the next permitted
+        provider (including native) instead of the caller silently printing
+        a stdout fallback after a single attempt.
         """
         if self._speech_router is None:
-            return self._provider, None
+            return [(self._provider, None)]
         from rex.speech.providers.native import NATIVE_PROVIDER_ID  # noqa: PLC0415
 
         try:
-            provider = self._speech_router.resolve_tts_provider()
+            chain = self._speech_router.resolve_tts_fallback_chain()
         except SpeechPolicyError as exc:
             raise TextToSpeechError(str(exc)) from exc
-        if provider.provider_id == NATIVE_PROVIDER_ID:
-            return self._provider, None
-        return provider.provider_id, provider
+
+        resolved: list[tuple[str, Any]] = []
+        for provider in chain:
+            if provider.provider_id == NATIVE_PROVIDER_ID:
+                resolved.append((self._provider, None))
+            else:
+                resolved.append((provider.provider_id, provider))
+        return resolved
 
     def _initialize_xtts(self) -> bool:
         """Initialize XTTS model, storing diagnostics on failure."""
@@ -322,7 +325,8 @@ class TextToSpeech:
                     "speech_start_delay_s": None,
                 }
 
-        active_provider, routed_provider = self._resolve_active_provider()
+        provider_chain = self._resolve_active_provider_chain()
+        active_provider = provider_chain[0][0]
         max_spoken_chars = self._settings_int("tts_max_spoken_chars", 120)
         fast_short_candidate = (
             prefer_fast
@@ -396,36 +400,60 @@ class TextToSpeech:
                     run_metrics["fallback_used"] = True
                     run_metrics["fast_short_failure"] = type(exc).__name__
 
-            if active_provider == "xtts":
-                run_metrics.update(
-                    await await_with_cancellation(
-                        self._speak_xtts(text, speaker_wav, request_started_at=started_at)
-                    )
-                )
-            elif active_provider == "edge":
-                run_metrics.update(
-                    await await_with_cancellation(
-                        self._speak_edge(text, request_started_at=started_at)
-                    )
-                )
-            elif active_provider == "voicestudio":
-                run_metrics.update(
-                    await await_with_cancellation(
-                        self._speak_voicestudio(
-                            text, request_started_at=started_at, provider=routed_provider
+            for candidate_index, (candidate_provider, candidate_routed) in enumerate(
+                provider_chain
+            ):
+                is_last_candidate = candidate_index == len(provider_chain) - 1
+                try:
+                    if candidate_provider == "xtts":
+                        run_metrics.update(
+                            await await_with_cancellation(
+                                self._speak_xtts(
+                                    text, speaker_wav, request_started_at=started_at
+                                )
+                            )
                         )
+                    elif candidate_provider == "edge":
+                        run_metrics.update(
+                            await await_with_cancellation(
+                                self._speak_edge(text, request_started_at=started_at)
+                            )
+                        )
+                    elif candidate_provider == "voicestudio":
+                        run_metrics.update(
+                            await await_with_cancellation(
+                                self._speak_voicestudio(
+                                    text,
+                                    request_started_at=started_at,
+                                    provider=candidate_routed,
+                                )
+                            )
+                        )
+                    elif candidate_provider == "windows":
+                        run_metrics.update(
+                            await await_with_cancellation(
+                                self._speak_windows(text, request_started_at=started_at)
+                            )
+                        )
+                    else:
+                        run_metrics["path_used"] = "stdout"
+                        run_metrics["speech_start_delay_s"] = 0.0
+                        print(f"Rex: {text}")
+                    break
+                except (TurnCancelledError, AudioDeviceError):
+                    raise
+                except Exception as exc:
+                    if is_last_candidate:
+                        raise
+                    _vl().logger.warning(
+                        "[TTS] Provider failed; trying next permitted provider",
+                        extra=_voice_log_extra(
+                            event="tts_provider_fallback",
+                            failed_provider=candidate_provider,
+                            next_provider=provider_chain[candidate_index + 1][0],
+                            error_code=type(exc).__name__,
+                        ),
                     )
-                )
-            elif active_provider == "windows":
-                run_metrics.update(
-                    await await_with_cancellation(
-                        self._speak_windows(text, request_started_at=started_at)
-                    )
-                )
-            else:
-                run_metrics["path_used"] = "stdout"
-                run_metrics["speech_start_delay_s"] = 0.0
-                print(f"Rex: {text}")
         except TurnCancelledError:
             raise
         except AudioDeviceError:
@@ -1048,8 +1076,8 @@ class TextToSpeech:
         """Synthesize speech using VoiceStudio, reusing the existing decode/playback path.
 
         ``provider`` is the already policy-resolved :class:`VoiceStudioTTSProvider`
-        from :meth:`_resolve_active_provider` (SpeechRouter); it is only
-        rebuilt directly here as a fallback for direct/unit-test callers.
+        from :meth:`_resolve_active_provider_chain` (SpeechRouter); it is
+        only rebuilt directly here as a fallback for direct/unit-test callers.
         """
         sf = _vl()._lazy_import_soundfile()
         if sf is None:

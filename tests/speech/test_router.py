@@ -6,18 +6,26 @@ from typing import Any
 
 import pytest
 
+from rex.speech.contracts import SpeechProviderTimeoutError
 from rex.speech.policy import SpeechPolicy, SpeechPolicyError, SpeechPolicyMode
 from rex.speech.router import SpeechRouter
 
 
 class FakeSTTProvider:
     def __init__(
-        self, provider_id: str, *, is_local: bool = True, available: bool = True, text: str = "hi"
+        self,
+        provider_id: str,
+        *,
+        is_local: bool = True,
+        available: bool = True,
+        text: str = "hi",
+        error: Exception | None = None,
     ) -> None:
         self.provider_id = provider_id
         self.is_local = is_local
         self._available = available
         self._text = text
+        self._error = error
         self.decoded: list[str] = []
         self.transcribed: list[Any] = []
 
@@ -30,16 +38,24 @@ class FakeSTTProvider:
 
     def transcribe(self, audio: Any) -> str:
         self.transcribed.append(audio)
+        if self._error:
+            raise self._error
         return self._text
 
 
 class FakeTTSProvider:
     def __init__(
-        self, provider_id: str, *, is_local: bool = True, available: bool = True
+        self,
+        provider_id: str,
+        *,
+        is_local: bool = True,
+        available: bool = True,
+        error: Exception | None = None,
     ) -> None:
         self.provider_id = provider_id
         self.is_local = is_local
         self._available = available
+        self._error = error
         self.synthesized: list[tuple[str, str]] = []
 
     def availability(self) -> tuple[bool, str]:
@@ -56,6 +72,8 @@ class FakeTTSProvider:
 
     def synthesize(self, text: str, voice_id: str) -> bytes:
         self.synthesized.append((text, voice_id))
+        if self._error:
+            raise self._error
         return b"audio-bytes"
 
 
@@ -67,12 +85,16 @@ def _router(
     allow_cloud: bool = False,
     stt_provider: str | None = None,
     tts_provider: str | None = None,
+    stt_fallback_order: tuple[str, ...] = (),
+    tts_fallback_order: tuple[str, ...] = (),
 ) -> SpeechRouter:
     policy = SpeechPolicy(
         mode=mode,
         allow_cloud=allow_cloud,
         stt_provider=stt_provider,
         tts_provider=tts_provider,
+        stt_fallback_order=stt_fallback_order,
+        tts_fallback_order=tts_fallback_order,
     )
     return SpeechRouter(stt_providers=stt, tts_providers=tts, policy=policy)
 
@@ -130,3 +152,76 @@ class TestSpeechRouter:
         tts_health = {h.provider_id: h.available for h in router.tts_health()}
         assert stt_health == {"native": True}
         assert tts_health == {"native": False}
+
+    def test_transcribe_file_recovers_to_next_permitted_provider_on_runtime_failure(
+        self,
+    ) -> None:
+        """A provider that passes its health check but times out at call time
+        must not strand transcription: the router retries the next permitted
+        (here: native) provider instead of raising immediately."""
+        voicestudio = FakeSTTProvider(
+            "voicestudio", error=SpeechProviderTimeoutError("VoiceStudio timed out")
+        )
+        native = FakeSTTProvider("native", text="native-recovered")
+        router = _router(
+            stt={"voicestudio": voicestudio, "native": native},
+            tts={},
+            mode=SpeechPolicyMode.CUSTOM,
+            stt_provider="voicestudio",
+            stt_fallback_order=("native",),
+            allow_cloud=True,
+        )
+        result = router.transcribe_file("/tmp/audio.wav")
+        assert result.text == "native-recovered"
+        assert result.provider_id == "native"
+
+    def test_transcribe_file_raises_once_entire_permitted_chain_fails(self) -> None:
+        voicestudio = FakeSTTProvider(
+            "voicestudio", error=SpeechProviderTimeoutError("VoiceStudio timed out")
+        )
+        router = _router(
+            stt={"voicestudio": voicestudio},
+            tts={},
+            mode=SpeechPolicyMode.CUSTOM,
+            stt_provider="voicestudio",
+            allow_cloud=True,
+        )
+        with pytest.raises(SpeechPolicyError):
+            router.transcribe_file("/tmp/audio.wav")
+
+    def test_synthesize_recovers_to_next_permitted_provider_on_runtime_failure(self) -> None:
+        voicestudio = FakeTTSProvider(
+            "voicestudio", error=SpeechProviderTimeoutError("VoiceStudio timed out")
+        )
+        native = FakeTTSProvider("native")
+        router = _router(
+            stt={},
+            tts={"voicestudio": voicestudio, "native": native},
+            mode=SpeechPolicyMode.CUSTOM,
+            tts_provider="voicestudio",
+            tts_fallback_order=("native",),
+            allow_cloud=True,
+        )
+        result = router.synthesize("hello")
+        assert result.audio == b"audio-bytes"
+        assert result.provider_id == "native"
+
+    def test_fallback_recovery_never_reaches_disallowed_cloud_provider(self) -> None:
+        """Recovery must still honor Local Only: a failing local provider
+        must never fall through to a cloud provider even if one is listed
+        in the fallback order."""
+        local = FakeSTTProvider(
+            "voicestudio", error=SpeechProviderTimeoutError("VoiceStudio timed out")
+        )
+        cloud = FakeSTTProvider("cloud-stt", is_local=False, text="should-never-be-used")
+        router = _router(
+            stt={"voicestudio": local, "cloud-stt": cloud},
+            tts={},
+            mode=SpeechPolicyMode.LOCAL_ONLY,
+            stt_provider="voicestudio",
+            stt_fallback_order=("cloud-stt",),
+            allow_cloud=True,
+        )
+        with pytest.raises(SpeechPolicyError):
+            router.transcribe_file("/tmp/audio.wav")
+        assert cloud.transcribed == []

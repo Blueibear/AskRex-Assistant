@@ -88,22 +88,26 @@ class RoutedSpeechToTextAdapter:
 
     def transcribe(self, audio: Any) -> str:
         try:
-            provider = self._router.resolve_stt_provider()
+            chain = self._router.resolve_stt_fallback_chain()
         except SpeechPolicyError as exc:
             raise _map_provider_error(exc) from exc
-        try:
-            if provider.provider_id == NATIVE_PROVIDER_ID:
-                return provider.transcribe(audio)
-            wav_bytes = _to_wav_buffer(audio, WHISPER_SAMPLE_RATE)
-            return provider.transcribe(wav_bytes)
-        except MobileApiError:
-            raise
-        except (
-            SpeechProviderTimeoutError,
-            SpeechProviderUnavailableError,
-            SpeechProviderResponseError,
-        ) as exc:
-            raise _map_provider_error(exc) from exc
+
+        last_error: Exception | None = None
+        for provider in chain:
+            try:
+                if provider.provider_id == NATIVE_PROVIDER_ID:
+                    return provider.transcribe(audio)
+                wav_bytes = _to_wav_buffer(audio, WHISPER_SAMPLE_RATE)
+                return provider.transcribe(wav_bytes)
+            except (
+                SpeechProviderTimeoutError,
+                SpeechProviderUnavailableError,
+                SpeechProviderResponseError,
+            ) as exc:
+                last_error = exc
+                continue
+        fallback_error = last_error or SpeechProviderUnavailableError("exhausted")
+        raise _map_provider_error(fallback_error) from last_error
 
 
 class RoutedTextToSpeechAdapter:
@@ -153,17 +157,26 @@ class RoutedTextToSpeechAdapter:
 
     def synthesize(self, text: str, voice_id: str) -> bytes:
         try:
-            provider = self._router.resolve_tts_provider()
+            chain = self._router.resolve_tts_fallback_chain()
         except SpeechPolicyError as exc:
             raise _map_provider_error(exc) from exc
-        try:
-            audio = provider.synthesize(text, voice_id)
-        except (
-            SpeechProviderTimeoutError,
-            SpeechProviderUnavailableError,
-            SpeechProviderResponseError,
-        ) as exc:
-            raise _map_provider_error(exc) from exc
+
+        audio: bytes | None = None
+        last_error: Exception | None = None
+        for provider in chain:
+            try:
+                audio = provider.synthesize(text, voice_id)
+                break
+            except (
+                SpeechProviderTimeoutError,
+                SpeechProviderUnavailableError,
+                SpeechProviderResponseError,
+            ) as exc:
+                last_error = exc
+                continue
+        if audio is None:
+            fallback_error = last_error or SpeechProviderUnavailableError("exhausted")
+            raise _map_provider_error(fallback_error) from last_error
         if not audio:
             raise MobileApiError(
                 merr.BACKEND_UNAVAILABLE,

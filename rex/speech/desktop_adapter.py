@@ -53,26 +53,32 @@ class RoutedDesktopSTT:
 
     async def transcribe(self, audio: Any, sample_rate: int) -> str:
         try:
-            provider = self._router.resolve_stt_provider()
+            chain = self._router.resolve_stt_fallback_chain()
         except SpeechPolicyError as exc:
             raise SpeechToTextError(str(exc)) from exc
 
-        if provider.provider_id == NATIVE_PROVIDER_ID:
-            return await self._native_stt.transcribe(audio, sample_rate)
+        last_error: Exception | None = None
+        for provider in chain:
+            if provider.provider_id == NATIVE_PROVIDER_ID:
+                return await self._native_stt.transcribe(audio, sample_rate)
 
-        try:
-            wav_bytes = _to_wav_buffer(audio, sample_rate)
+            try:
+                wav_bytes = _to_wav_buffer(audio, sample_rate)
 
-            def _transcribe() -> str:
-                return provider.transcribe(wav_bytes)
+                def _transcribe(active_provider: Any = provider) -> str:
+                    return active_provider.transcribe(wav_bytes)
 
-            return await asyncio.to_thread(_transcribe)
-        except (
-            SpeechProviderTimeoutError,
-            SpeechProviderUnavailableError,
-            SpeechProviderResponseError,
-        ) as exc:
-            raise SpeechToTextError(str(exc)) from exc
+                return await asyncio.to_thread(_transcribe)
+            except (
+                SpeechProviderTimeoutError,
+                SpeechProviderUnavailableError,
+                SpeechProviderResponseError,
+            ) as exc:
+                last_error = exc
+                continue
+
+        message = str(last_error) if last_error else "No speech-to-text provider succeeded."
+        raise SpeechToTextError(message) from last_error
 
 
 __all__ = ["RoutedDesktopSTT"]

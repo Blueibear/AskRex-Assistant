@@ -93,6 +93,37 @@ def _ordered_candidates(
     return ordered
 
 
+def resolve_provider_fallback_chain(
+    *,
+    mode: SpeechPolicyMode,
+    explicit_provider: str | None,
+    fallback_order: tuple[str, ...],
+    allow_cloud: bool,
+    candidates: dict[str, ProviderCandidate],
+) -> list[str]:
+    """Return every provider ID this policy permits, in priority order.
+
+    Unlike :func:`resolve_provider_chain`, this is not truncated to the
+    first available entry: it is the ordered set a caller may retry against
+    if a provider that passed its health check nonetheless times out or
+    fails once actually invoked. Local Only/cloud-permission filtering is
+    still fully applied -- a provider excluded by policy is never included
+    here regardless of its live availability.
+    """
+    if not candidates:
+        return []
+    ordered = _ordered_candidates(mode, explicit_provider, fallback_order, candidates)
+    permitted: list[str] = []
+    for provider_id in ordered:
+        candidate = candidates[provider_id]
+        if mode is SpeechPolicyMode.LOCAL_ONLY and not candidate.is_local:
+            continue
+        if not candidate.is_local and not allow_cloud:
+            continue
+        permitted.append(provider_id)
+    return permitted
+
+
 def resolve_provider_chain(
     *,
     mode: SpeechPolicyMode,
@@ -144,4 +175,5 @@ __all__ = [
     "SpeechPolicyError",
     "SpeechPolicyMode",
     "resolve_provider_chain",
+    "resolve_provider_fallback_chain",
 ]

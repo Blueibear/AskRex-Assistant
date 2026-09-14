@@ -21,6 +21,29 @@ from rex.speech.providers.native import NATIVE_PROVIDER_ID
 from rex.speech.router import SpeechRouter
 
 
+def _custom_router(
+    stt: dict[str, Any],
+    tts: dict[str, Any],
+    *,
+    stt_provider: str | None = None,
+    stt_fallback_order: tuple[str, ...] = (),
+    tts_provider: str | None = None,
+    tts_fallback_order: tuple[str, ...] = (),
+) -> SpeechRouter:
+    return SpeechRouter(
+        stt_providers=stt,
+        tts_providers=tts,
+        policy=SpeechPolicy(
+            mode=SpeechPolicyMode.CUSTOM,
+            allow_cloud=True,
+            stt_provider=stt_provider,
+            stt_fallback_order=stt_fallback_order,
+            tts_provider=tts_provider,
+            tts_fallback_order=tts_fallback_order,
+        ),
+    )
+
+
 class FakeDecoder:
     def decode(self, path: str) -> Any:
         return np.zeros(16_000, dtype=np.float32)
@@ -118,6 +141,21 @@ class TestRoutedSpeechToTextAdapter:
         with pytest.raises(MobileApiError):
             adapter.require_available()
 
+    def test_provider_timeout_recovers_to_next_permitted_provider(self) -> None:
+        flaky = FakeSTTProvider(
+            "voicestudio", error=SpeechProviderTimeoutError("VoiceStudio timed out")
+        )
+        native = FakeSTTProvider(NATIVE_PROVIDER_ID, text="native-recovered")
+        router = _custom_router(
+            {"voicestudio": flaky, NATIVE_PROVIDER_ID: native},
+            {},
+            stt_provider="voicestudio",
+            stt_fallback_order=(NATIVE_PROVIDER_ID,),
+        )
+        adapter = RoutedSpeechToTextAdapter(router, decoder=FakeDecoder())
+        audio = adapter.decode("/tmp/a.wav")
+        assert adapter.transcribe(audio) == "native-recovered"
+
 
 class TestRoutedTextToSpeechAdapter:
     def test_synthesize_round_trip(self) -> None:
@@ -140,3 +178,17 @@ class TestRoutedTextToSpeechAdapter:
         assert available is False
         with pytest.raises(MobileApiError):
             adapter.require_available()
+
+    def test_synthesize_recovers_to_next_permitted_provider_on_timeout(self) -> None:
+        flaky = FakeTTSProvider(
+            "voicestudio", error=SpeechProviderTimeoutError("VoiceStudio timed out")
+        )
+        native = FakeTTSProvider(NATIVE_PROVIDER_ID)
+        router = _custom_router(
+            {},
+            {"voicestudio": flaky, NATIVE_PROVIDER_ID: native},
+            tts_provider="voicestudio",
+            tts_fallback_order=(NATIVE_PROVIDER_ID,),
+        )
+        adapter = RoutedTextToSpeechAdapter(router)
+        assert adapter.synthesize("hello", "default-voice") == b"audio-bytes"

@@ -188,3 +188,27 @@ class TestRoutedDesktopSTTPolicyEnforcement:
         audio = np.zeros(16_000, dtype=np.float32)
         with pytest.raises(SpeechToTextError):
             asyncio.run(adapter.transcribe(audio, 16_000))
+
+    def test_provider_that_times_out_at_call_time_recovers_to_native(self) -> None:
+        """A provider that passed its health check but then times out when
+        actually invoked must recover to the next permitted (here: native)
+        provider instead of the desktop pipeline losing the turn entirely."""
+        flaky = FakeProvider(
+            "voicestudio", error=SpeechProviderTimeoutError("VoiceStudio timed out")
+        )
+        native = FakeNativeSTT(text="native-recovered")
+        router = _router(
+            {NATIVE_PROVIDER_ID: FakeProvider(NATIVE_PROVIDER_ID), "voicestudio": flaky},
+            policy=SpeechPolicy(
+                mode=SpeechPolicyMode.CUSTOM,
+                stt_provider="voicestudio",
+                stt_fallback_order=(NATIVE_PROVIDER_ID,),
+                allow_cloud=True,
+            ),
+        )
+        adapter = RoutedDesktopSTT(router, native_stt=native)
+
+        audio = np.zeros(16_000, dtype=np.float32)
+        result = asyncio.run(adapter.transcribe(audio, 16_000))
+        assert result == "native-recovered"
+        assert flaky.received != []

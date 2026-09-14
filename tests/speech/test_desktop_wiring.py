@@ -170,8 +170,9 @@ class TestBuildVoiceLoopSTTRouting:
 
                 vl.build_voice_loop(MagicMock())
 
-            transcribe_cb = mock_voice_loop_cls.call_args.kwargs["transcribe"]
-            result = asyncio.run(transcribe_cb("fake-audio"))
+                transcribe_cb = mock_voice_loop_cls.call_args.kwargs["transcribe"]
+                result = asyncio.run(transcribe_cb("fake-audio"))
+
             assert result == "routed-voicestudio-text"
             native_stt_instance.transcribe.assert_not_awaited()
         finally:
@@ -258,6 +259,65 @@ class TestTextToSpeechRouting:
             fake_speak.assert_awaited_once()
             assert fake_speak.await_args.kwargs["provider"] is fake_voicestudio
             assert result["path_used"] == "voicestudio"
+
+    def test_speak_recovers_to_next_permitted_provider_when_primary_fails_at_call_time(
+        self,
+    ) -> None:
+        """P0 regression: a provider that passes health resolution but then
+        fails once actually invoked must recover to the next permitted
+        provider (here: native xtts) instead of printing a stdout fallback
+        after a single attempt."""
+        with (
+            patch("rex.voice_loop._lazy_import_tts", return_value=None),
+            patch("rex.voice_loop.settings") as mock_settings,
+        ):
+            mock_settings.tts_provider = "xtts"
+            mock_settings.tts_voice = None
+            mock_settings.tts_speed = 1.0
+            mock_settings.tts_max_spoken_chars = 120
+            mock_settings.tts_fast_short_reply_max_chars = 140
+            mock_settings.speech = SpeechConfig(enabled=True)
+
+            fake_native = FakeTTSProvider(NATIVE_PROVIDER_ID)
+            fake_voicestudio = FakeTTSProvider("voicestudio")
+            router = SpeechRouter(
+                stt_providers={},
+                tts_providers={
+                    NATIVE_PROVIDER_ID: fake_native,
+                    "voicestudio": fake_voicestudio,
+                },
+                policy=SpeechPolicy(
+                    mode=SpeechPolicyMode.CUSTOM,
+                    tts_provider="voicestudio",
+                    tts_fallback_order=(NATIVE_PROVIDER_ID,),
+                    allow_cloud=True,
+                ),
+            )
+
+            with patch("rex.speech.registry.build_default_router", return_value=router):
+                from rex.voice_loop import TextToSpeech
+
+                tts = TextToSpeech(language="en")
+
+            with (
+                patch.object(
+                    tts,
+                    "_speak_voicestudio",
+                    new=AsyncMock(side_effect=RuntimeError("VoiceStudio call failed")),
+                ) as fake_speak_voicestudio,
+                patch.object(
+                    tts,
+                    "_speak_xtts",
+                    new=AsyncMock(return_value={"path_used": "xtts"}),
+                ) as fake_speak_xtts,
+                patch("builtins.print") as fake_print,
+            ):
+                result = asyncio.run(tts.speak("hello"))
+
+            fake_speak_voicestudio.assert_awaited_once()
+            fake_speak_xtts.assert_awaited_once()
+            assert result["path_used"] == "xtts"
+            fake_print.assert_not_called()
 
     def test_local_only_policy_failure_raises_instead_of_silently_using_native(self) -> None:
         """No silent cloud/degraded fallback: an exhausted Local Only policy raises."""

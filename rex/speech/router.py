@@ -10,14 +10,31 @@ permits.
 
 from __future__ import annotations
 
+from typing import Any
+
 from rex.speech.contracts import (
     ProviderHealth,
+    SpeechProviderResponseError,
+    SpeechProviderTimeoutError,
+    SpeechProviderUnavailableError,
     SpeechToTextProvider,
     SynthesisResult,
     TextToSpeechProvider,
     TranscriptionResult,
 )
-from rex.speech.policy import ProviderCandidate, SpeechPolicy, resolve_provider_chain
+from rex.speech.policy import (
+    ProviderCandidate,
+    SpeechPolicy,
+    SpeechPolicyError,
+    resolve_provider_chain,
+    resolve_provider_fallback_chain,
+)
+
+_RECOVERABLE_PROVIDER_ERRORS = (
+    SpeechProviderTimeoutError,
+    SpeechProviderUnavailableError,
+    SpeechProviderResponseError,
+)
 
 
 def _candidates(
@@ -71,24 +88,90 @@ class SpeechRouter:
         )
         return self._tts_providers[provider_id]
 
+    def resolve_stt_fallback_chain(self) -> list[SpeechToTextProvider]:
+        """Return every STT provider policy permits, in priority order.
+
+        Used to retry the next permitted provider when the primary
+        resolution passes its health check but then fails or times out
+        once actually invoked, instead of leaving the caller stuck on a
+        single provider that has just become unavailable.
+        """
+        return self._fallback_chain(
+            self._stt_providers, self.policy.stt_provider, self.policy.stt_fallback_order
+        )
+
+    def resolve_tts_fallback_chain(self) -> list[TextToSpeechProvider]:
+        """Return every TTS provider policy permits, in priority order."""
+        return self._fallback_chain(
+            self._tts_providers, self.policy.tts_provider, self.policy.tts_fallback_order
+        )
+
+    def _fallback_chain(
+        self,
+        providers: dict[str, SpeechToTextProvider] | dict[str, TextToSpeechProvider],
+        explicit_provider: str | None,
+        fallback_order: tuple[str, ...],
+    ) -> list[Any]:
+        candidates = _candidates(providers)
+        provider_ids = resolve_provider_fallback_chain(
+            mode=self.policy.mode,
+            explicit_provider=explicit_provider,
+            fallback_order=fallback_order,
+            allow_cloud=self.policy.allow_cloud,
+            candidates=candidates,
+        )
+        available_ids = [pid for pid in provider_ids if candidates[pid].available]
+        if not available_ids:
+            # Reuses resolve_provider_chain purely to raise the same truthful,
+            # mode-aware SpeechPolicyError message an empty chain implies.
+            resolve_provider_chain(
+                mode=self.policy.mode,
+                explicit_provider=explicit_provider,
+                fallback_order=fallback_order,
+                allow_cloud=self.policy.allow_cloud,
+                candidates=candidates,
+            )
+        return [providers[pid] for pid in available_ids]
+
     def transcribe_file(self, path: str) -> TranscriptionResult:
-        """Resolve an STT provider and transcribe an audio file end to end."""
-        provider = self.resolve_stt_provider()
-        audio = provider.decode(path)
-        text = provider.transcribe(audio)
-        return TranscriptionResult(text=text, provider_id=provider.provider_id)
+        """Resolve permitted STT providers and transcribe, retrying the next
+        permitted provider if one fails or times out at call time."""
+        chain = self.resolve_stt_fallback_chain()
+        last_error: Exception | None = None
+        for provider in chain:
+            try:
+                audio = provider.decode(path)
+                text = provider.transcribe(audio)
+                return TranscriptionResult(text=text, provider_id=provider.provider_id)
+            except _RECOVERABLE_PROVIDER_ERRORS as exc:
+                last_error = exc
+                continue
+        raise SpeechPolicyError(
+            f"All permitted speech-to-text providers failed; last error: {last_error}"
+        ) from last_error
 
     def synthesize(self, text: str, voice: str | None = None) -> SynthesisResult:
-        """Resolve a TTS provider, resolve the voice (including aliases), and synthesize."""
-        provider = self.resolve_tts_provider()
-        voice_id = provider.resolve_voice(voice)
-        audio = provider.synthesize(text, voice_id)
-        return SynthesisResult(
-            audio=audio,
-            mime_type=provider.mime_type(),
-            provider_id=provider.provider_id,
-            voice_id=voice_id,
-        )
+        """Resolve permitted TTS providers, resolve the voice (including
+        aliases), and synthesize, retrying the next permitted provider if
+        one fails or times out at call time."""
+        chain = self.resolve_tts_fallback_chain()
+        last_error: Exception | None = None
+        for provider in chain:
+            try:
+                voice_id = provider.resolve_voice(voice)
+                audio = provider.synthesize(text, voice_id)
+                return SynthesisResult(
+                    audio=audio,
+                    mime_type=provider.mime_type(),
+                    provider_id=provider.provider_id,
+                    voice_id=voice_id,
+                )
+            except _RECOVERABLE_PROVIDER_ERRORS as exc:
+                last_error = exc
+                continue
+        raise SpeechPolicyError(
+            f"All permitted text-to-speech providers failed; last error: {last_error}"
+        ) from last_error
 
     def stt_health(self) -> list[ProviderHealth]:
         return [
