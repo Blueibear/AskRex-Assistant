@@ -271,6 +271,18 @@ class TestScanPathExclusions:
         _, placeholders, _ = security_audit.scan_file(lockfile)
         assert placeholders == []
 
+    def test_file_truncate_call_is_not_incomplete_code(self, tmp_path):
+        source = tmp_path / "lockfile.py"
+        source.write_text("handle.truncate()\n", encoding="utf-8")
+        _, placeholders, _ = security_audit.scan_file(source)
+        assert placeholders == []
+
+    def test_explicit_truncated_source_marker_is_still_detected(self, tmp_path):
+        source = tmp_path / "unfinished.py"
+        source.write_text("# TRUNCATED: implementation omitted\n", encoding="utf-8")
+        _, placeholders, _ = security_audit.scan_file(source)
+        assert len(placeholders) == 1
+
     def test_ignores_mypy_cache_files(self):
         path = Path(".mypy_cache") / "3.12" / "module.meta.json"
         assert security_audit.should_scan_file(path) is False

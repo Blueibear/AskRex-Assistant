@@ -370,6 +370,12 @@ def scan_file(
                 if re.match(r"\s*(def|class)\s+\w*(placeholder|truncat)\w*", lowered):
                     continue
 
+                # Skip legitimate file-handle truncation calls. The broad TRUNCAT
+                # marker exists to catch explicit incomplete-source markers, not
+                # Python's FileIO/TextIOBase.truncate() operation.
+                if "truncat" in lowered and re.search(r"\.\s*truncate\s*\(", lowered):
+                    continue
+
                 # Skip: truncation as a legitimate output/data-size limiting feature
                 if "truncat" in lowered and any(
                     w in lowered
