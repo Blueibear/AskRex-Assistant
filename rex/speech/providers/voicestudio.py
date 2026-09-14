@@ -66,7 +66,9 @@ def is_loopback_url(url: str) -> bool:
 class VoiceStudioConfig:
     """Bounded VoiceStudio client configuration."""
 
-    base_url: str = "http://127.0.0.1:8020"
+    # Matches upstream VoiceStudio's documented loopback API port (Docker
+    # quick start publishes 127.0.0.1:3900); see debpalash/VoiceStudio.
+    base_url: str = "http://127.0.0.1:3900"
     timeout_seconds: float = 30.0
     api_key: str | None = None
     stt_model: str | None = None
@@ -343,42 +345,10 @@ class VoiceStudioTTSProvider:
         )
 
 
-class VoiceStudioDesktopSTT:
-    """Desktop voice-loop STT drop-in that transcribes via VoiceStudio.
-
-    Matches the minimal duck-typed surface the desktop pipeline uses
-    (``async def transcribe(self, audio, sample_rate) -> str`` and
-    ``is_loaded()``) so ``rex.voice.builder`` can select it in place of the
-    Whisper-backed :class:`rex.voice.stt.SpeechToText` behind an explicit
-    ``speech.stt_provider = "voicestudio"`` opt-in, with no effect on the
-    default native STT path.
-    """
-
-    def __init__(self, config: VoiceStudioConfig | None = None) -> None:
-        self._provider = VoiceStudioSTTProvider(config)
-
-    def is_loaded(self) -> bool:
-        available, _reason = self._provider.availability()
-        return available
-
-    async def transcribe(self, audio: Any, sample_rate: int) -> str:
-        import asyncio
-
-        from rex.voice.audio_utils import _to_wav_buffer
-
-        wav_bytes = _to_wav_buffer(audio, sample_rate)
-
-        def _transcribe() -> str:
-            return self._provider.transcribe(wav_bytes)
-
-        return await asyncio.to_thread(_transcribe)
-
-
 __all__ = [
     "VOICESTUDIO_PROVIDER_ID",
     "UrllibVoiceStudioTransport",
     "VoiceStudioConfig",
-    "VoiceStudioDesktopSTT",
     "VoiceStudioSTTProvider",
     "VoiceStudioTTSProvider",
     "VoiceStudioTransport",

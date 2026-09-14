@@ -26,6 +26,7 @@ from rex.runtime.cancellation import (
     await_with_cancellation,
     current_turn_cancellation,
 )
+from rex.speech.policy import SpeechPolicyError
 from rex.tts_utils import chunk_text_for_xtts
 from rex.voice._types import (
     AudioArray,
@@ -85,14 +86,20 @@ class TextToSpeech:
         elif self._provider == "pyttsx3":
             self._provider = "windows"
 
-        # Explicit opt-in override (S35): the pre-existing ``tts_provider``
-        # flat field continues to select xtts/edge/pyttsx3 unchanged; only an
-        # explicit ``speech.tts_provider = "voicestudio"`` selects the
-        # VoiceStudio provider, so existing configurations are unaffected.
+        # S35: the pre-existing ``tts_provider`` flat field continues to
+        # select xtts/edge/pyttsx3 unchanged when the SpeechRouter is
+        # disabled (``speech.enabled=false``, the default) -- the explicit
+        # rollback path. When enabled, every synthesis request resolves its
+        # provider through the same policy-enforcing SpeechRouter the
+        # authenticated mobile gateway uses, so ``allow_cloud``,
+        # ``policy_mode`` (including Local Only), and ``voicestudio_enabled``
+        # can never be bypassed by a stale/explicit provider string.
+        self._speech_router: Any = None
         speech_cfg = getattr(_vl().settings, "speech", None)
-        speech_tts_provider = getattr(speech_cfg, "tts_provider", "native")
-        if speech_cfg is not None and speech_tts_provider == "voicestudio":
-            self._provider = "voicestudio"
+        if getattr(speech_cfg, "enabled", None) is True:
+            from rex.speech.registry import build_default_router  # noqa: PLC0415
+
+            self._speech_router = build_default_router(_vl().settings)
 
         self._edge_voice = getattr(_vl().settings, "tts_voice", None) or "en-US-AndrewNeural"
         raw_output_device = getattr(_vl().settings, "audio_output_device", None)
@@ -146,6 +153,30 @@ class TextToSpeech:
     def is_speaking(self) -> bool:
         """Return True while TTS audio playback is in progress."""
         return self._speaking.is_set()
+
+    def _resolve_active_provider(self) -> tuple[str, Any]:
+        """Return ``(engine_key, routed_provider)`` for this synthesis request.
+
+        When the SpeechRouter is disabled this is exactly
+        ``(self._provider, None)`` -- zero behaviour change. When enabled,
+        policy (mode, ``allow_cloud``, fallback order, provider health) is
+        resolved fresh on every call so a Local-Only/cloud-permission
+        decision is never stale; a ``native`` resolution defers to the
+        existing configured engine (xtts/edge/windows) and any other
+        provider ID (for example ``voicestudio``) is returned together with
+        the concrete provider instance to dispatch to.
+        """
+        if self._speech_router is None:
+            return self._provider, None
+        from rex.speech.providers.native import NATIVE_PROVIDER_ID  # noqa: PLC0415
+
+        try:
+            provider = self._speech_router.resolve_tts_provider()
+        except SpeechPolicyError as exc:
+            raise TextToSpeechError(str(exc)) from exc
+        if provider.provider_id == NATIVE_PROVIDER_ID:
+            return self._provider, None
+        return provider.provider_id, provider
 
     def _initialize_xtts(self) -> bool:
         """Initialize XTTS model, storing diagnostics on failure."""
@@ -291,10 +322,11 @@ class TextToSpeech:
                     "speech_start_delay_s": None,
                 }
 
+        active_provider, routed_provider = self._resolve_active_provider()
         max_spoken_chars = self._settings_int("tts_max_spoken_chars", 120)
         fast_short_candidate = (
             prefer_fast
-            and self._provider == "edge"
+            and active_provider == "edge"
             and os.name == "nt"
             and getattr(self, "_local_output_device", None) is None
             and len(text) <= self._settings_int("tts_fast_short_reply_max_chars", 140)
@@ -303,7 +335,7 @@ class TextToSpeech:
             "[TTS] Spoken text prepared",
             extra=_voice_log_extra(
                 event="tts_spoken_text_prepared",
-                provider=self._provider,
+                provider=active_provider,
                 original_text_chars=len(original_text.strip()),
                 spoken_text_chars=len(text),
                 compact_speech_used=len(text) < len(original_text.strip()),
@@ -364,25 +396,27 @@ class TextToSpeech:
                     run_metrics["fallback_used"] = True
                     run_metrics["fast_short_failure"] = type(exc).__name__
 
-            if self._provider == "xtts":
+            if active_provider == "xtts":
                 run_metrics.update(
                     await await_with_cancellation(
                         self._speak_xtts(text, speaker_wav, request_started_at=started_at)
                     )
                 )
-            elif self._provider == "edge":
+            elif active_provider == "edge":
                 run_metrics.update(
                     await await_with_cancellation(
                         self._speak_edge(text, request_started_at=started_at)
                     )
                 )
-            elif self._provider == "voicestudio":
+            elif active_provider == "voicestudio":
                 run_metrics.update(
                     await await_with_cancellation(
-                        self._speak_voicestudio(text, request_started_at=started_at)
+                        self._speak_voicestudio(
+                            text, request_started_at=started_at, provider=routed_provider
+                        )
                     )
                 )
-            elif self._provider == "windows":
+            elif active_provider == "windows":
                 run_metrics.update(
                     await await_with_cancellation(
                         self._speak_windows(text, request_started_at=started_at)
@@ -1009,14 +1043,19 @@ class TextToSpeech:
         return self._voicestudio_provider
 
     async def _speak_voicestudio(
-        self, text: str, *, request_started_at: float
+        self, text: str, *, request_started_at: float, provider: Any | None = None
     ) -> dict[str, object]:
-        """Synthesize speech using VoiceStudio, reusing the existing decode/playback path."""
+        """Synthesize speech using VoiceStudio, reusing the existing decode/playback path.
+
+        ``provider`` is the already policy-resolved :class:`VoiceStudioTTSProvider`
+        from :meth:`_resolve_active_provider` (SpeechRouter); it is only
+        rebuilt directly here as a fallback for direct/unit-test callers.
+        """
         sf = _vl()._lazy_import_soundfile()
         if sf is None:
             raise TextToSpeechError("soundfile is required for VoiceStudio playback")
 
-        provider = self._get_voicestudio_provider()
+        provider = provider or self._get_voicestudio_provider()
         available, reason = provider.availability()
         if not available:
             raise TextToSpeechError(f"VoiceStudio is unavailable: {reason}")

@@ -377,7 +377,9 @@ class SpeechConfig(BaseModel):
     tts_fallback_order: List[str] = []
 
     voicestudio_enabled: bool = False
-    voicestudio_base_url: str = "http://127.0.0.1:8020"
+    # Matches upstream VoiceStudio's documented loopback API port (Docker
+    # quick start publishes 127.0.0.1:3900); see debpalash/VoiceStudio.
+    voicestudio_base_url: str = "http://127.0.0.1:3900"
     voicestudio_timeout_seconds: float = 30.0
     voicestudio_stt_model: Optional[str] = None
     voicestudio_tts_model: Optional[str] = None

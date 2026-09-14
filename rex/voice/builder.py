@@ -316,23 +316,28 @@ def build_voice_loop(
             "device": device,
         },
     )
+    native_stt = _vl().SpeechToText(
+        model_name=whisper_model,
+        device=device,
+        language=language,
+        async_load=True,
+    )
     speech_cfg = getattr(_vl().settings, "speech", None)
-    if speech_cfg is not None and getattr(speech_cfg, "stt_provider", "native") == "voicestudio":
-        # Explicit opt-in override (S35): the pre-existing Whisper STT path
-        # remains the default; only an explicit ``speech.stt_provider =
-        # "voicestudio"`` selects VoiceStudio, so existing configurations
-        # are unaffected.
-        from rex.speech.providers.voicestudio import VoiceStudioDesktopSTT
-        from rex.speech.registry import build_voicestudio_config
+    if getattr(speech_cfg, "enabled", None) is True:
+        # S35: route desktop STT through the same policy-enforcing
+        # SpeechRouter the authenticated mobile gateway uses, so
+        # ``policy_mode`` (including Local Only), ``allow_cloud``, and
+        # ``voicestudio_enabled`` are never bypassed by inspecting
+        # ``speech.stt_provider`` directly. ``speech.enabled=false`` (the
+        # default) remains the explicit rollback to the unchanged native
+        # Whisper path.
+        from rex.speech.desktop_adapter import RoutedDesktopSTT
+        from rex.speech.registry import build_default_router
 
-        stt = VoiceStudioDesktopSTT(build_voicestudio_config(_vl().settings))
+        router = build_default_router(_vl().settings)
+        stt = RoutedDesktopSTT(router, native_stt=native_stt)
     else:
-        stt = _vl().SpeechToText(
-            model_name=whisper_model,
-            device=device,
-            language=language,
-            async_load=True,
-        )
+        stt = native_stt
     _vl().logger.info(
         "[Pipeline] STT initialised (background model load in progress)",
         extra={"event": "pipeline_stage_ok", "stage": "stt"},
