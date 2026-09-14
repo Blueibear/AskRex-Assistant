@@ -330,6 +330,19 @@ def test_claude_production_launcher_is_docker_isolated(tmp_path: Path) -> None:
     assert command[command.index("--tools") + 1] == "Read,Write,Edit,Glob,Grep"
 
 
+def test_claude_sandbox_prompt_is_delivered_over_stdin_not_argv(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.runner import build_claude_sandbox_command
+
+    repo = tmp_path / "backend"
+    repo.mkdir()
+    prompt = "PROMPT-BOUNDARY-" + ("X" * 40000)
+
+    command = build_claude_sandbox_command(repo, prompt, "sonnet", container_name="askrex-test")
+
+    assert prompt not in command
+    assert not any("PROMPT-BOUNDARY-" in part for part in command)
+
+
 def test_claude_sandbox_image_is_pinned() -> None:
     from scripts.dev_orchestrator.runner import CLAUDE_SANDBOX_IMAGE, CLAUDE_SANDBOX_IMAGE_ID
 
@@ -358,34 +371,48 @@ def test_production_claude_invocation_routes_through_docker(tmp_path: Path, monk
     acknowledge_handoff(config, "backend", source="test")
 
     observed = {}
-    payload = json.dumps(
-        {
-            "outcome": "continue",
-            "summary": "ok",
-            "next_action": "continue",
-            "needs_user": False,
-            "blocker_reason": "",
-        }
-    )
 
-    def fake_run(command, cwd, timeout_seconds=1800, *, activity_file=None, activity_metadata=None):
+    def fake_run(
+        command,
+        cwd,
+        timeout_seconds=1800,
+        *,
+        activity_file=None,
+        activity_metadata=None,
+        stdin_text=None,
+    ):
         observed["command"] = command
         observed["cwd"] = cwd
+        observed["stdin_text"] = stdin_text
+        payload = json.dumps(
+            {
+                "outcome": "failed",
+                "summary": "stop after transport proof",
+                "next_action": "none",
+                "needs_user": False,
+                "blocker_reason": "",
+                "task_id": "B-D",
+                "role": "backend",
+                "invocation_id": activity_metadata["invocation_id"],
+            }
+        )
         return runner.ProcessResult(0, payload, "")
 
     monkeypatch.setattr(runner, "run_command", fake_run)
     monkeypatch.setattr(
         runner, "ensure_claude_sandbox_image", lambda: observed.setdefault("image_ready", True)
     )
-    invoker = runner.CliAgentInvoker(config, execute=fake_run, allow_test_executor=True)
+    invoker = runner.CliAgentInvoker(config)
     result = invoker.implement(
         "backend", WorkerState("backend"), TaskItem("B-D", "Docker route"), "ctx", "sonnet"
     )
 
-    assert result.outcome == "continue"
-    assert result.outcome == "continue"
+    assert result.outcome == "failed"
     assert observed["cwd"].resolve() != backend.resolve()
     assert observed["cwd"].name == "repo"
+    assert observed["stdin_text"] is not None
+    assert "Docker route" in observed["stdin_text"]
+    assert "Docker route" not in " ".join(observed["command"])
 
 
 def test_claude_sandbox_rejects_mutated_image(monkeypatch) -> None:
@@ -437,7 +464,15 @@ def test_production_claude_applies_only_scratch_patch(tmp_path: Path, monkeypatc
     config = initialize_runtime(coord, backend, mobile, frozen)
     acknowledge_handoff(config, "backend", source="test")
 
-    def fake_run(command, cwd, timeout_seconds=1800, *, activity_file=None, activity_metadata=None):
+    def fake_run(
+        command,
+        cwd,
+        timeout_seconds=1800,
+        *,
+        activity_file=None,
+        activity_metadata=None,
+        stdin_text=None,
+    ):
         assert cwd.resolve() != backend.resolve()
         assert cwd.name == "repo"
         (cwd / "claude-only.txt").write_text("from scratch\n", encoding="utf-8")
@@ -548,7 +583,15 @@ def test_production_claude_rejects_concurrent_live_repo_change(tmp_path: Path, m
     config = initialize_runtime(coord, backend, mobile, frozen)
     acknowledge_handoff(config, "backend", source="test")
 
-    def fake_run(command, cwd, timeout_seconds=1800, *, activity_file=None, activity_metadata=None):
+    def fake_run(
+        command,
+        cwd,
+        timeout_seconds=1800,
+        *,
+        activity_file=None,
+        activity_metadata=None,
+        stdin_text=None,
+    ):
         assert cwd.resolve() != backend.resolve()
         (cwd / "claude-only.txt").write_text("from scratch\n", encoding="utf-8")
         (backend / "foreign-writer.txt").write_text("external\n", encoding="utf-8")
@@ -896,7 +939,15 @@ def test_production_claude_requires_exact_result_binding_before_publish(
     config, backend, _ = _safe_config(tmp_path)
     before = sp.check_output(["git", "rev-parse", "HEAD"], cwd=backend, text=True).strip()
 
-    def fake_run(command, cwd, timeout_seconds=1800, *, activity_file=None, activity_metadata=None):
+    def fake_run(
+        command,
+        cwd,
+        timeout_seconds=1800,
+        *,
+        activity_file=None,
+        activity_metadata=None,
+        stdin_text=None,
+    ):
         mount = next(
             part
             for part in command

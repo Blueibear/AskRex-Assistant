@@ -125,7 +125,7 @@ def build_claude_sandbox_command(
         "--workdir",
         "/workspace",
         CLAUDE_SANDBOX_IMAGE_ID,
-        *inner[1:],
+        *inner[1:-1],
     ]
 
 
@@ -863,6 +863,7 @@ class CliAgentInvoker:
                                 "container_name": container_name,
                                 "_preserve_activity_on_success": True,
                             },
+                            stdin_text=command[-1],
                         )
                     else:
                         result = invoke_custom_executor(command)
