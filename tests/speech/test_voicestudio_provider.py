@@ -104,10 +104,35 @@ class TestIsLoopbackUrl:
         assert not is_loopback_url("http://10.0.0.5:8020")
 
 
+class TestVoiceStudioConfigUrlSecurity:
+    def test_remote_plaintext_url_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="remote base URLs must use https"):
+            VoiceStudioConfig(base_url="http://speech.example.test:3900")
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "http://127.0.0.1:3900",
+            "http://localhost:3900",
+            "https://speech.example.test",
+        ],
+    )
+    def test_loopback_http_and_remote_https_are_accepted(self, base_url: str) -> None:
+        config = VoiceStudioConfig(base_url=base_url)
+        assert config.base_url == base_url
+
+    @pytest.mark.parametrize("base_url", ["ftp://127.0.0.1", "not-a-url", "https://"])
+    def test_invalid_scheme_or_hostname_is_rejected(self, base_url: str) -> None:
+        with pytest.raises(ValueError):
+            VoiceStudioConfig(base_url=base_url)
+
+
 class TestVoiceStudioSTTProvider:
     def test_is_local_reflects_base_url(self) -> None:
         local = VoiceStudioSTTProvider(VoiceStudioConfig(base_url="http://127.0.0.1:8020"))
-        remote = VoiceStudioSTTProvider(VoiceStudioConfig(base_url="http://example.com"))
+        remote = VoiceStudioSTTProvider(
+            VoiceStudioConfig(base_url="https://example.com")
+        )
         assert local.is_local is True
         assert remote.is_local is False
 
@@ -241,6 +266,39 @@ class TestUrllibVoiceStudioTransportResponseBounds:
                         headers={},
                         timeout=1,
                     )
+
+
+class TestUrllibVoiceStudioTransportUrlSecurity:
+    @pytest.mark.parametrize("operation", ["health", "transcription", "tts"])
+    def test_remote_plaintext_url_is_rejected_before_transport(
+        self, operation: str
+    ) -> None:
+        transport = UrllibVoiceStudioTransport()
+        open_request = Mock()
+
+        with patch.object(transport._opener, "open", open_request):
+            with pytest.raises(SpeechProviderResponseError, match="TLS policy"):
+                if operation == "health":
+                    transport.get_json(
+                        "http://speech.example.test/health", headers={}, timeout=1
+                    )
+                elif operation == "transcription":
+                    transport.post_multipart_for_json(
+                        "http://speech.example.test/v1/audio/transcriptions",
+                        {},
+                        ("file", "audio.wav", b"audio", "audio/wav"),
+                        headers={},
+                        timeout=1,
+                    )
+                else:
+                    transport.post_json_for_bytes(
+                        "http://speech.example.test/v1/audio/speech",
+                        {"input": "private text"},
+                        headers={},
+                        timeout=1,
+                    )
+
+        open_request.assert_not_called()
 
 
 class TestUrllibVoiceStudioTransportRedirectPolicy:

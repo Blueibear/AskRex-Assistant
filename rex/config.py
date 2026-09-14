@@ -387,6 +387,18 @@ class SpeechConfig(BaseModel):
     voicestudio_api_key_env: Optional[str] = None
     voicestudio_voice_aliases: Dict[str, str] = {}
 
+    @field_validator("voicestudio_base_url")
+    @classmethod
+    def _valid_voicestudio_base_url(cls, value: str) -> str:
+        # Enabling a persisted provider later must not turn a remote plaintext
+        # endpoint into an audio or credential leak.
+        from rex.speech.providers.voicestudio import validate_voicestudio_base_url
+
+        try:
+            return validate_voicestudio_base_url(value)
+        except ValueError as exc:
+            raise ValueError(f"speech.voicestudio_base_url {exc}") from exc
+
     @field_validator("policy_mode")
     @classmethod
     def _valid_policy_mode(cls, value: str) -> str:

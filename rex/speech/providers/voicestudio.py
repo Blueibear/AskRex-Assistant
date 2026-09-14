@@ -62,6 +62,26 @@ def is_loopback_url(url: str) -> bool:
         return False
 
 
+def validate_voicestudio_base_url(url: str) -> str:
+    """Validate that remote VoiceStudio traffic is protected by TLS."""
+    if not isinstance(url, str):
+        raise ValueError("VoiceStudio base URL must be a string")
+    value = url.strip()
+    try:
+        parsed = urlsplit(value)
+        # Accessing ``port`` forces urllib to reject malformed port syntax.
+        _ = parsed.port
+    except ValueError as exc:
+        raise ValueError("VoiceStudio base URL is malformed") from exc
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("VoiceStudio base URL must use http or https")
+    if not parsed.hostname:
+        raise ValueError("VoiceStudio base URL must include a hostname")
+    if parsed.scheme == "http" and not is_loopback_url(value):
+        raise ValueError("VoiceStudio remote base URLs must use https")
+    return value.rstrip("/")
+
+
 @dataclass(frozen=True)
 class VoiceStudioConfig:
     """Bounded VoiceStudio client configuration."""
@@ -83,6 +103,11 @@ class VoiceStudioConfig:
     voices_path: str = "/v1/audio/voices"
     max_response_bytes: int = 10 * 1024 * 1024
     voice_aliases: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "base_url", validate_voicestudio_base_url(self.base_url)
+        )
 
     @property
     def is_local(self) -> bool:
@@ -178,6 +203,12 @@ class UrllibVoiceStudioTransport:
         return self._send(request, timeout)
 
     def _send_raw(self, request: urllib.request.Request, timeout: float) -> bytes:
+        try:
+            validate_voicestudio_base_url(request.full_url)
+        except ValueError as exc:
+            raise SpeechProviderResponseError(
+                "VoiceStudio request URL violates the TLS policy"
+            ) from exc
         try:
             with self._opener.open(request, timeout=timeout) as response:
                 return self._read_limited(response)
@@ -410,4 +441,5 @@ __all__ = [
     "VoiceStudioTTSProvider",
     "VoiceStudioTransport",
     "is_loopback_url",
+    "validate_voicestudio_base_url",
 ]

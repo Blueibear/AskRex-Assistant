@@ -32,6 +32,24 @@ class TestSpeechConfigValidation:
         with pytest.raises(ValidationError):
             SpeechConfig(voicestudio_timeout_seconds=0)
 
+    def test_remote_plaintext_voicestudio_url_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="remote base URLs must use https"):
+            SpeechConfig(voicestudio_base_url="http://speech.example.test:3900")
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "http://127.0.0.1:3900",
+            "http://[::1]:3900",
+            "https://speech.example.test",
+        ],
+    )
+    def test_loopback_http_and_remote_https_voicestudio_urls_are_accepted(
+        self, base_url: str
+    ) -> None:
+        config = SpeechConfig(voicestudio_base_url=base_url)
+        assert config.voicestudio_base_url == base_url
+
     def test_provider_names_are_normalized_to_lowercase(self) -> None:
         cfg = SpeechConfig(stt_provider="VoiceStudio")
         assert cfg.stt_provider == "voicestudio"
