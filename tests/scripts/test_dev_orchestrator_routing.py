@@ -263,6 +263,8 @@ def test_implementation_falls_back_to_codex_when_claude_is_usage_limited(tmp_pat
     assert len(calls) == 2
     assert calls[1][0].lower().startswith("codex")
     assert calls[1][calls[1].index("-s") + 1] == "workspace-write"
+    assert "Shell/Bash/Web/MCP tools are intentionally unavailable" not in calls[1][-1]
+    assert "workspace-local" in calls[1][-1]
 
 
 def test_implementation_pauses_when_claude_and_codex_are_both_usage_limited(tmp_path: Path) -> None:

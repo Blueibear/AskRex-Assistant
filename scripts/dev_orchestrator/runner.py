@@ -447,6 +447,17 @@ def _task_prompt(role: str, task, coordination_root: Path, context: str, invocat
     )
 
 
+def _codex_task_prompt(
+    role: str, task, coordination_root: Path, context: str, invocation_id: str
+) -> str:
+    prompt = _task_prompt(role, task, coordination_root, context, invocation_id)
+    return prompt.replace(
+        "Shell/Bash/Web/MCP tools are intentionally unavailable; do not attempt to run tests or create commits because the deterministic supervisor owns validation and Git checkpointing. ",
+        "Use only Codex workspace-local repository and terminal tools inside the disposable scratch clone to inspect and edit files. Do not use web/network/MCP access and do not create commits; the deterministic supervisor owns authoritative validation and Git checkpointing. ",
+        1,
+    )
+
+
 def _review_prompt(
     role: str, task, coordination_root: Path, context: str, invocation_id: str
 ) -> str:
@@ -1026,7 +1037,7 @@ class CliAgentInvoker:
                 raise
 
         fallback_invocation_id = str(uuid.uuid4())
-        fallback_prompt = _task_prompt(
+        fallback_prompt = _codex_task_prompt(
             role,
             task,
             self.config.coordination_root,
