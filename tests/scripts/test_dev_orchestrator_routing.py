@@ -227,6 +227,67 @@ def test_cli_invoker_raises_typed_usage_failure(tmp_path: Path) -> None:
     assert exc.value.kind == "usage_limit"
 
 
+def test_implementation_falls_back_to_codex_when_claude_is_usage_limited(tmp_path: Path) -> None:
+    import json
+
+    from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
+    from scripts.dev_orchestrator.types import TaskItem, WorkerState
+
+    config, _backend, _mobile = _safe_config(tmp_path)
+    calls: list[list[str]] = []
+
+    def execute(command, cwd, timeout_seconds=1800):
+        calls.append(command)
+        if len(calls) == 1:
+            return ProcessResult(1, "", "You've hit your session limit")
+        return ProcessResult(
+            0,
+            json.dumps(
+                {
+                    "outcome": "continue",
+                    "summary": "codex continued implementation",
+                    "next_action": "continue",
+                    "needs_user": False,
+                    "blocker_reason": "",
+                }
+            ),
+            "",
+        )
+
+    invoker = CliAgentInvoker(config, execute=execute, allow_test_executor=True)
+    result = invoker.implement(
+        "backend", WorkerState("backend"), TaskItem("B-2", "Continue backend"), "ctx", "sonnet"
+    )
+
+    assert result.outcome == "continue"
+    assert len(calls) == 2
+    assert calls[1][0].lower().startswith("codex")
+    assert calls[1][calls[1].index("-s") + 1] == "workspace-write"
+
+
+def test_implementation_pauses_when_claude_and_codex_are_both_usage_limited(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.runner import AgentInvocationError, CliAgentInvoker, ProcessResult
+    from scripts.dev_orchestrator.types import TaskItem, WorkerState
+
+    config, _backend, _mobile = _safe_config(tmp_path)
+    calls = 0
+
+    def execute(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return ProcessResult(1, "", "usage limit reached")
+
+    invoker = CliAgentInvoker(config, execute=execute, allow_test_executor=True)
+    with pytest.raises(AgentInvocationError) as exc:
+        invoker.implement(
+            "backend", WorkerState("backend"), TaskItem("B-3", "Continue backend"), "ctx", "sonnet"
+        )
+
+    assert calls == 2
+    assert exc.value.provider == "codex"
+    assert exc.value.kind == "usage_limit"
+
+
 def test_codex_approval_flag_precedes_exec_subcommand(tmp_path: Path) -> None:
     command = build_codex_command("review", tmp_path / "repo", "Review.", TERRA_MODEL)
 
@@ -400,6 +461,67 @@ def test_production_claude_applies_only_scratch_patch(tmp_path: Path, monkeypatc
     )
     assert result.outcome == "continue"
     assert (backend / "claude-only.txt").read_text(encoding="utf-8") == "from scratch\n"
+    body = sp.check_output(["git", "show", "-s", "--format=%B", "HEAD"], cwd=backend, text=True)
+    assert "AskRex-Orchestrator-Invocation:" in body
+    assert sp.check_output(["git", "status", "--porcelain"], cwd=backend, text=True).strip() == ""
+
+
+def test_production_codex_fallback_publishes_only_scratch_patch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import json
+    import subprocess as sp
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.cli import initialize_runtime
+    from scripts.dev_orchestrator.handoff import acknowledge_handoff
+    from scripts.dev_orchestrator.types import TaskItem, WorkerState
+    from tests.scripts.test_dev_orchestrator_safety import _git_repo
+
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "frozen"
+    coord = tmp_path / "coord"
+    frozen.mkdir()
+    _git_repo(backend)
+    _git_repo(mobile)
+    config = initialize_runtime(coord, backend, mobile, frozen)
+    acknowledge_handoff(config, "backend", source="test")
+    calls = 0
+
+    def fake_run(command, cwd, timeout_seconds=1800, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return runner.ProcessResult(1, "", "You've hit your session limit")
+        assert cwd.resolve() != backend.resolve()
+        assert cwd.name == "repo"
+        assert command[command.index("-s") + 1] == "workspace-write"
+        (cwd / "codex-only.txt").write_text("from codex scratch\n", encoding="utf-8")
+        payload = json.dumps(
+            {
+                "outcome": "continue",
+                "summary": "ok",
+                "next_action": "continue",
+                "needs_user": False,
+                "blocker_reason": "",
+                "task_id": "B-CODEX",
+                "role": "backend",
+                "invocation_id": kwargs["activity_metadata"]["invocation_id"],
+            }
+        )
+        return runner.ProcessResult(0, payload, "")
+
+    monkeypatch.setattr(runner, "run_command", fake_run)
+    monkeypatch.setattr(runner, "ensure_claude_sandbox_image", lambda: None)
+    invoker = runner.CliAgentInvoker(config)
+    result = invoker.implement(
+        "backend", WorkerState("backend"), TaskItem("B-CODEX", "Scratch patch"), "ctx", "sonnet"
+    )
+
+    assert result.outcome == "continue"
+    assert calls == 2
+    assert (backend / "codex-only.txt").read_text(encoding="utf-8") == "from codex scratch\n"
     body = sp.check_output(["git", "show", "-s", "--format=%B", "HEAD"], cwd=backend, text=True)
     assert "AskRex-Orchestrator-Invocation:" in body
     assert sp.check_output(["git", "status", "--porcelain"], cwd=backend, text=True).strip() == ""

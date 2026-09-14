@@ -381,8 +381,13 @@ def advance_handoff(
     if checkout.head != post_head:
         raise HandoffRequired(f"{role} HEAD changed again after invocation")
     if provider == "codex":
+        codex_implementation = bool(
+            pending_result and str(pending_result.get("phase", "")) == "implement"
+        )
         if post_head != pre_head:
-            raise HandoffRequired("read-only Codex invocation changed repository HEAD")
+            if not codex_implementation:
+                raise HandoffRequired("read-only Codex invocation changed repository HEAD")
+            verify_invocation_commits(checkout.root, pre_head, post_head, invocation_id)
     elif provider == "claude":
         verify_invocation_commits(checkout.root, pre_head, post_head, invocation_id)
     else:

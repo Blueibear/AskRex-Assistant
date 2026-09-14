@@ -74,6 +74,10 @@ class Supervisor:
     def _queue_store(self, role: str) -> AtomicJsonStore:
         return AtomicJsonStore(self.root / "queues" / f"{role}.json")
 
+    def _last_provider(self, role: str) -> str:
+        record = AtomicJsonStore(self.root / "handoff" / f"{role}.json").read(default={})
+        return str(record.get("last_provider", "")) if isinstance(record, dict) else ""
+
     def load_state(self, role: str) -> WorkerState:
         return _state_from_dict(role, self._state_store(role).read())
 
@@ -525,7 +529,11 @@ class Supervisor:
 
     def _review(self, role: str, state: WorkerState, context: str) -> None:
         assert state.task is not None
-        model = select_reviewer_model(state, self.config)
+        model = (
+            SOL_MODEL
+            if self._last_provider(role) == "codex"
+            else select_reviewer_model(state, self.config)
+        )
         try:
             result = self._invoke_or_recover(
                 role,

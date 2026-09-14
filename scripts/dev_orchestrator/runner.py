@@ -184,8 +184,9 @@ def ensure_claude_sandbox_image() -> None:
 
 
 def build_codex_command(kind: str, repo: Path, prompt: str, model: str) -> list[str]:
-    if kind not in {"review", "lead"}:
+    if kind not in {"implement", "review", "lead"}:
         raise ValueError(f"unsupported Codex role: {kind}")
+    sandbox = "workspace-write" if kind == "implement" else "read-only"
     return [
         "codex.cmd" if os.name == "nt" else "codex",
         "-a",
@@ -194,7 +195,7 @@ def build_codex_command(kind: str, repo: Path, prompt: str, model: str) -> list[
         "-m",
         model,
         "-s",
-        "read-only",
+        sandbox,
         "-C",
         str(repo),
         "--output-schema",
@@ -886,6 +887,7 @@ class CliAgentInvoker:
                             scratch_head = _create_scratch_commit(scratch, pre_head, invocation_id)
                             _publish_scratch_commit(repo, scratch, pre_head, scratch_head)
                 else:
+                    codex_is_implementation = phase == "implement"
                     scratch_command = [
                         str(scratch) if part == str(repo) else part for part in command
                     ]
@@ -896,7 +898,10 @@ class CliAgentInvoker:
                             scratch_command,
                             scratch,
                             activity_file=activity_file,
-                            activity_metadata=scratch_metadata,
+                            activity_metadata={
+                                **scratch_metadata,
+                                "_preserve_activity_on_success": codex_is_implementation,
+                            },
                             stdin_text=stdin_text,
                         )
                     else:
@@ -904,29 +909,52 @@ class CliAgentInvoker:
                     if result.returncode == 0:
                         try:
                             parsed = extract_agent_result(result.stdout)
+                            if codex_is_implementation:
+                                validate_agent_updates(
+                                    self.config.coordination_root,
+                                    role,
+                                    parsed,
+                                    allow_issue_updates=False,
+                                    task_id=task_id,
+                                )
                             if self._production_executor:
                                 binding_mismatch = (
                                     parsed.role != role
                                     or parsed.invocation_id != invocation_id
                                     or (
-                                        phase == "review"
+                                        phase in {"implement", "review"}
                                         and bool(task_id)
                                         and parsed.task_id != task_id
                                     )
                                 )
                                 if binding_mismatch:
                                     raise ValueError("Codex result binding mismatch")
-                        except ValueError as exc:
+                        except (ValueError, OSError) as exc:
+                            if self._production_executor and codex_is_implementation:
+                                activity_file.unlink(missing_ok=True)
                             raise AgentInvocationError(
                                 provider, "invalid_output", str(exc)
                             ) from exc
+                        if self._production_executor and codex_is_implementation:
+                            scratch_cleanup["remove"] = False
+                        if (
+                            self._production_executor
+                            and codex_is_implementation
+                            and parsed.outcome in {"continue", "ready_for_review"}
+                        ):
+                            scratch_head = _create_scratch_commit(scratch, pre_head, invocation_id)
+                            _publish_scratch_commit(repo, scratch, pre_head, scratch_head)
                 if not self._production_executor:
                     if _custom_executor_repository_state(self.config) != custom_state_before:
                         raise HandoffRequired("custom executor modified the leased repository")
                 else:
                     post_head, post_dirty = repo_snapshot(repo)
-                    if provider != "claude" and (post_head != pre_head or post_dirty):
-                        raise HandoffRequired("non-Claude model modified the leased repository")
+                    mutating_implementation = phase == "implement" and provider in {
+                        "claude",
+                        "codex",
+                    }
+                    if not mutating_implementation and (post_head != pre_head or post_dirty):
+                        raise HandoffRequired("read-only model modified the leased repository")
                     pending_result = None
                     if result.returncode == 0 and parsed is not None:
                         pending_result = {
@@ -974,18 +1002,46 @@ class CliAgentInvoker:
             raise AgentInvocationError(provider, "invalid_output", str(exc)) from exc
 
     def implement(self, role, state, task, context, model) -> AgentResult:
+        from .routing import TERRA_MODEL
+
         repo = self._repo(role)
         invocation_id = str(uuid.uuid4())
         prompt = _task_prompt(role, task, self.config.coordination_root, context, invocation_id)
         command = build_claude_command(repo, prompt, model)
+        try:
+            return self._finish(
+                "claude",
+                self._execute_agent(
+                    command,
+                    repo,
+                    role,
+                    "claude",
+                    invocation_id,
+                    phase="implement",
+                    task_id=task.task_id,
+                ),
+            )
+        except AgentInvocationError as exc:
+            if exc.kind != "usage_limit":
+                raise
+
+        fallback_invocation_id = str(uuid.uuid4())
+        fallback_prompt = _task_prompt(
+            role,
+            task,
+            self.config.coordination_root,
+            context,
+            fallback_invocation_id,
+        )
+        fallback_command = build_codex_command("implement", repo, fallback_prompt, TERRA_MODEL)
         return self._finish(
-            "claude",
+            "codex",
             self._execute_agent(
-                command,
+                fallback_command,
                 repo,
                 role,
-                "claude",
-                invocation_id,
+                "codex",
+                fallback_invocation_id,
                 phase="implement",
                 task_id=task.task_id,
             ),

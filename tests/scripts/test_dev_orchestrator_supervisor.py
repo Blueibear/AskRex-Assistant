@@ -16,6 +16,7 @@ from scripts.dev_orchestrator.types import (
 class FakeInvoker:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str]] = []
+        self.review_models: list[str] = []
         self.results: dict[tuple[str, str], list[AgentResult]] = {}
 
     def add(self, role: str, phase: str, *results: AgentResult) -> None:
@@ -39,6 +40,7 @@ class FakeInvoker:
         return self._take(role, "implement", task.task_id)
 
     def review(self, role, state, task, context, model):
+        self.review_models.append(model)
         return self._take(role, "review", task.task_id)
 
     def lead(self, role, state, context, task=None):
@@ -243,6 +245,28 @@ def test_blocked_system_retries_from_saved_review_phase(tmp_path: Path) -> None:
     state = supervisor.load_state("backend")
     assert state.status is WorkerStatus.IDLE
     assert state.task is None
+
+
+def test_codex_implemented_checkpoint_forces_sol_review(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.routing import SOL_MODEL
+    from scripts.dev_orchestrator.storage import AtomicJsonStore
+
+    invoker = FakeInvoker()
+    invoker.add("backend", "review", result("pass"))
+    supervisor = Supervisor(make_config(tmp_path, observe_only=False), invoker)
+    (supervisor.root / "handoff").mkdir()
+    AtomicJsonStore(supervisor.root / "handoff" / "backend.json").write({"last_provider": "codex"})
+    supervisor.save_state(
+        WorkerState(
+            role="backend",
+            status=WorkerStatus.REVIEWING,
+            task=TaskItem("B-CODEX", "Review Codex implementation"),
+        )
+    )
+
+    supervisor._run_role("backend")
+
+    assert invoker.review_models == [SOL_MODEL]
 
 
 def test_usage_limit_records_exact_resume_phase(tmp_path: Path) -> None:
