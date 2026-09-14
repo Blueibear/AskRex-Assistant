@@ -107,6 +107,7 @@ def build_claude_sandbox_command(
     return [
         "docker",
         "run",
+        "-i",
         "--rm",
         "--name",
         container_name,

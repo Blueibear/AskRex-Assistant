@@ -330,6 +330,16 @@ def test_claude_production_launcher_is_docker_isolated(tmp_path: Path) -> None:
     assert command[command.index("--tools") + 1] == "Read,Write,Edit,Glob,Grep"
 
 
+def test_claude_sandbox_keeps_stdin_open_for_prompt_streaming(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.runner import build_claude_sandbox_command
+
+    repo = tmp_path / "backend"
+    repo.mkdir()
+    command = build_claude_sandbox_command(repo, "Do work", "sonnet", container_name="askrex-test")
+
+    assert "-i" in command[: command.index("--name")]
+
+
 def test_claude_sandbox_prompt_is_delivered_over_stdin_not_argv(tmp_path: Path) -> None:
     from scripts.dev_orchestrator.runner import build_claude_sandbox_command
 
