@@ -355,7 +355,12 @@ def run_command(
 
 def classify_cli_failure(text: str, returncode: int) -> str:
     normalized = text.lower()
-    if "usage limit" in normalized or "rate limit" in normalized or "quota" in normalized:
+    if (
+        "usage limit" in normalized
+        or "session limit" in normalized
+        or "rate limit" in normalized
+        or "quota" in normalized
+    ):
         return "usage_limit"
     if (
         "login" in normalized

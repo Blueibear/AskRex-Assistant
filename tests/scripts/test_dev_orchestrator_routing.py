@@ -95,6 +95,14 @@ def test_usage_limit_failure_is_classified_without_becoming_success() -> None:
     assert kind == "usage_limit"
 
 
+def test_claude_session_limit_429_is_classified_as_usage_limit() -> None:
+    output = (
+        '{"is_error":true,"api_error_status":429,'
+        '"result":"You have hit your session limit; resets 3:50pm (UTC)"}'
+    )
+    assert classify_cli_failure(output, 1) == "usage_limit"
+
+
 def test_auth_and_timeout_failures_are_distinct() -> None:
     assert classify_cli_failure("Please login to continue", 1) == "auth"
     assert (
