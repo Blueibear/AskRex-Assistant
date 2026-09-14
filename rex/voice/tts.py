@@ -466,6 +466,13 @@ class TextToSpeech:
                 "[TTS] Failed",
                 extra=_voice_log_extra(event="tts_failed", error_code=error_code),
             )
+            # The legacy direct-engine path intentionally remains usable
+            # without an audio device: it reports the reply to stdout.  Once
+            # SpeechRouter is enabled, however, stdout is not a speech
+            # provider and must not turn an exhausted policy-bounded route
+            # (including Local Only) into a false success.
+            if self._speech_router is not None:
+                raise TextToSpeechError("No permitted text-to-speech provider succeeded.") from exc
             run_metrics["fallback_used"] = True
             run_metrics["path_used"] = "stdout_fallback"
             if self._provider == "xtts":

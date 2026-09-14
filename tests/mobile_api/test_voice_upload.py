@@ -71,11 +71,10 @@ class TestVoiceUpload:
         body = response.get_json()
         assert body["transcript"] == fake_stt.transcript
         assert body["response"] == f"echo[{user_id}]: {fake_stt.transcript}"
-        assert body["status"] == "completed"
-        assert body["tool_used"] is None
+        assert body["status"] == "attempted"
+        assert body["toolUsed"] is None
         assert body["request_id"]
-        assert base64.b64decode(body["tts_base64"]) == fake_tts.audio
-        assert body["tts_mime_type"] == "audio/wav"
+        assert base64.b64decode(body["ttsBase64"]) == fake_tts.audio
         assert fake_chat_service.calls == [(fake_stt.transcript, user_id)]
 
     def test_missing_audio_part(self, client) -> None:
@@ -203,7 +202,7 @@ class TestVoiceUpload:
         assert fake_stt.transcript not in caplog.text
 
     def test_status_never_upgraded(self, client) -> None:
-        """VOI-019: conversational replies are 'completed', never 'verified'."""
+        """VOI-019: a response never falsely claims action verification."""
         _, headers = _authed(client)
         body = _upload(client, headers, _wav_bytes()).get_json()
-        assert body["status"] == "completed"
+        assert body["status"] == "attempted"

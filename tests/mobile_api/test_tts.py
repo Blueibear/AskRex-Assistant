@@ -6,8 +6,6 @@ is covered by the shared limiter tests in test_app.py).
 
 from __future__ import annotations
 
-import base64
-
 from tests.mobile_api.conftest import auth_header, create_user, paired_login_tokens
 
 
@@ -24,25 +22,16 @@ class TestTtsPlayback:
         assert response.status_code == 401
         assert fake_tts.synthesized == []
 
-    def test_valid_text_returns_base64_json(self, client, fake_tts) -> None:
-        """TTS-002/TTS-010: JSON base64 with MIME type and request ID."""
+    def test_valid_text_returns_mobile_playable_data_url(self, client, fake_tts) -> None:
+        """TTS-002/TTS-010: canonical mobile URL response is directly playable."""
         headers = _authed(client)
         response = client.post(
             "/mobile/tts/playback", json={"text": "The lights are off."}, headers=headers
         )
         assert response.status_code == 200
         body = response.get_json()
-        assert set(body.keys()) == {
-            "request_id",
-            "audio_base64",
-            "mime_type",
-            "voice",
-            "requested_voice",
-        }
-        assert base64.b64decode(body["audio_base64"]) == fake_tts.audio
-        assert body["mime_type"] == "audio/wav"
-        assert body["voice"] == "fake-default-voice"
-        assert body["requested_voice"] == "default"
+        assert set(body.keys()) == {"request_id", "audio_url"}
+        assert body["audio_url"] == "data:audio/wav;base64,ZmFrZS10dHMtYXVkaW8="
         assert body["request_id"]
         assert fake_tts.synthesized == [("The lights are off.", "fake-default-voice")]
 
@@ -80,8 +69,7 @@ class TestTtsPlayback:
             headers=headers,
         )
         assert response.status_code == 200
-        assert response.get_json()["voice"] == "fake-alt-voice"
-        assert response.get_json()["requested_voice"] == "fake-alt-voice"
+        assert response.get_json()["audio_url"].startswith("data:audio/wav;base64,")
         assert fake_tts.synthesized == [("hello", "fake-alt-voice")]
 
     def test_engine_unavailable_is_truthful(self, client, fake_tts) -> None:
@@ -147,10 +135,7 @@ class TestTtsPlayback:
 
         assert response.status_code == 200, response.get_json()
         body = response.get_json()
-        assert body["voice"] == "en-US-AriaNeural"
-        assert body["mime_type"] == "audio/mpeg"
-        assert body["requested_voice"] == "majel"
-        assert base64.b64decode(body["audio_base64"]) == b"NATIVE-TTS-AUDIO"
+        assert body["audio_url"] == "data:audio/mpeg;base64,TkFUSVZFLVRUUy1BVURJTw=="
         assert native.synthesized == [("hello", "en-US-AriaNeural")]
 
     def test_text_never_in_logs(self, client, caplog) -> None:

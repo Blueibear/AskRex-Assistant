@@ -119,10 +119,9 @@
       "request_id": "9a2b1c3d-4444-4444-8444-444444444444",
       "transcript": "Turn off the downstairs lights",
       "response": "The downstairs lights are off.",
-      "status": "completed",
-      "tool_used": null,
-      "tts_base64": "<base64-audio>",
-      "tts_mime_type": "audio/mpeg"
+      "status": "attempted",
+      "toolUsed": null,
+      "ttsBase64": "<base64-audio>"
     },
     "tts_request": {
       "text": "The downstairs lights are off.",
@@ -130,10 +129,7 @@
     },
     "tts_response": {
       "request_id": "9a2b1c3d-4444-4444-8444-444444444444",
-      "audio_base64": "<base64-audio>",
-      "mime_type": "audio/mpeg",
-      "voice": "en-US-AriaNeural",
-      "requested_voice": "default"
+      "audio_url": "data:audio/mpeg;base64,<base64-audio>"
     },
     "capabilities_response": {
       "api_version": "1.0",

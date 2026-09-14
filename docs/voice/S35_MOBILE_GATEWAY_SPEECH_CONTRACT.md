@@ -9,15 +9,13 @@ Canonical spec section: `docs/mobile/MOBILE_API_MASTER_SPEC.md` §6.4
 
 ## Summary for mobile
 
-**S35 introduces no mobile wire change.** Both speech endpoints keep their
-current paths, request shapes, response shapes, status vocabulary, and error
-envelope. Provider selection, policy (including Local Only), voice-alias
-resolution, ordered fallback, and VoiceStudio integration are entirely
-server-side. The app stays provider-neutral: no provider field, no provider
-selection UI, no capability negotiation, and no direct VoiceStudio call.
-
-Mobile needs **no diff** to remain compatible. The remainder of this document
-is the exact contract the gateway guarantees while S35 is enabled.
+**S35 preserves the existing mobile client contract.** Both speech endpoints
+keep their paths and request shapes. The response fields below use the current
+mobile TypeScript names and are covered by the shared contract vector. Provider
+selection, policy (including Local Only), voice-alias resolution, ordered
+fallback, and VoiceStudio integration are entirely server-side. The app stays
+provider-neutral: no provider field, no provider selection UI, no capability
+negotiation, and no direct VoiceStudio call.
 
 ## Endpoints (unchanged)
 
@@ -45,28 +43,23 @@ Request (unchanged multipart fields):
   `approval`, `biometric`) remain rejected with `400 BAD_REQUEST`.
 - Limits remain 15 MiB and 60 seconds (server config).
 
-Response `200` (unchanged, `snake_case`):
+Response `200`:
 
 ```json
 {
   "request_id": "9a2b1c3d-4444-4444-8444-444444444444",
   "transcript": "Turn off the downstairs lights",
   "response": "The downstairs lights are off.",
-  "status": "completed",
-  "tool_used": null,
-  "tts_base64": "<base64-audio>",
-  "tts_mime_type": "audio/mpeg"
+  "status": "attempted",
+  "toolUsed": null,
+  "ttsBase64": "<base64-audio>"
 }
 ```
 
-- `status` is the canonical chat status vocabulary (`completed`); it is not a
-  speech-provider state.
-- `tts_base64`/`tts_mime_type` remain **optional** and are omitted when TTS is
-  unavailable; the text reply is still returned. There is no `tts_url` today.
-- `tts_mime_type` always describes the provider that actually synthesized the
-  returned bytes. With S35 fallback the synthesizing provider may differ from
-  the initially selected one, so clients must use this field rather than
-  assuming a fixed MIME type.
+- `status` is one of `verified`, `attempted`, or `failed`. A normal
+  conversational reply is `attempted`, never a claim that an action verified.
+- `ttsBase64` remains **optional** and is omitted when TTS is unavailable; the
+  text reply is still returned.
 
 ## `POST /mobile/tts/playback`
 
@@ -91,21 +84,15 @@ Response `200` (unchanged):
 ```json
 {
   "request_id": "9a2b1c3d-4444-4444-8444-444444444444",
-  "audio_base64": "<base64-audio>",
-  "mime_type": "audio/mpeg",
-  "voice": "en-US-AriaNeural",
-  "requested_voice": "default"
+  "audio_url": "data:audio/mpeg;base64,<base64-audio>"
 }
 ```
 
-- `requested_voice` echoes what the client asked for (`"default"` when
-  omitted).
-- `voice` and `mime_type` describe the provider that actually produced
-  `audio_base64`. The requested alias is resolved independently for each
-  attempted provider, so a fallback never returns another provider's voice ID
-  or a mislabeled MIME type.
-- The response is always JSON with base64 audio. No binary body, no streaming
-  body, and no URL form is introduced by S35.
+- The response is always JSON. `audio_url` is an inline `data:` URL whose MIME
+  type and bytes describe the provider that actually synthesized the response.
+  This lets the existing mobile playback path consume it without a second,
+  unauthenticated artifact request. No binary or streaming response is
+  introduced by S35.
 
 ## Voice alias semantics
 

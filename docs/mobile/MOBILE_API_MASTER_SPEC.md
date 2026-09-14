@@ -373,10 +373,9 @@ Voice response:
   "request_id": "<request-id>",
   "transcript": "Turn off the downstairs lights",
   "response": "The downstairs lights are off.",
-  "status": "verified",
-  "tool_used": "home_assistant",
-  "tts_base64": "<base64-audio>",
-  "tts_mime_type": "audio/mpeg"
+  "status": "attempted",
+  "toolUsed": null,
+  "ttsBase64": "<base64-audio>"
 }
 ```
 
@@ -396,13 +395,14 @@ TTS validates text length, resolves only an allowed/available voice, avoids logg
 ```json
 {
   "request_id": "<request-id>",
-  "audio_base64": "<base64-audio>",
-  "mime_type": "audio/mpeg",
-  "voice": "default"
+  "audio_url": "data:audio/mpeg;base64,<base64-audio>"
 }
 ```
 
-The provider-neutral SpeechRouter (S35) does not change these shapes. `voice` and `mime_type` always describe the provider that actually synthesized the returned audio, and `voice` may be an AskRex-owned alias (`majel`, `james`, `cole`) on the request side. See `docs/voice/S35_MOBILE_GATEWAY_SPEECH_CONTRACT.md`.
+The provider-neutral SpeechRouter (S35) preserves these shapes. The MIME type
+in `audio_url` describes the provider that actually synthesized the returned
+audio. `voice` may be an AskRex-owned alias (`majel`, `james`, `cole`) on the
+request side. See `docs/voice/S35_MOBILE_GATEWAY_SPEECH_CONTRACT.md`.
 
 ### 6.5 Explicit scaffolds
 
@@ -423,7 +423,10 @@ A scaffold never returns fake entities, actions, notifications, tasks, settings,
 
 ## 7. Canonical WebSocket protocol
 
-All wire fields use `snake_case`. The mobile TypeScript boundary may map names internally, but the network contract is not mixed-case.
+All wire fields use `snake_case` except the historical mobile voice response
+fields `toolUsed` and `ttsBase64`, which remain camelCase for compatibility
+with the shipped client. New voice fields must not introduce another casing
+style.
 
 ### 7.1 Authentication
 

@@ -34,7 +34,6 @@ from flask import Blueprint, g, jsonify, request
 from rex.mobile_api import errors as merr
 from rex.mobile_api.auth import require_mobile_auth, revalidate_principal
 from rex.mobile_api.authorization import ROUTE_SCOPES
-from rex.mobile_api.chat import STATUS_COMPLETED
 from rex.mobile_api.errors import MobileApiError
 from rex.mobile_api.services import MobileApiServices
 from rex.mobile_api.voice import (
@@ -123,8 +122,7 @@ def _add_optional_tts(services: MobileApiServices, body: dict[str, Any]) -> None
         # provider that actually synthesized this audio, even after a
         # SpeechRouter fallback selected a different provider.
         synthesized = synthesize_for_request(services.tts, response_text, None)
-        body["tts_base64"] = base64.b64encode(synthesized.audio).decode("ascii")
-        body["tts_mime_type"] = synthesized.mime_type
+        body["ttsBase64"] = base64.b64encode(synthesized.audio).decode("ascii")
     except MobileApiError:
         logger.info("Voice reply TTS unavailable; returning text only")
 
@@ -180,8 +178,11 @@ def _handle_voice_upload(services: MobileApiServices) -> Any:
         "request_id": getattr(g, "request_id", None),
         "transcript": transcript,
         "response": response_text,
-        "status": STATUS_COMPLETED,
-        "tool_used": None,
+        # The mobile VoiceResult contract owns this status vocabulary.  It is
+        # deliberately separate from the canonical chat/action status, so a
+        # conversational response never claims action verification.
+        "status": "attempted",
+        "toolUsed": None,
     }
     _add_optional_tts(services, body)
     return jsonify(body), 200
@@ -223,10 +224,13 @@ def _handle_tts_playback(services: MobileApiServices) -> Any:
         jsonify(
             {
                 "request_id": getattr(g, "request_id", None),
-                "audio_base64": base64.b64encode(synthesized.audio).decode("ascii"),
-                "mime_type": synthesized.mime_type,
-                "voice": synthesized.voice_id,
-                "requested_voice": voice.strip() if voice and voice.strip() else "default",
+                # The authenticated response keeps audio inline.  The mobile
+                # client consumes a URL, so expose a self-contained data URL
+                # instead of an unauthenticated artifact URL.
+                "audio_url": (
+                    f"data:{synthesized.mime_type};base64,"
+                    f"{base64.b64encode(synthesized.audio).decode('ascii')}"
+                ),
             }
         ),
         200,

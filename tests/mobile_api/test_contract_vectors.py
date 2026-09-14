@@ -43,11 +43,35 @@ def _assert_snake_case_keys(value, path: str = "$") -> None:
             _assert_snake_case_keys(child, f"{path}[{index}]")
 
 
+def _assert_mobile_speech_keys(value: dict) -> None:
+    """The shared vector matches the mobile client's historical field casing."""
+    assert set(value) == {
+        "request_id",
+        "transcript",
+        "response",
+        "status",
+        "toolUsed",
+        "ttsBase64",
+    }
+
+
 class TestVectorHygiene:
     def test_every_wire_key_is_snake_case(self, vectors) -> None:
-        """camelCase drift anywhere in the contract fails here."""
-        _assert_snake_case_keys(vectors["http"])
+        """Only the established mobile speech fields are camelCase."""
+        http = dict(vectors["http"])
+        voice_response = http.pop("voice_response")
+        _assert_snake_case_keys(http)
         _assert_snake_case_keys(vectors["websocket"])
+        _assert_mobile_speech_keys(voice_response)
+
+    def test_speech_vectors_match_the_mobile_client_playback_contract(self, vectors) -> None:
+        """Cross-repository seam uses client casing and a playable audio URL."""
+        voice_response = vectors["http"]["voice_response"]
+        tts_response = vectors["http"]["tts_response"]
+        assert voice_response["status"] in {"verified", "attempted", "failed"}
+        assert "ttsBase64" in voice_response
+        assert set(tts_response) == {"request_id", "audio_url"}
+        assert tts_response["audio_url"].startswith("data:audio/")
 
     def test_auth_frame_type_is_auth_not_authenticate(self, vectors) -> None:
         assert vectors["websocket"]["auth_frame"]["type"] == "auth"

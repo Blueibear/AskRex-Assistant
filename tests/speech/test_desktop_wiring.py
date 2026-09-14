@@ -319,6 +319,59 @@ class TestTextToSpeechRouting:
             assert result["path_used"] == "xtts"
             fake_print.assert_not_called()
 
+    def test_routed_call_time_exhaustion_raises_instead_of_stdout_fallback(self) -> None:
+        """All policy-permitted providers can fail after their health checks."""
+        with (
+            patch("rex.voice_loop._lazy_import_tts", return_value=None),
+            patch("rex.voice_loop.settings") as mock_settings,
+        ):
+            mock_settings.tts_provider = "xtts"
+            mock_settings.tts_voice = None
+            mock_settings.tts_speed = 1.0
+            mock_settings.tts_max_spoken_chars = 120
+            mock_settings.tts_fast_short_reply_max_chars = 140
+            mock_settings.speech = SpeechConfig(enabled=True)
+            router = SpeechRouter(
+                stt_providers={},
+                tts_providers={
+                    "voicestudio": FakeTTSProvider("voicestudio"),
+                    NATIVE_PROVIDER_ID: FakeTTSProvider(NATIVE_PROVIDER_ID),
+                },
+                policy=SpeechPolicy(
+                    mode=SpeechPolicyMode.CUSTOM,
+                    tts_provider="voicestudio",
+                    tts_fallback_order=(NATIVE_PROVIDER_ID,),
+                    allow_cloud=True,
+                ),
+            )
+            with patch("rex.speech.registry.build_default_router", return_value=router):
+                from rex.voice_loop import TextToSpeech
+
+                tts = TextToSpeech(language="en")
+
+            from rex.assistant_errors import TextToSpeechError
+
+            with (
+                patch.object(
+                    tts,
+                    "_speak_voicestudio",
+                    new=AsyncMock(side_effect=RuntimeError("VoiceStudio failed")),
+                ),
+                patch.object(
+                    tts,
+                    "_speak_xtts",
+                    new=AsyncMock(side_effect=RuntimeError("XTTS failed")),
+                ),
+                patch("builtins.print") as fake_print,
+            ):
+                try:
+                    asyncio.run(tts.speak("hello"))
+                except TextToSpeechError:
+                    pass
+                else:
+                    raise AssertionError("Expected routed TTS exhaustion to propagate")
+            fake_print.assert_not_called()
+
     def test_local_only_policy_failure_raises_instead_of_silently_using_native(self) -> None:
         """No silent cloud/degraded fallback: an exhausted Local Only policy raises."""
         with (
