@@ -402,6 +402,8 @@ TTS validates text length, resolves only an allowed/available voice, avoids logg
 }
 ```
 
+The provider-neutral SpeechRouter (S35) does not change these shapes. `voice` and `mime_type` always describe the provider that actually synthesized the returned audio, and `voice` may be an AskRex-owned alias (`majel`, `james`, `cole`) on the request side. See `docs/voice/S35_MOBILE_GATEWAY_SPEECH_CONTRACT.md`.
+
 ### 6.5 Explicit scaffolds
 
 Until their real ownership, permission, and persistence contracts are implemented, these routes return HTTP 501 with `NOT_IMPLEMENTED` and their capability remains false:

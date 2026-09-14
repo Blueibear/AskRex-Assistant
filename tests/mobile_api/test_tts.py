@@ -101,6 +101,58 @@ class TestTtsPlayback:
         )
         assert response.status_code == 400
 
+    def test_routed_fallback_reports_the_provider_that_actually_synthesized(
+        self, client, services
+    ) -> None:
+        """S35: after a VoiceStudio-to-native fallback the response must carry
+        the native voice ID and MIME type, never the initially selected
+        provider's ones."""
+        from rex.speech.contracts import SpeechProviderTimeoutError
+        from rex.speech.mobile_adapter import RoutedTextToSpeechAdapter
+        from rex.speech.policy import SpeechPolicy, SpeechPolicyMode
+        from rex.speech.router import SpeechRouter
+        from tests.helpers.fake_speech_providers import AliasTTSProvider
+
+        voicestudio = AliasTTSProvider(
+            "voicestudio",
+            voices={"majel": "vs_majel_v2"},
+            mime="audio/wav",
+            synthesis_error=SpeechProviderTimeoutError("VoiceStudio timed out"),
+        )
+        native = AliasTTSProvider(
+            "native",
+            voices={"majel": "en-US-AriaNeural"},
+            mime="audio/mpeg",
+            audio=b"NATIVE-TTS-AUDIO",
+        )
+        services.tts = RoutedTextToSpeechAdapter(
+            SpeechRouter(
+                stt_providers={},
+                tts_providers={"voicestudio": voicestudio, "native": native},
+                policy=SpeechPolicy(
+                    mode=SpeechPolicyMode.CUSTOM,
+                    allow_cloud=True,
+                    tts_provider="voicestudio",
+                    tts_fallback_order=("native",),
+                ),
+            )
+        )
+
+        headers = _authed(client)
+        response = client.post(
+            "/mobile/tts/playback",
+            json={"text": "hello", "voice": "majel"},
+            headers=headers,
+        )
+
+        assert response.status_code == 200, response.get_json()
+        body = response.get_json()
+        assert body["voice"] == "en-US-AriaNeural"
+        assert body["mime_type"] == "audio/mpeg"
+        assert body["requested_voice"] == "majel"
+        assert base64.b64decode(body["audio_base64"]) == b"NATIVE-TTS-AUDIO"
+        assert native.synthesized == [("hello", "en-US-AriaNeural")]
+
     def test_text_never_in_logs(self, client, caplog) -> None:
         """TTS-012 (and TTS-011 by construction: POST body, no query string)."""
         headers = _authed(client)

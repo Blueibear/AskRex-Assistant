@@ -158,11 +158,16 @@ class SpeechRouter:
         last_error: Exception | None = None
         for provider in chain:
             try:
+                # The requested (possibly aliased) voice is resolved again for
+                # every attempted provider, and the MIME type is read from the
+                # same provider, so a fallback never reuses another provider's
+                # voice ID or mislabels the audio it returns.
                 voice_id = provider.resolve_voice(voice)
+                mime_type = provider.mime_type()
                 audio = provider.synthesize(text, voice_id)
                 return SynthesisResult(
                     audio=audio,
-                    mime_type=provider.mime_type(),
+                    mime_type=mime_type,
                     provider_id=provider.provider_id,
                     voice_id=voice_id,
                 )

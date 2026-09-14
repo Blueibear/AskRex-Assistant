@@ -6,9 +6,10 @@ from typing import Any
 
 import pytest
 
-from rex.speech.contracts import SpeechProviderTimeoutError
+from rex.speech.contracts import SpeechProviderTimeoutError, SpeechProviderUnavailableError
 from rex.speech.policy import SpeechPolicy, SpeechPolicyError, SpeechPolicyMode
 from rex.speech.router import SpeechRouter
+from tests.helpers.fake_speech_providers import AliasTTSProvider
 
 
 class FakeSTTProvider:
@@ -205,6 +206,63 @@ class TestSpeechRouter:
         result = router.synthesize("hello")
         assert result.audio == b"audio-bytes"
         assert result.provider_id == "native"
+
+    def test_synthesize_reports_the_voice_and_mime_of_the_provider_that_succeeded(
+        self,
+    ) -> None:
+        """After a fallback the result must describe the provider that actually
+        synthesized -- not the initially selected one."""
+        voicestudio = AliasTTSProvider(
+            "voicestudio",
+            voices={"majel": "vs_majel_v2"},
+            mime="audio/wav",
+            synthesis_error=SpeechProviderTimeoutError("VoiceStudio timed out"),
+        )
+        native = AliasTTSProvider(
+            "native",
+            voices={"majel": "en-US-AriaNeural"},
+            mime="audio/mpeg",
+        )
+        router = _router(
+            stt={},
+            tts={"voicestudio": voicestudio, "native": native},
+            mode=SpeechPolicyMode.CUSTOM,
+            tts_provider="voicestudio",
+            tts_fallback_order=("native",),
+            allow_cloud=True,
+        )
+
+        result = router.synthesize("hello", voice="majel")
+
+        assert result.provider_id == "native"
+        assert result.voice_id == "en-US-AriaNeural"
+        assert result.mime_type == "audio/mpeg"
+        assert native.synthesized == [("hello", "en-US-AriaNeural")]
+
+    def test_native_to_voicestudio_fallback_resolves_the_alias_for_voicestudio(self) -> None:
+        native = AliasTTSProvider(
+            "native",
+            voices={"majel": "en-US-AriaNeural"},
+            mime="audio/mpeg",
+            synthesis_error=SpeechProviderUnavailableError("native engine is unavailable"),
+        )
+        voicestudio = AliasTTSProvider(
+            "voicestudio", voices={"majel": "vs_majel_v2"}, mime="audio/wav"
+        )
+        router = _router(
+            stt={},
+            tts={"native": native, "voicestudio": voicestudio},
+            mode=SpeechPolicyMode.CUSTOM,
+            tts_provider="native",
+            tts_fallback_order=("voicestudio",),
+            allow_cloud=True,
+        )
+
+        result = router.synthesize("hello", voice="majel")
+
+        assert result.provider_id == "voicestudio"
+        assert result.voice_id == "vs_majel_v2"
+        assert result.mime_type == "audio/wav"
 
     def test_fallback_recovery_never_reaches_disallowed_cloud_provider(self) -> None:
         """Recovery must still honor Local Only: a failing local provider

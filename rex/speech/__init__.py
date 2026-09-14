@@ -14,6 +14,9 @@ Submodules:
 - ``aliases`` -- AskRex-owned voice identities (``majel``, ``james``,
   ``cole``) resolved to provider-specific voice IDs.
 - ``providers`` -- concrete provider implementations (native, VoiceStudio).
+- ``normalize`` -- translates legacy speech failures raised by the existing
+  stack into recoverable provider errors at the wrapper boundary, so ordered
+  fallback works in both directions.
 - ``router`` -- ``SpeechRouter``, the single provider-resolution layer used
   by both the desktop voice pipeline and the authenticated mobile gateway.
 - ``registry`` -- builds the default ``SpeechRouter`` from ``AppConfig``.

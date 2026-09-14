@@ -41,6 +41,7 @@ from rex.mobile_api.voice import (
     MAX_TTS_TEXT_CHARS,
     WHISPER_SAMPLE_RATE,
     sniff_audio_container,
+    synthesize_for_request,
 )
 
 logger = logging.getLogger(__name__)
@@ -118,10 +119,12 @@ def _add_optional_tts(services: MobileApiServices, body: dict[str, Any]) -> None
     if not tts_available or not response_text:
         return
     try:
-        voice_id = services.tts.resolve_voice(None)
-        audio_bytes = services.tts.synthesize(response_text, voice_id)
-        body["tts_base64"] = base64.b64encode(audio_bytes).decode("ascii")
-        body["tts_mime_type"] = services.tts.mime_type()
+        # One provider decision: the reported MIME type always describes the
+        # provider that actually synthesized this audio, even after a
+        # SpeechRouter fallback selected a different provider.
+        synthesized = synthesize_for_request(services.tts, response_text, None)
+        body["tts_base64"] = base64.b64encode(synthesized.audio).decode("ascii")
+        body["tts_mime_type"] = synthesized.mime_type
     except MobileApiError:
         logger.info("Voice reply TTS unavailable; returning text only")
 
@@ -207,8 +210,10 @@ def _handle_tts_playback(services: MobileApiServices) -> Any:
         required_scope=ROUTE_SCOPES["tts.playback"],
     )
     services.tts.require_available()
-    voice_id = services.tts.resolve_voice(voice)
-    audio_bytes = services.tts.synthesize(text, voice_id)
+    # ``voice`` is the AskRex-owned request (alias or provider voice ID).
+    # ``synthesized.voice_id`` is what the provider that actually produced the
+    # audio used, so a fallback never reports another provider's voice.
+    synthesized = synthesize_for_request(services.tts, text, voice)
     revalidate_principal(
         services,
         g.mobile_principal,
@@ -218,9 +223,9 @@ def _handle_tts_playback(services: MobileApiServices) -> Any:
         jsonify(
             {
                 "request_id": getattr(g, "request_id", None),
-                "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
-                "mime_type": services.tts.mime_type(),
-                "voice": voice_id,
+                "audio_base64": base64.b64encode(synthesized.audio).decode("ascii"),
+                "mime_type": synthesized.mime_type,
+                "voice": synthesized.voice_id,
                 "requested_voice": voice.strip() if voice and voice.strip() else "default",
             }
         ),

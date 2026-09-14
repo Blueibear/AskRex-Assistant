@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from rex.assistant_errors import SpeechToTextError
+from rex.runtime.cancellation import TurnCancelledError
 from rex.speech.contracts import SpeechProviderTimeoutError, SpeechProviderUnavailableError
 from rex.speech.desktop_adapter import RoutedDesktopSTT
 from rex.speech.policy import SpeechPolicy, SpeechPolicyMode
@@ -36,6 +37,21 @@ class FakeNativeSTT:
     async def transcribe(self, audio: Any, sample_rate: int) -> str:
         self.calls.append((audio, sample_rate))
         return self._text
+
+
+class FailingNativeSTT:
+    """Native desktop STT whose live engine fails with a legacy exception."""
+
+    def __init__(self, error: BaseException) -> None:
+        self._error = error
+        self.calls: list[tuple[Any, int]] = []
+
+    def is_loaded(self) -> bool:
+        return True
+
+    async def transcribe(self, audio: Any, sample_rate: int) -> str:
+        self.calls.append((audio, sample_rate))
+        raise self._error
 
 
 class FakeProvider:
@@ -184,6 +200,87 @@ class TestRoutedDesktopSTTPolicyEnforcement:
             ),
         )
         adapter = RoutedDesktopSTT(router, native_stt=FakeNativeSTT())
+
+        audio = np.zeros(16_000, dtype=np.float32)
+        with pytest.raises(SpeechToTextError):
+            asyncio.run(adapter.transcribe(audio, 16_000))
+
+    def test_native_runtime_failure_recovers_to_next_permitted_provider(self) -> None:
+        """The desktop native path is the live ``rex.voice.stt`` instance and
+        raises legacy ``SpeechToTextError``; that must normalize into a
+        recoverable provider failure so native-to-VoiceStudio fallback works."""
+        voicestudio = FakeProvider("voicestudio", text="vs-recovered")
+        router = _router(
+            {NATIVE_PROVIDER_ID: FakeProvider(NATIVE_PROVIDER_ID), "voicestudio": voicestudio},
+            policy=SpeechPolicy(
+                mode=SpeechPolicyMode.CUSTOM,
+                stt_provider=NATIVE_PROVIDER_ID,
+                stt_fallback_order=("voicestudio",),
+                allow_cloud=True,
+            ),
+        )
+        adapter = RoutedDesktopSTT(
+            router, native_stt=FailingNativeSTT(SpeechToTextError("Speech transcription failed"))
+        )
+
+        audio = np.zeros(16_000, dtype=np.float32)
+        assert asyncio.run(adapter.transcribe(audio, 16_000)) == "vs-recovered"
+        assert len(voicestudio.received) == 1
+
+    def test_unexpected_native_engine_exception_recovers_to_next_provider(self) -> None:
+        voicestudio = FakeProvider("voicestudio", text="vs-recovered")
+        router = _router(
+            {NATIVE_PROVIDER_ID: FakeProvider(NATIVE_PROVIDER_ID), "voicestudio": voicestudio},
+            policy=SpeechPolicy(
+                mode=SpeechPolicyMode.CUSTOM,
+                stt_provider=NATIVE_PROVIDER_ID,
+                stt_fallback_order=("voicestudio",),
+                allow_cloud=True,
+            ),
+        )
+        adapter = RoutedDesktopSTT(
+            router, native_stt=FailingNativeSTT(RuntimeError("whisper exploded"))
+        )
+
+        audio = np.zeros(16_000, dtype=np.float32)
+        assert asyncio.run(adapter.transcribe(audio, 16_000)) == "vs-recovered"
+
+    def test_cancellation_is_never_retried_against_another_provider(self) -> None:
+        voicestudio = FakeProvider("voicestudio", text="should-never-be-used")
+        router = _router(
+            {NATIVE_PROVIDER_ID: FakeProvider(NATIVE_PROVIDER_ID), "voicestudio": voicestudio},
+            policy=SpeechPolicy(
+                mode=SpeechPolicyMode.CUSTOM,
+                stt_provider=NATIVE_PROVIDER_ID,
+                stt_fallback_order=("voicestudio",),
+                allow_cloud=True,
+            ),
+        )
+        adapter = RoutedDesktopSTT(
+            router, native_stt=FailingNativeSTT(TurnCancelledError("turn cancelled"))
+        )
+
+        audio = np.zeros(16_000, dtype=np.float32)
+        with pytest.raises(TurnCancelledError):
+            asyncio.run(adapter.transcribe(audio, 16_000))
+        assert voicestudio.received == []
+
+    def test_every_permitted_provider_failing_is_truthful(self) -> None:
+        voicestudio = FakeProvider(
+            "voicestudio", error=SpeechProviderUnavailableError("VoiceStudio is unreachable")
+        )
+        router = _router(
+            {NATIVE_PROVIDER_ID: FakeProvider(NATIVE_PROVIDER_ID), "voicestudio": voicestudio},
+            policy=SpeechPolicy(
+                mode=SpeechPolicyMode.CUSTOM,
+                stt_provider=NATIVE_PROVIDER_ID,
+                stt_fallback_order=("voicestudio",),
+                allow_cloud=True,
+            ),
+        )
+        adapter = RoutedDesktopSTT(
+            router, native_stt=FailingNativeSTT(SpeechToTextError("Speech transcription failed"))
+        )
 
         audio = np.zeros(16_000, dtype=np.float32)
         with pytest.raises(SpeechToTextError):

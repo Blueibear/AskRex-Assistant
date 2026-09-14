@@ -26,6 +26,7 @@ import logging
 import os
 import shutil
 import threading
+from dataclasses import dataclass
 from importlib.util import find_spec
 from typing import Any, Protocol, runtime_checkable
 
@@ -112,7 +113,13 @@ class MobileSpeechToTextService(Protocol):
 
 @runtime_checkable
 class MobileTextToSpeechService(Protocol):
-    """The TTS surface ``rex.mobile_api.routes.voice`` depends on."""
+    """The TTS surface ``rex.mobile_api.routes.voice`` depends on.
+
+    A service may additionally implement
+    ``synthesize_request(text, requested_voice) -> SynthesizedSpeech``; when
+    it does, :func:`synthesize_for_request` prefers it so voice resolution,
+    MIME type, and audio all come from one provider decision.
+    """
 
     def availability(self) -> tuple[bool, str]: ...
 
@@ -123,6 +130,44 @@ class MobileTextToSpeechService(Protocol):
     def resolve_voice(self, requested: str | None) -> str: ...
 
     def synthesize(self, text: str, voice_id: str) -> bytes: ...
+
+
+@dataclass(frozen=True)
+class SynthesizedSpeech:
+    """One synthesis result plus metadata from the engine that produced it.
+
+    ``voice_id`` and ``mime_type`` always describe the provider that actually
+    synthesized ``audio``.  With SpeechRouter fallback this matters: reporting
+    the *initially selected* provider's voice/MIME after another provider
+    served the request would mislabel the audio.
+    """
+
+    audio: bytes
+    mime_type: str
+    voice_id: str
+    provider_id: str | None = None
+
+
+def synthesize_for_request(
+    service: MobileTextToSpeechService,
+    text: str,
+    requested_voice: str | None,
+) -> SynthesizedSpeech:
+    """Synthesize ``text`` through ``service`` as one atomic provider decision.
+
+    Routed (SpeechRouter-backed) services resolve the requested AskRex voice
+    alias independently for every attempted provider and report the metadata
+    of the provider that actually synthesized, so a VoiceStudio-to-native (or
+    native-to-VoiceStudio) fallback can never reuse a foreign voice ID or
+    return mislabeled audio.  Services implementing only the legacy two-step
+    surface keep their existing behavior unchanged.
+    """
+    routed = getattr(service, "synthesize_request", None)
+    if callable(routed):
+        return routed(text, requested_voice)
+    voice_id = service.resolve_voice(requested_voice)
+    audio = service.synthesize(text, voice_id)
+    return SynthesizedSpeech(audio=audio, mime_type=service.mime_type(), voice_id=voice_id)
 
 
 def _whisper_cache_dir() -> str:
@@ -401,6 +446,24 @@ class TextToSpeechAdapter:
             )
         return audio
 
+    def synthesize_request(
+        self, text: str, requested_voice: str | None = None
+    ) -> SynthesizedSpeech:
+        """Resolve the requested voice and synthesize in one call.
+
+        Identical behavior to the two-step surface; it exists so callers can
+        use the same single-decision API for the legacy engine and for the
+        SpeechRouter-backed adapter.
+        """
+        voice_id = self.resolve_voice(requested_voice)
+        audio = self.synthesize(text, voice_id)
+        return SynthesizedSpeech(
+            audio=audio,
+            mime_type=self.mime_type(),
+            voice_id=voice_id,
+            provider_id=self.provider(),
+        )
+
 
 __all__ = [
     "MAX_TTS_AUDIO_BYTES",
@@ -411,6 +474,8 @@ __all__ = [
     "MobileSpeechToTextService",
     "MobileTextToSpeechService",
     "SpeechToTextAdapter",
+    "SynthesizedSpeech",
     "TextToSpeechAdapter",
     "sniff_audio_container",
+    "synthesize_for_request",
 ]
