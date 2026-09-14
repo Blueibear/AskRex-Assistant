@@ -31,7 +31,7 @@ class TestTtsPlayback:
         assert response.status_code == 200
         body = response.get_json()
         assert set(body.keys()) == {"request_id", "audio_url"}
-        assert body["audio_url"] == "data:audio/wav;base64,ZmFrZS10dHMtYXVkaW8="
+        assert body["audio_url"] == "data:audio/wav;base64,RkFLRS1UVFMtQVVESU8="
         assert body["request_id"]
         assert fake_tts.synthesized == [("The lights are off.", "fake-default-voice")]
 
