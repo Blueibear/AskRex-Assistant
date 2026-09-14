@@ -1063,3 +1063,13 @@ def test_production_claude_preserves_scratch_and_marker_when_publication_fails(
     scratch = Path(marker_payload["scratch_path"])
     assert scratch.is_dir()
     assert (scratch / "recoverable.txt").read_text(encoding="utf-8") == "keep\n"
+
+
+def test_implementation_prompt_forbids_issue_updates_until_review() -> None:
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.types import TaskItem
+
+    prompt = runner._task_prompt(
+        "backend", TaskItem("B-PROMPT", "Do work"), Path("C:/coord"), "ctx", "inv-1"
+    )
+    assert "issue_updates must be an empty array" in prompt
