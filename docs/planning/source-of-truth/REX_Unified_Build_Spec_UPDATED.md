@@ -1228,3 +1228,15 @@ This standard should apply everywhere:
 ### Household voice completion standard
 
 Rex is not complete as a household voice assistant if normal wake-word use depends on the desktop GUI or mobile app being open. Final consumer release must independently verify the packaged clean-install, background runtime, reboot/sign-in recovery, screenless wake-word round trip, listening privacy controls, and at least one additional paired room endpoint defined in `docs/architecture/end-user-installation-and-voice-runtime.md`.
+
+---
+
+## 25. Agent Runtime, MCP, Skills, and Controlled Self-Extension Amendment
+
+The 2026-09-14 Agent Runtime/MCP program is an evolutionary extension of Rex Core, not a replacement architecture. The accepted decision record is `docs/architecture/ADR-AGENT-RUNTIME-MCP-001.md`; detailed design is `docs/superpowers/specs/2026-09-14-agent-runtime-mcp-skills-design.md`; implementation acceptance is tracked in `docs/planning/source-of-truth/REX_AGENT_RUNTIME_MCP_CHECKLIST.md` and S36-S58 in `docs/planning/AGENT_RUNTIME_MCP_INTEGRATED_BACKLOG.md`.
+
+Canonical rule: AgentDefinition is persistent configuration/policy. It may narrow but never widen the authority supplied by the authenticated principal, workspace/data scope, capability policy, and current Rex security policy. All agent execution enters TurnEngine and reuses canonical identity, permissions, credentials, memory, ModelRouter, CapabilityRegistry/ToolRegistry, ToolExecutionLifecycle, verification, audit, scheduling/automation, and current self-maintenance controls.
+
+MCP supplies external tools/resources/prompts/schemas and standard transports. It does not become Rex's identity, permission, credential, risk, internal coordination, verification, or software-development system. Native tools remain native where appropriate; MCP tools normalize into the shared logical capability model. Skills migrate toward reusable procedures/capability requirements rather than arbitrary executable authority. Generated executable capabilities flow through existing CapabilityGapResolver, Forge/self-maintenance, and Ralph/supervisor verification/promotion controls.
+
+Do not advertise Agent Runtime, MCP, skills-v2, delegation, Agent Manager, or autonomous self-extension as implemented until the corresponding stories and production evidence gates are independently verified.
