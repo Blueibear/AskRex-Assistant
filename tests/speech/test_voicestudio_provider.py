@@ -8,8 +8,11 @@ deterministically.
 from __future__ import annotations
 
 import io
+import urllib.request
+from email.message import Message
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+from urllib.error import HTTPError
 
 import pytest
 
@@ -19,6 +22,7 @@ from rex.speech.contracts import (
     SpeechProviderUnavailableError,
 )
 from rex.speech.providers.voicestudio import (
+    _NoRedirectHandler,
     UrllibVoiceStudioTransport,
     VoiceStudioConfig,
     VoiceStudioSTTProvider,
@@ -216,10 +220,7 @@ class TestUrllibVoiceStudioTransportResponseBounds:
         transport = UrllibVoiceStudioTransport(max_response_bytes=8)
         response = _FakeHttpResponse(b"x" * 9)
 
-        with patch(
-            "rex.speech.providers.voicestudio.urllib.request.urlopen",
-            return_value=response,
-        ):
+        with patch.object(transport._opener, "open", return_value=response):
             with pytest.raises(SpeechProviderResponseError, match="response exceeded"):
                 if operation == "health":
                     transport.get_json(
@@ -240,3 +241,75 @@ class TestUrllibVoiceStudioTransportResponseBounds:
                         headers={},
                         timeout=1,
                     )
+
+
+class TestUrllibVoiceStudioTransportRedirectPolicy:
+    """Redirects must not defeat Local Only's loopback-only provider policy."""
+
+    def test_transport_installs_a_handler_that_refuses_redirects(self) -> None:
+        transport = UrllibVoiceStudioTransport()
+        handler = next(
+            item
+            for item in transport._opener.handlers
+            if isinstance(item, _NoRedirectHandler)
+        )
+
+        assert (
+            handler.redirect_request(
+                urllib.request.Request("http://127.0.0.1:3900/health"),
+                None,
+                302,
+                "Found",
+                Message(),
+                "https://remote.example.invalid/stolen",
+            )
+            is None
+        )
+
+    @pytest.mark.parametrize("operation", ["health", "transcription", "tts"])
+    def test_redirect_is_rejected_without_contacting_remote_target(
+        self, operation: str
+    ) -> None:
+        transport = UrllibVoiceStudioTransport()
+        remote_url = "https://remote.example.invalid/stolen"
+        redirect = HTTPError(
+            "http://127.0.0.1:3900/source",
+            302,
+            "Found",
+            Message(),
+            io.BytesIO(),
+        )
+        open_request = Mock(side_effect=redirect)
+
+        with patch.object(transport._opener, "open", open_request):
+            with pytest.raises(SpeechProviderUnavailableError):
+                if operation == "health":
+                    transport.get_json(
+                        "http://127.0.0.1:3900/health",
+                        headers={"Authorization": "Bearer secret"},
+                        timeout=1,
+                    )
+                elif operation == "transcription":
+                    transport.post_multipart_for_json(
+                        "http://127.0.0.1:3900/v1/audio/transcriptions",
+                        {},
+                        ("file", "audio.wav", b"private-audio", "audio/wav"),
+                        headers={"Authorization": "Bearer secret"},
+                        timeout=1,
+                    )
+                else:
+                    transport.post_json_for_bytes(
+                        "http://127.0.0.1:3900/v1/audio/speech",
+                        {"input": "private text"},
+                        headers={"Authorization": "Bearer secret"},
+                        timeout=1,
+                    )
+
+        # The opener gets exactly the configured loopback request.  A default
+        # urllib opener would issue a second request to the redirect target and
+        # forward headers/body along that path.
+        assert open_request.call_count == 1
+        request = open_request.call_args.args[0]
+        assert request.full_url.startswith("http://127.0.0.1:3900/")
+        assert request.full_url != remote_url
+        assert request.get_header("Authorization") == "Bearer secret"

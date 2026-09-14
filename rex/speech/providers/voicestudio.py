@@ -116,6 +116,14 @@ class UrllibVoiceStudioTransport:
         if max_response_bytes <= 0:
             raise ValueError("max_response_bytes must be positive")
         self._max_response_bytes = max_response_bytes
+        # ``urlopen`` follows redirects by default.  That would let a loopback
+        # VoiceStudio endpoint redirect audio, text, or its bearer credential to
+        # a remote host after the router has admitted it under Local Only.  Do
+        # not follow redirects at all: VoiceStudio's documented transcription
+        # and probe clients use the same conservative behavior, and callers
+        # already receive a truthful unavailable-provider result for HTTP
+        # failures.
+        self._opener = urllib.request.build_opener(_NoRedirectHandler())
 
     def get_json(self, url: str, *, headers: dict[str, str], timeout: float) -> Any:
         request = urllib.request.Request(url, headers=headers, method="GET")
@@ -171,7 +179,7 @@ class UrllibVoiceStudioTransport:
 
     def _send_raw(self, request: urllib.request.Request, timeout: float) -> bytes:
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with self._opener.open(request, timeout=timeout) as response:
                 return self._read_limited(response)
         except TimeoutError as exc:
             raise SpeechProviderTimeoutError("VoiceStudio request timed out") from exc
@@ -201,6 +209,26 @@ class UrllibVoiceStudioTransport:
             raise SpeechProviderResponseError(
                 "VoiceStudio returned a malformed JSON response"
             ) from exc
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Turn every HTTP redirect into a normal urllib HTTP error.
+
+    Redirects are intentionally not retried or reissued.  In particular, that
+    means urllib never copies ``Authorization`` or speech payloads to a
+    redirect target whose locality was not accepted by the SpeechRouter.
+    """
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        return None
 
 
 def _auth_headers(config: VoiceStudioConfig) -> dict[str, str]:
