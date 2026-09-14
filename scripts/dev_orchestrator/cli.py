@@ -5,7 +5,15 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .lifecycle import HeartbeatPump, SupervisorLock, read_heartbeat
+from .completion import record_acceptance
+from .handoff import (
+    accept_handoff,
+    request_handoff,
+    validate_handoffs,
+    worker_ack_handoff,
+)
+from .lifecycle import ControlPlaneLock, HeartbeatPump, SupervisorLock, read_heartbeat
+from .paths import validate_runtime_paths
 from .runner import CliAgentInvoker
 from .storage import AtomicJsonStore
 from .supervisor import Supervisor
@@ -15,7 +23,16 @@ from .usage import UsageBudget
 _CONFIG_NAME = "orchestrator-config.json"
 _HEARTBEAT_NAME = "supervisor-heartbeat.json"
 _LOCK_NAME = "supervisor.lock"
-_RUNTIME_DIRS = ("state", "queues", "alerts", "logs", "mailbox/supervisor")
+_RUNTIME_DIRS = (
+    "state",
+    "queues",
+    "alerts",
+    "logs",
+    "mailbox/supervisor",
+    "handoff",
+    "active-agents",
+    "completion",
+)
 
 
 def _config_payload(config: OrchestratorConfig) -> dict:
@@ -38,8 +55,7 @@ def initialize_runtime(root: Path, backend: Path, mobile: Path, frozen: Path) ->
     backend = backend.resolve()
     mobile = mobile.resolve()
     frozen = frozen.resolve()
-    if backend == frozen or mobile == frozen:
-        raise ValueError("frozen worktree cannot be configured as a development root")
+    validate_runtime_paths(root, backend, mobile, frozen)
     root.mkdir(parents=True, exist_ok=True)
     for relative in _RUNTIME_DIRS:
         (root / relative).mkdir(parents=True, exist_ok=True)
@@ -60,7 +76,7 @@ def load_config(root: Path) -> OrchestratorConfig:
     payload = AtomicJsonStore(root / _CONFIG_NAME).read()
     if not payload:
         raise FileNotFoundError(f"missing {root / _CONFIG_NAME}")
-    return OrchestratorConfig(
+    config = OrchestratorConfig(
         coordination_root=root.resolve(),
         backend_root=Path(payload["backend_root"]).resolve(),
         mobile_root=Path(payload["mobile_root"]).resolve(),
@@ -73,6 +89,16 @@ def load_config(root: Path) -> OrchestratorConfig:
         review_escalation_after=int(payload.get("review_escalation_after", 2)),
         astra_adjudication_after=int(payload.get("astra_adjudication_after", 4)),
     )
+    assert config.backend_root is not None
+    assert config.mobile_root is not None
+    assert config.frozen_worktree is not None
+    validate_runtime_paths(
+        config.coordination_root,
+        config.backend_root,
+        config.mobile_root,
+        config.frozen_worktree,
+    )
+    return config
 
 
 def save_config(config: OrchestratorConfig) -> None:
@@ -80,33 +106,89 @@ def save_config(config: OrchestratorConfig) -> None:
 
 
 def set_observe_only(root: Path, observe_only: bool) -> OrchestratorConfig:
-    config = replace(load_config(root), observe_only=observe_only)
-    save_config(config)
-    return config
+    with ControlPlaneLock(root / "control-plane.lock"):
+        config = replace(load_config(root), observe_only=observe_only)
+        save_config(config)
+        return config
+
+
+def set_reset_policy(root: Path, reserve_last_reset: bool) -> OrchestratorConfig:
+    with ControlPlaneLock(root / "control-plane.lock"):
+        config = replace(load_config(root), reserve_last_reset=reserve_last_reset)
+        save_config(config)
+        return config
+
+
+def activate_runtime(root: Path) -> OrchestratorConfig:
+    with ControlPlaneLock(root / "control-plane.lock"):
+        config = load_config(root)
+        validate_handoffs(config)
+        updated = replace(config, observe_only=False)
+        save_config(updated)
+        return updated
 
 
 def record_confirmed_resets(root: Path, remaining: int) -> OrchestratorConfig:
-    config = load_config(root)
-    budget = UsageBudget(
-        config.banked_resets_remaining,
-        config.reserve_last_reset,
-    ).with_confirmed_remaining(remaining)
-    updated = replace(config, banked_resets_remaining=budget.banked_resets_remaining)
-    save_config(updated)
-    for role in ("backend", "mobile"):
+    with ControlPlaneLock(root / "control-plane.lock"):
+        config = load_config(root)
+        budget = UsageBudget(
+            config.banked_resets_remaining,
+            config.reserve_last_reset,
+        ).with_confirmed_remaining(remaining)
+        updated = replace(config, banked_resets_remaining=budget.banked_resets_remaining)
+        save_config(updated)
+        for role in ("backend", "mobile"):
+            store = AtomicJsonStore(root / "state" / f"{role}.json")
+            state = store.read(default=None)
+            if not state or state.get("status") != "blocked_user":
+                continue
+            if state.get("blocker_kind") != "usage_limit":
+                continue
+            resume = state.get("resume_status") or "implementing"
+            state["status"] = resume
+            state["blocked_reason"] = ""
+            state["blocker_kind"] = ""
+            state["resume_status"] = None
+            store.write(state)
+        return updated
+
+
+def record_confirmed_acceptance(root: Path, role: str, kind: str, evidence: str) -> Path:
+    with ControlPlaneLock(root / "control-plane.lock"):
+        path = record_acceptance(root, role, kind, evidence)
+        store = AtomicJsonStore(root / "state" / f"{role}.json")
+        state = store.read(default=None)
+        if (
+            state
+            and state.get("status") == "blocked_user"
+            and state.get("blocker_kind") == "acceptance"
+        ):
+            state["status"] = state.get("resume_status") or "planning"
+            state["blocked_reason"] = ""
+            state["blocker_kind"] = ""
+            state["resume_status"] = None
+            store.write(state)
+        return path
+
+
+def resume_confirmed_human_blocker(root: Path, role: str, expected_kind: str) -> Path:
+    with ControlPlaneLock(root / "control-plane.lock"):
+        allowed = {"github_auth", "auth", "human"}
+        if expected_kind not in allowed:
+            raise ValueError(f"unsupported human blocker kind: {expected_kind}")
         store = AtomicJsonStore(root / "state" / f"{role}.json")
         state = store.read(default=None)
         if not state or state.get("status") != "blocked_user":
-            continue
-        if state.get("blocker_kind") != "usage_limit":
-            continue
-        resume = state.get("resume_status") or "implementing"
-        state["status"] = resume
+            raise ValueError(f"{role} is not blocked on a user action")
+        actual = str(state.get("blocker_kind", ""))
+        if actual != expected_kind:
+            raise ValueError(f"blocker kind mismatch: expected {expected_kind}, found {actual}")
+        state["status"] = state.get("resume_status") or "planning"
         state["blocked_reason"] = ""
         state["blocker_kind"] = ""
         state["resume_status"] = None
         store.write(state)
-    return updated
+        return store.path
 
 
 def heartbeat_is_stale(
@@ -114,18 +196,37 @@ def heartbeat_is_stale(
     *,
     now: datetime | None = None,
     max_age_seconds: int = 180,
+    max_future_skew_seconds: int = 5,
 ) -> bool:
     payload = read_heartbeat(path)
-    if not payload or "timestamp" not in payload:
+    expected_fields = {"pid", "process_started_filetime", "timestamp"}
+    if not isinstance(payload, dict) or set(payload) != expected_fields:
+        return True
+    pid = payload["pid"]
+    started_filetime = payload["process_started_filetime"]
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return True
+    if (
+        isinstance(started_filetime, bool)
+        or not isinstance(started_filetime, int)
+        or started_filetime <= 0
+    ):
         return True
     try:
         stamp = datetime.fromisoformat(str(payload["timestamp"]))
-    except ValueError:
+    except (TypeError, ValueError):
+        return True
+    if stamp.tzinfo is None or stamp.utcoffset() is None:
         return True
     current = now or datetime.now(UTC)
-    if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=UTC)
-    return (current - stamp).total_seconds() > max_age_seconds
+    if current.tzinfo is None or current.utcoffset() is None:
+        return True
+    stamp = stamp.astimezone(UTC)
+    current = current.astimezone(UTC)
+    age_seconds = (current - stamp).total_seconds()
+    if age_seconds < -max_future_skew_seconds:
+        return True
+    return age_seconds > max_age_seconds
 
 
 def render_status(config: OrchestratorConfig) -> str:
@@ -173,8 +274,17 @@ def run_cycle(config: OrchestratorConfig, *, invoker=None) -> None:
     if config.observe_only:
         Supervisor(config, _ObserveOnlyInvoker()).run_cycle()
         return
+    validate_handoffs(config)
     active_invoker = invoker or CliAgentInvoker(config)
     Supervisor(config, active_invoker).run_cycle()
+
+
+def run_locked_cycle(config: OrchestratorConfig, *, invoker=None) -> None:
+    lock = SupervisorLock(config.coordination_root / _LOCK_NAME)
+    heartbeat_path = config.coordination_root / _HEARTBEAT_NAME
+    with lock, HeartbeatPump(heartbeat_path):
+        current = load_config(config.coordination_root)
+        run_cycle(current, invoker=invoker)
 
 
 def run_loop(
@@ -211,9 +321,41 @@ def build_parser() -> argparse.ArgumentParser:
         command = sub.add_parser(name)
         command.add_argument("--coordination-root", type=Path, required=True)
 
+    for name in ("request-handoff", "accept-handoff"):
+        handoff = sub.add_parser(name)
+        handoff.add_argument("--coordination-root", type=Path, required=True)
+        handoff.add_argument("--role", choices=("backend", "mobile"), required=True)
+        if name == "request-handoff":
+            handoff.add_argument("--worker-session", required=True)
+        if name == "accept-handoff":
+            handoff.add_argument("--nonce", required=True)
+
+    worker_ack = sub.add_parser("operator-ack-handoff")
+    worker_ack.add_argument("--coordination-root", type=Path, required=True)
+    worker_ack.add_argument("--role", choices=("backend", "mobile"), required=True)
+    worker_ack.add_argument("--nonce", required=True)
+    worker_ack.add_argument("--worker-session", required=True)
+
     resets = sub.add_parser("confirm-resets")
     resets.add_argument("--coordination-root", type=Path, required=True)
     resets.add_argument("--remaining", type=int, required=True)
+
+    reset_policy = sub.add_parser("set-reset-policy")
+    reset_policy.add_argument("--coordination-root", type=Path, required=True)
+    reset_policy.add_argument("--reserve-last-reset", choices=("true", "false"), required=True)
+
+    acceptance = sub.add_parser("confirm-acceptance")
+    acceptance.add_argument("--coordination-root", type=Path, required=True)
+    acceptance.add_argument("--role", choices=("backend", "mobile"), required=True)
+    acceptance.add_argument(
+        "--kind", choices=("physical", "cross_repo", "documentation"), required=True
+    )
+    acceptance.add_argument("--evidence", required=True)
+
+    resume = sub.add_parser("resume-human")
+    resume.add_argument("--coordination-root", type=Path, required=True)
+    resume.add_argument("--role", choices=("backend", "mobile"), required=True)
+    resume.add_argument("--blocker-kind", choices=("github_auth", "auth", "human"), required=True)
     return parser
 
 
@@ -233,7 +375,25 @@ def main(argv: list[str] | None = None) -> int:
         print(render_status(load_config(root)))
         return 0
     if args.command == "activate":
-        print(render_status(set_observe_only(root, False)))
+        print(render_status(activate_runtime(root)))
+        return 0
+    if args.command == "request-handoff":
+        path = request_handoff(load_config(root), args.role, worker_session=args.worker_session)
+        print(str(path))
+        return 0
+    if args.command == "operator-ack-handoff":
+        path = worker_ack_handoff(
+            load_config(root),
+            args.role,
+            nonce=args.nonce,
+            source="trusted-operator",
+            worker_session=args.worker_session,
+        )
+        print(str(path))
+        return 0
+    if args.command == "accept-handoff":
+        path = accept_handoff(load_config(root), args.role, nonce=args.nonce)
+        print(str(path))
         return 0
     if args.command == "pause":
         print(render_status(set_observe_only(root, True)))
@@ -241,10 +401,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "confirm-resets":
         print(render_status(record_confirmed_resets(root, args.remaining)))
         return 0
+    if args.command == "set-reset-policy":
+        reserve = args.reserve_last_reset == "true"
+        print(render_status(set_reset_policy(root, reserve)))
+        return 0
+    if args.command == "confirm-acceptance":
+        path = record_confirmed_acceptance(root, args.role, args.kind, args.evidence)
+        print(str(path))
+        return 0
+    if args.command == "resume-human":
+        path = resume_confirmed_human_blocker(root, args.role, args.blocker_kind)
+        print(str(path))
+        return 0
     config = load_config(root)
     if args.command == "cycle":
-        run_cycle(config)
-        print(render_status(config))
+        run_locked_cycle(config)
+        print(render_status(load_config(root)))
         return 0
     if args.command == "run":
         run_loop(config)

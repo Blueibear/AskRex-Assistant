@@ -42,3 +42,24 @@ class AtomicJsonStore:
                 if attempt == 4:
                     raise
                 time.sleep(0.01 * (attempt + 1))
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    """Atomically replace a UTF-8 text file with Windows sharing-violation retry."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.text.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        for attempt in range(5):
+            try:
+                os.replace(temporary, path)
+                return
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.01 * (attempt + 1))
+    finally:
+        temporary.unlink(missing_ok=True)

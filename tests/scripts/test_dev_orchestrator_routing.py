@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+import pytest
 
 from scripts.dev_orchestrator.routing import (
     ASTRA_MODEL,
@@ -14,6 +17,25 @@ from scripts.dev_orchestrator.runner import (
     classify_cli_failure,
 )
 from scripts.dev_orchestrator.types import WorkerState
+
+
+def _safe_config(tmp_path: Path):
+    from scripts.dev_orchestrator.cli import initialize_runtime
+    from scripts.dev_orchestrator.handoff import acknowledge_handoff
+    from tests.scripts.test_dev_orchestrator_safety import _git_repo
+
+    root = tmp_path / "coordination"
+    root.mkdir()
+    frozen = tmp_path / "frozen"
+    frozen.mkdir()
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    _git_repo(backend)
+    _git_repo(mobile)
+    config = initialize_runtime(root, backend, mobile, frozen)
+    acknowledge_handoff(config, "backend", source="test")
+    acknowledge_handoff(config, "mobile", source="test")
+    return config, backend, mobile
 
 
 def test_routine_and_escalated_models_are_explicit() -> None:
@@ -44,11 +66,28 @@ def test_claude_command_uses_structured_output_and_safe_permissions(tmp_path: Pa
     command = build_claude_command(tmp_path / "mobile", "Continue task.", "sonnet")
 
     assert command[command.index("--model") + 1] == "sonnet"
-    assert command[command.index("--permission-mode") + 1] == "auto"
+    assert command[command.index("--permission-mode") + 1] == "acceptEdits"
     assert "--output-format" in command
     assert "--json-schema" in command
     assert not any("bypassPermissions" in part for part in command)
     assert not any("dangerously" in part for part in command)
+
+
+def test_claude_schema_payload_omits_meta_schema_declaration(tmp_path: Path) -> None:
+    import json
+
+    from scripts.dev_orchestrator import runner
+
+    command = build_claude_command(tmp_path / "mobile", "Continue task.", "sonnet")
+    payload = json.loads(command[command.index("--json-schema") + 1])
+    canonical = json.loads(runner._SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    assert "$schema" in canonical
+    assert "$schema" not in payload
+    assert payload["type"] == canonical["type"]
+    assert payload["properties"] == canonical["properties"]
+    assert "allOf" not in payload
+    assert "allOf" in canonical
 
 
 def test_usage_limit_failure_is_classified_without_becoming_success() -> None:
@@ -58,6 +97,13 @@ def test_usage_limit_failure_is_classified_without_becoming_success() -> None:
 
 def test_auth_and_timeout_failures_are_distinct() -> None:
     assert classify_cli_failure("Please login to continue", 1) == "auth"
+    assert (
+        classify_cli_failure(
+            "Failed to authenticate. API Error: 401 OAuth access token has expired. Re-authenticate to continue.",
+            1,
+        )
+        == "auth"
+    )
     assert classify_cli_failure("process timed out", 124) == "timeout"
     assert classify_cli_failure("unexpected crash", 1) == "failed"
 
@@ -67,24 +113,27 @@ def test_codex_commands_require_output_schema(tmp_path: Path) -> None:
 
     assert "--output-schema" in command
     schema_path = Path(command[command.index("--output-schema") + 1])
-    assert schema_path.name == "agent-result.schema.json"
+    assert schema_path.name == "agent-result.codex.schema.json"
+
+
+def test_codex_output_schema_avoids_unsupported_conditionals(tmp_path: Path) -> None:
+    import json
+
+    command = build_codex_command("review", tmp_path / "repo", "Review.", TERRA_MODEL)
+    schema_path = Path(command[command.index("--output-schema") + 1])
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    assert "allOf" not in schema
+    assert set(schema["required"]) == set(schema["properties"])
 
 
 def test_cli_invoker_runs_claude_in_correct_repo_with_coordination_access(tmp_path: Path) -> None:
     import json
 
     from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
-    from scripts.dev_orchestrator.types import OrchestratorConfig, TaskItem
+    from scripts.dev_orchestrator.types import TaskItem, WorkerState
 
-    backend = tmp_path / "backend"
-    backend.mkdir()
-    mobile = tmp_path / "mobile"
-    mobile.mkdir()
-    coordination = tmp_path / "coordination"
-    coordination.mkdir()
-    frozen = tmp_path / "frozen"
-    frozen.mkdir()
-    config = OrchestratorConfig(coordination, backend, mobile, frozen, observe_only=False)
+    config, backend, mobile = _safe_config(tmp_path)
     calls = []
     payload = json.dumps(
         {
@@ -100,32 +149,26 @@ def test_cli_invoker_runs_claude_in_correct_repo_with_coordination_access(tmp_pa
         calls.append((command, cwd))
         return ProcessResult(0, payload, "")
 
-    invoker = CliAgentInvoker(config, execute=execute)
+    invoker = CliAgentInvoker(config, execute=execute, allow_test_executor=True)
     result = invoker.implement(
         "mobile", WorkerState("mobile"), TaskItem("M-1", "Pair phone"), "context", "sonnet"
     )
     command, cwd = calls[0]
     assert result.outcome == "continue"
-    assert cwd == mobile
+    assert cwd != mobile
+    assert cwd.name == "repo"
     assert command[command.index("--model") + 1] == "sonnet"
-    assert str(coordination) in command
+    assert "--add-dir" not in command
+    assert "context" in command[-1]
 
 
 def test_cli_invoker_uses_codex_for_review_and_astra_for_lead(tmp_path: Path) -> None:
     import json
 
     from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
-    from scripts.dev_orchestrator.types import OrchestratorConfig, TaskItem
+    from scripts.dev_orchestrator.types import TaskItem
 
-    backend = tmp_path / "backend"
-    backend.mkdir()
-    mobile = tmp_path / "mobile"
-    mobile.mkdir()
-    coordination = tmp_path / "coordination"
-    coordination.mkdir()
-    frozen = tmp_path / "frozen"
-    frozen.mkdir()
-    config = OrchestratorConfig(coordination, backend, mobile, frozen, observe_only=False)
+    config, backend, mobile = _safe_config(tmp_path)
     calls = []
 
     def execute(command, cwd, timeout_seconds=1800):
@@ -142,7 +185,7 @@ def test_cli_invoker_uses_codex_for_review_and_astra_for_lead(tmp_path: Path) ->
         )
         return ProcessResult(0, payload, "")
 
-    invoker = CliAgentInvoker(config, execute=execute)
+    invoker = CliAgentInvoker(config, execute=execute, allow_test_executor=True)
     assert (
         invoker.review(
             "backend", WorkerState("backend"), TaskItem("B-1", "Fix"), "ctx", TERRA_MODEL
@@ -152,25 +195,21 @@ def test_cli_invoker_uses_codex_for_review_and_astra_for_lead(tmp_path: Path) ->
     assert invoker.lead("mobile", WorkerState("mobile"), "ctx").outcome == "done"
     assert calls[0][0][calls[0][0].index("-m") + 1] == TERRA_MODEL
     assert calls[1][0][calls[1][0].index("-m") + 1] == ASTRA_MODEL
-    assert calls[0][1] == backend
-    assert calls[1][1] == mobile
+    assert calls[0][1].resolve() != backend.resolve()
+    assert calls[1][1].resolve() != mobile.resolve()
+    assert str(backend.resolve()) not in calls[0][0]
+    assert str(mobile.resolve()) not in calls[1][0]
 
 
 def test_cli_invoker_raises_typed_usage_failure(tmp_path: Path) -> None:
     from scripts.dev_orchestrator.runner import AgentInvocationError, CliAgentInvoker, ProcessResult
-    from scripts.dev_orchestrator.types import OrchestratorConfig, TaskItem
+    from scripts.dev_orchestrator.types import TaskItem
 
-    backend = tmp_path / "backend"
-    backend.mkdir()
-    mobile = tmp_path / "mobile"
-    mobile.mkdir()
-    coordination = tmp_path / "coordination"
-    coordination.mkdir()
-    frozen = tmp_path / "frozen"
-    frozen.mkdir()
-    config = OrchestratorConfig(coordination, backend, mobile, frozen, observe_only=False)
+    config, backend, mobile = _safe_config(tmp_path)
     invoker = CliAgentInvoker(
-        config, execute=lambda *args, **kwargs: ProcessResult(1, "", "usage limit reached")
+        config,
+        execute=lambda *args, **kwargs: ProcessResult(1, "", "usage limit reached"),
+        allow_test_executor=True,
     )
     with __import__("pytest").raises(AgentInvocationError) as exc:
         invoker.review(
@@ -178,3 +217,849 @@ def test_cli_invoker_raises_typed_usage_failure(tmp_path: Path) -> None:
         )
     assert exc.value.provider == "codex"
     assert exc.value.kind == "usage_limit"
+
+
+def test_codex_approval_flag_precedes_exec_subcommand(tmp_path: Path) -> None:
+    command = build_codex_command("review", tmp_path / "repo", "Review.", TERRA_MODEL)
+
+    expected_launcher = "codex.cmd" if os.name == "nt" else "codex"
+    assert command[:4] == [expected_launcher, "-a", "never", "exec"]
+    assert command.index("-a") < command.index("exec")
+
+
+def test_codex_windows_launcher_uses_executable_cmd_shim(tmp_path: Path) -> None:
+    command = build_codex_command("review", tmp_path / "repo", "Review.", TERRA_MODEL)
+
+    if os.name == "nt":
+        assert command[0] == "codex.cmd"
+    else:
+        assert command[0] == "codex"
+
+
+def test_claude_production_launcher_is_docker_isolated(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.runner import build_claude_sandbox_command
+
+    repo = tmp_path / "backend"
+    repo.mkdir()
+    command = build_claude_sandbox_command(repo, "Do work", "sonnet", container_name="askrex-test")
+
+    assert command[:2] == ["docker", "run"]
+    assert command[command.index("--name") + 1] == "askrex-test"
+    assert "--cap-drop" in command and "ALL" in command
+    assert "--security-opt" in command and "no-new-privileges" in command
+    joined = " ".join(command)
+    assert f"src={repo}" in joined and "dst=/workspace" in joined
+    from scripts.dev_orchestrator.runner import CLAUDE_SANDBOX_IMAGE_ID
+
+    assert CLAUDE_SANDBOX_IMAGE_ID in command
+    assert "askrex-claude-code:2.1.238" not in command
+    assert "askrex-coordination" not in joined
+    assert "rex-ai-pc-test" not in joined
+    assert "--tools" in command
+    assert command[command.index("--tools") + 1] == "Read,Write,Edit,Glob,Grep"
+
+
+def test_claude_sandbox_image_is_pinned() -> None:
+    from scripts.dev_orchestrator.runner import CLAUDE_SANDBOX_IMAGE, CLAUDE_SANDBOX_IMAGE_ID
+
+    assert CLAUDE_SANDBOX_IMAGE == "askrex-claude-code:2.1.238"
+    assert CLAUDE_SANDBOX_IMAGE_ID.startswith("sha256:")
+    assert len(CLAUDE_SANDBOX_IMAGE_ID) == 71
+
+
+def test_production_claude_invocation_routes_through_docker(tmp_path: Path, monkeypatch) -> None:
+    import json
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.cli import initialize_runtime
+    from scripts.dev_orchestrator.handoff import acknowledge_handoff
+    from scripts.dev_orchestrator.types import TaskItem, WorkerState
+    from tests.scripts.test_dev_orchestrator_safety import _git_repo
+
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "frozen"
+    coord = tmp_path / "coord"
+    frozen.mkdir()
+    _git_repo(backend)
+    _git_repo(mobile)
+    config = initialize_runtime(coord, backend, mobile, frozen)
+    acknowledge_handoff(config, "backend", source="test")
+
+    observed = {}
+    payload = json.dumps(
+        {
+            "outcome": "continue",
+            "summary": "ok",
+            "next_action": "continue",
+            "needs_user": False,
+            "blocker_reason": "",
+        }
+    )
+
+    def fake_run(command, cwd, timeout_seconds=1800, *, activity_file=None, activity_metadata=None):
+        observed["command"] = command
+        observed["cwd"] = cwd
+        return runner.ProcessResult(0, payload, "")
+
+    monkeypatch.setattr(runner, "run_command", fake_run)
+    monkeypatch.setattr(
+        runner, "ensure_claude_sandbox_image", lambda: observed.setdefault("image_ready", True)
+    )
+    invoker = runner.CliAgentInvoker(config, execute=fake_run, allow_test_executor=True)
+    result = invoker.implement(
+        "backend", WorkerState("backend"), TaskItem("B-D", "Docker route"), "ctx", "sonnet"
+    )
+
+    assert result.outcome == "continue"
+    assert result.outcome == "continue"
+    assert observed["cwd"].resolve() != backend.resolve()
+    assert observed["cwd"].name == "repo"
+
+
+def test_claude_sandbox_rejects_mutated_image(monkeypatch) -> None:
+    from scripts.dev_orchestrator import runner
+
+    monkeypatch.setattr(runner, "_docker_image_state", lambda: ("present", "sha256:" + "0" * 64))
+    with pytest.raises(RuntimeError, match="image identity mismatch"):
+        runner.ensure_claude_sandbox_image()
+
+
+def test_claude_sandbox_fails_closed_on_ambiguous_image_inspect(monkeypatch) -> None:
+    import subprocess as sp
+
+    from scripts.dev_orchestrator import runner
+
+    calls = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        if args[:3] == ["docker", "image", "inspect"]:
+            return sp.CompletedProcess(args, 1, "", "error during connect: daemon unavailable")
+        if args[:2] == ["docker", "build"]:
+            raise AssertionError("ambiguous image state must not trigger a build")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="image state is unavailable"):
+        runner.ensure_claude_sandbox_image()
+    assert not any(call[:2] == ["docker", "build"] for call in calls)
+
+
+def test_production_claude_applies_only_scratch_patch(tmp_path: Path, monkeypatch) -> None:
+    import json
+    import subprocess as sp
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.cli import initialize_runtime
+    from scripts.dev_orchestrator.handoff import acknowledge_handoff
+    from scripts.dev_orchestrator.types import TaskItem, WorkerState
+    from tests.scripts.test_dev_orchestrator_safety import _git_repo
+
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "frozen"
+    coord = tmp_path / "coord"
+    frozen.mkdir()
+    _git_repo(backend)
+    _git_repo(mobile)
+    config = initialize_runtime(coord, backend, mobile, frozen)
+    acknowledge_handoff(config, "backend", source="test")
+
+    def fake_run(command, cwd, timeout_seconds=1800, *, activity_file=None, activity_metadata=None):
+        assert cwd.resolve() != backend.resolve()
+        assert cwd.name == "repo"
+        (cwd / "claude-only.txt").write_text("from scratch\n", encoding="utf-8")
+        payload = json.dumps(
+            {
+                "outcome": "continue",
+                "summary": "ok",
+                "next_action": "continue",
+                "needs_user": False,
+                "blocker_reason": "",
+                "task_id": "B-PATCH",
+                "role": "backend",
+                "invocation_id": activity_metadata["invocation_id"],
+            }
+        )
+        return runner.ProcessResult(0, payload, "")
+
+    monkeypatch.setattr(runner, "run_command", fake_run)
+    monkeypatch.setattr(runner, "ensure_claude_sandbox_image", lambda: None)
+    invoker = runner.CliAgentInvoker(config)
+    result = invoker.implement(
+        "backend", WorkerState("backend"), TaskItem("B-PATCH", "Scratch patch"), "ctx", "sonnet"
+    )
+    assert result.outcome == "continue"
+    assert (backend / "claude-only.txt").read_text(encoding="utf-8") == "from scratch\n"
+    body = sp.check_output(["git", "show", "-s", "--format=%B", "HEAD"], cwd=backend, text=True)
+    assert "AskRex-Orchestrator-Invocation:" in body
+    assert sp.check_output(["git", "status", "--porcelain"], cwd=backend, text=True).strip() == ""
+
+
+def test_production_claude_rejects_concurrent_live_repo_change(tmp_path: Path, monkeypatch) -> None:
+    import json
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.cli import initialize_runtime
+    from scripts.dev_orchestrator.handoff import HandoffRequired, acknowledge_handoff
+    from scripts.dev_orchestrator.types import TaskItem, WorkerState
+    from tests.scripts.test_dev_orchestrator_safety import _git_repo
+
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "frozen"
+    coord = tmp_path / "coord"
+    frozen.mkdir()
+    _git_repo(backend)
+    _git_repo(mobile)
+    config = initialize_runtime(coord, backend, mobile, frozen)
+    acknowledge_handoff(config, "backend", source="test")
+
+    def fake_run(command, cwd, timeout_seconds=1800, *, activity_file=None, activity_metadata=None):
+        assert cwd.resolve() != backend.resolve()
+        (cwd / "claude-only.txt").write_text("from scratch\n", encoding="utf-8")
+        (backend / "foreign-writer.txt").write_text("external\n", encoding="utf-8")
+        payload = json.dumps(
+            {
+                "outcome": "continue",
+                "summary": "ok",
+                "next_action": "continue",
+                "needs_user": False,
+                "blocker_reason": "",
+                "task_id": "B-RACE",
+                "role": "backend",
+                "invocation_id": activity_metadata["invocation_id"],
+            }
+        )
+        return runner.ProcessResult(0, payload, "")
+
+    monkeypatch.setattr(runner, "run_command", fake_run)
+    monkeypatch.setattr(runner, "ensure_claude_sandbox_image", lambda: None)
+    invoker = runner.CliAgentInvoker(config)
+    with pytest.raises(HandoffRequired, match="live repository changed"):
+        invoker.implement(
+            "backend", WorkerState("backend"), TaskItem("B-RACE", "Race"), "ctx", "sonnet"
+        )
+    assert not (backend / "claude-only.txt").exists()
+
+
+@pytest.mark.parametrize("phase", ["review", "lead"])
+def test_codex_results_validate_before_handoff_lease_mutation(
+    tmp_path: Path, monkeypatch, phase: str
+) -> None:
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.runner import AgentInvocationError, ProcessResult
+    from scripts.dev_orchestrator.types import TaskItem
+
+    config, _backend, _ = _safe_config(tmp_path)
+    lease_path = config.coordination_root / "handoff" / "backend.json"
+    before = lease_path.read_text(encoding="utf-8")
+
+    def fake_run(_command, _cwd, **_kwargs):
+        return ProcessResult(0, '{"outcome":"pass"}', "")
+
+    monkeypatch.setattr(runner, "run_command", fake_run)
+    invoker = runner.CliAgentInvoker(config)
+    with pytest.raises(AgentInvocationError, match="invalid_output"):
+        if phase == "review":
+            invoker.review(
+                "backend",
+                WorkerState("backend"),
+                TaskItem("B-INVALID-CODEX", "Invalid reviewer output"),
+                "ctx",
+                TERRA_MODEL,
+            )
+        else:
+            invoker.lead("backend", WorkerState("backend"), "ctx")
+
+    assert lease_path.read_text(encoding="utf-8") == before
+
+
+def test_claude_invalid_output_does_not_publish_scratch_changes(tmp_path: Path) -> None:
+    import subprocess as sp
+
+    from scripts.dev_orchestrator.runner import AgentInvocationError, CliAgentInvoker, ProcessResult
+    from scripts.dev_orchestrator.types import TaskItem
+
+    config, backend, _ = _safe_config(tmp_path)
+    before = sp.check_output(["git", "rev-parse", "HEAD"], cwd=backend, text=True).strip()
+
+    def execute(_command, cwd, **_kwargs):
+        (cwd / "invalid-output.txt").write_text("scratch only\n", encoding="utf-8")
+        return ProcessResult(0, "not-json", "")
+
+    with pytest.raises(AgentInvocationError, match="invalid_output"):
+        CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
+            "backend", WorkerState("backend"), TaskItem("B-INVALID", "Invalid"), "ctx", "sonnet"
+        )
+    assert sp.check_output(["git", "rev-parse", "HEAD"], cwd=backend, text=True).strip() == before
+    assert not (backend / "invalid-output.txt").exists()
+    assert sp.check_output(["git", "status", "--porcelain"], cwd=backend, text=True).strip() == ""
+
+
+def test_claude_blocked_result_keeps_live_repo_unchanged(tmp_path: Path) -> None:
+    import json
+    import subprocess as sp
+
+    from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
+    from scripts.dev_orchestrator.types import TaskItem
+
+    config, backend, _ = _safe_config(tmp_path)
+    before = sp.check_output(["git", "rev-parse", "HEAD"], cwd=backend, text=True).strip()
+    payload = json.dumps(
+        {
+            "outcome": "blocked_user",
+            "summary": "need user",
+            "next_action": "confirm",
+            "needs_user": True,
+            "blocker_reason": "confirmation required",
+        }
+    )
+
+    def execute(_command, cwd, **_kwargs):
+        (cwd / "held-output.txt").write_text("scratch only\n", encoding="utf-8")
+        return ProcessResult(0, payload, "")
+
+    result = CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
+        "backend", WorkerState("backend"), TaskItem("B-HOLD", "Hold"), "ctx", "sonnet"
+    )
+    assert result.outcome == "blocked_user"
+    assert sp.check_output(["git", "rev-parse", "HEAD"], cwd=backend, text=True).strip() == before
+    assert not (backend / "held-output.txt").exists()
+    assert sp.check_output(["git", "status", "--porcelain"], cwd=backend, text=True).strip() == ""
+
+
+def test_custom_executor_requires_explicit_test_opt_in(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
+
+    config, _, _ = _safe_config(tmp_path)
+    with pytest.raises(ValueError, match="test-only"):
+        CliAgentInvoker(config, execute=lambda *_a, **_k: ProcessResult(0, "{}", ""))
+
+
+def test_failed_live_publication_leaves_repo_pristine(tmp_path: Path, monkeypatch) -> None:
+    import subprocess as sp
+
+    from scripts.dev_orchestrator import runner
+    from tests.scripts.test_dev_orchestrator_safety import _git_repo
+
+    live = tmp_path / "live"
+    _git_repo(live)
+    before = sp.check_output(["git", "rev-parse", "HEAD"], cwd=live, text=True).strip()
+    scratch = tmp_path / "scratch"
+    runner._clone_scratch_repo(live, before, scratch)
+    (scratch / "change.txt").write_text("x\n", encoding="utf-8")
+    scratch_head = runner._create_scratch_commit(scratch, before, "inv-test")
+    original = runner._git_run
+
+    def fail_merge(repo, *args):
+        if len(args) >= 2 and args[0] == "git" and args[1] == "merge":
+            return sp.CompletedProcess(args, 1, "", "simulated merge failure")
+        return original(repo, *args)
+
+    monkeypatch.setattr(runner, "_git_run", fail_merge)
+    with pytest.raises(runner.HandoffRequired, match="cannot fast-forward"):
+        runner._publish_scratch_commit(live, scratch, before, scratch_head)
+    assert sp.check_output(["git", "rev-parse", "HEAD"], cwd=live, text=True).strip() == before
+    assert sp.check_output(["git", "status", "--porcelain"], cwd=live, text=True).strip() == ""
+    assert not (live / "change.txt").exists()
+
+
+def test_implementation_context_invalid_issue_update_does_not_publish(tmp_path: Path) -> None:
+    import json
+    import subprocess as sp
+
+    from scripts.dev_orchestrator.runner import AgentInvocationError, CliAgentInvoker, ProcessResult
+    from scripts.dev_orchestrator.types import TaskItem
+
+    config, backend, _ = _safe_config(tmp_path)
+    before = sp.check_output(["git", "rev-parse", "HEAD"], cwd=backend, text=True).strip()
+    payload = json.dumps(
+        {
+            "outcome": "continue",
+            "summary": "edited",
+            "next_action": "review",
+            "needs_user": False,
+            "blocker_reason": "",
+            "issue_updates": [
+                {"issue_id": "TEST-123", "status": "fixed-needs-retest", "note": "bad phase"}
+            ],
+        }
+    )
+
+    def execute(_command, cwd, **_kwargs):
+        (cwd / "should-not-publish.txt").write_text("scratch only\n", encoding="utf-8")
+        return ProcessResult(0, payload, "")
+
+    with pytest.raises(AgentInvocationError, match="issue updates are not allowed"):
+        CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
+            "backend",
+            WorkerState("backend"),
+            TaskItem("B-CONTEXT", "Context validation"),
+            "ctx",
+            "sonnet",
+        )
+    assert sp.check_output(["git", "rev-parse", "HEAD"], cwd=backend, text=True).strip() == before
+    assert not (backend / "should-not-publish.txt").exists()
+
+
+def test_custom_codex_executor_uses_scratch_clone(tmp_path: Path) -> None:
+    import json
+
+    from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
+    from scripts.dev_orchestrator.types import TaskItem
+
+    config, backend, _ = _safe_config(tmp_path)
+    observed = {}
+
+    def execute(command, cwd, **_kwargs):
+        observed["cwd"] = cwd.resolve()
+        observed["command"] = command
+        (cwd / "test-executor.txt").write_text("scratch\n", encoding="utf-8")
+        return ProcessResult(
+            0,
+            json.dumps(
+                {
+                    "outcome": "pass",
+                    "summary": "ok",
+                    "next_action": "",
+                    "needs_user": False,
+                    "blocker_reason": "",
+                }
+            ),
+            "",
+        )
+
+    result = CliAgentInvoker(config, execute=execute, allow_test_executor=True).review(
+        "backend", WorkerState("backend"), TaskItem("B-REVIEW", "Review"), "ctx", TERRA_MODEL
+    )
+    assert result.outcome == "pass"
+    assert observed["cwd"] != backend.resolve()
+    assert not (backend / "test-executor.txt").exists()
+    assert str(backend.resolve()) not in observed["command"]
+
+
+def test_run_command_uses_utf8_for_unicode_stdin(tmp_path: Path) -> None:
+    import sys
+
+    from scripts.dev_orchestrator import runner
+
+    result = runner.run_command(
+        [sys.executable, "-c", "import sys; sys.stdout.write(sys.stdin.buffer.read().hex())"],
+        tmp_path,
+        stdin_text="\ufeffAskRex",
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "\ufeffAskRex".encode().hex()
+
+
+def test_scratch_cleanup_retries_transient_sharing_violation(tmp_path: Path, monkeypatch) -> None:
+    from scripts.dev_orchestrator import runner
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    calls = []
+    real_rmtree = runner.tempfile._shutil.rmtree
+
+    def flaky_rmtree(path, *args, **kwargs):
+        calls.append(Path(path))
+        if len(calls) <= 25:
+            exc = PermissionError(13, "sharing violation", str(path))
+            exc.winerror = 32
+            raise exc
+        real_rmtree(path)
+
+    monkeypatch.setattr(runner.tempfile._shutil, "rmtree", flaky_rmtree)
+    monkeypatch.setattr(runner.time, "sleep", lambda _seconds: None)
+    runner._remove_scratch_tree(scratch)
+
+    assert len(calls) == 26
+    assert all(path == scratch for path in calls)
+    assert not scratch.exists()
+
+
+def test_scratch_cleanup_exhausted_sharing_violation_is_nonfatal(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from scripts.dev_orchestrator import runner
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+
+    def locked_rmtree(path, *args, **kwargs):
+        exc = PermissionError(13, "sharing violation", str(path))
+        exc.winerror = 32
+        raise exc
+
+    monkeypatch.setattr(runner.tempfile._shutil, "rmtree", locked_rmtree)
+    monkeypatch.setattr(runner.time, "sleep", lambda _seconds: None)
+    runner._remove_scratch_tree(scratch, attempts=2, delay_seconds=0)
+    assert scratch.exists()
+
+
+def test_production_codex_review_uses_disposable_clone(tmp_path: Path, monkeypatch) -> None:
+    import json
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.types import TaskItem
+
+    config, backend, _ = _safe_config(tmp_path)
+    observed = {}
+
+    def fake_run(
+        command,
+        cwd,
+        timeout_seconds=1800,
+        *,
+        activity_file=None,
+        activity_metadata=None,
+        stdin_text=None,
+    ):
+        observed["command"] = command
+        observed["cwd"] = cwd.resolve()
+        observed["same_target"] = Path(command[command.index("-C") + 1]).samefile(cwd)
+        observed["stdin_text"] = stdin_text
+        return runner.ProcessResult(
+            0,
+            json.dumps(
+                {
+                    "outcome": "pass",
+                    "summary": "ok",
+                    "next_action": "",
+                    "needs_user": False,
+                    "blocker_reason": "",
+                    "task_id": "B-PROD-REVIEW",
+                    "role": "backend",
+                    "invocation_id": activity_metadata["invocation_id"],
+                }
+            ),
+            "",
+        )
+
+    monkeypatch.setattr(runner, "run_command", fake_run)
+    result = runner.CliAgentInvoker(config).review(
+        "backend", WorkerState("backend"), TaskItem("B-PROD-REVIEW", "Review"), "ctx", TERRA_MODEL
+    )
+    assert result.outcome == "pass"
+    assert observed["cwd"] != backend.resolve()
+    assert observed["same_target"] is True
+    assert observed["command"][-1] == "-"
+    assert observed["stdin_text"] is not None
+    assert "Review" in observed["stdin_text"]
+    assert "AskRex-Orchestrator-Invocation-ID:" in observed["stdin_text"]
+
+
+def test_production_claude_requires_exact_result_binding_before_publish(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import json
+    import subprocess as sp
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.runner import AgentInvocationError
+    from scripts.dev_orchestrator.types import TaskItem
+
+    config, backend, _ = _safe_config(tmp_path)
+    before = sp.check_output(["git", "rev-parse", "HEAD"], cwd=backend, text=True).strip()
+
+    def fake_run(command, cwd, timeout_seconds=1800, *, activity_file=None, activity_metadata=None):
+        mount = next(
+            part
+            for part in command
+            if part.startswith("type=bind,src=") and "dst=/workspace" in part
+        )
+        scratch = Path(mount.split(",dst=/workspace", 1)[0].split("src=", 1)[1])
+        (scratch / "wrong-binding.txt").write_text("scratch\n", encoding="utf-8")
+        return runner.ProcessResult(
+            0,
+            json.dumps(
+                {
+                    "outcome": "continue",
+                    "summary": "edited",
+                    "next_action": "review",
+                    "needs_user": False,
+                    "blocker_reason": "",
+                    "task_id": "WRONG-TASK",
+                    "role": "mobile",
+                    "invocation_id": "wrong",
+                }
+            ),
+            "",
+        )
+
+    monkeypatch.setattr(runner, "run_command", fake_run)
+    monkeypatch.setattr(runner, "ensure_claude_sandbox_image", lambda: None)
+    with pytest.raises(AgentInvocationError, match="binding"):
+        runner.CliAgentInvoker(config).implement(
+            "backend", WorkerState("backend"), TaskItem("B-BIND", "Bound task"), "ctx", "sonnet"
+        )
+    assert sp.check_output(["git", "rev-parse", "HEAD"], cwd=backend, text=True).strip() == before
+    assert not (backend / "wrong-binding.txt").exists()
+
+
+def test_production_claude_rejects_unbound_blocked_result_with_coordination(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import json
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.runner import AgentInvocationError
+    from scripts.dev_orchestrator.types import TaskItem
+
+    config, _, _ = _safe_config(tmp_path)
+
+    def fake_run(command, cwd, **_kwargs):
+        return runner.ProcessResult(
+            0,
+            json.dumps(
+                {
+                    "outcome": "blocked_user",
+                    "summary": "blocked",
+                    "next_action": "confirm",
+                    "needs_user": True,
+                    "blocker_reason": "need confirmation",
+                    "coordination_messages": [
+                        {
+                            "to": "mobile",
+                            "priority": "high",
+                            "related": "B-BIND-ALL",
+                            "needs_response": True,
+                            "body": "forged cross-stream message",
+                        }
+                    ],
+                }
+            ),
+            "",
+        )
+
+    monkeypatch.setattr(runner, "run_command", fake_run)
+    monkeypatch.setattr(runner, "ensure_claude_sandbox_image", lambda: None)
+    with pytest.raises(AgentInvocationError, match="binding"):
+        runner.CliAgentInvoker(config).implement(
+            "backend",
+            WorkerState("backend"),
+            TaskItem("B-BIND-ALL", "Bind every result"),
+            "ctx",
+            "sonnet",
+        )
+
+
+def test_custom_claude_executor_cannot_publish_to_live_repo(tmp_path: Path) -> None:
+    import json
+    import subprocess as sp
+
+    from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
+    from scripts.dev_orchestrator.types import TaskItem
+
+    config, backend, _ = _safe_config(tmp_path)
+    before = sp.check_output(["git", "rev-parse", "HEAD"], cwd=backend, text=True).strip()
+
+    def execute(_command, cwd, **_kwargs):
+        (cwd / "synthetic-only.txt").write_text("scratch\n", encoding="utf-8")
+        return ProcessResult(
+            0,
+            json.dumps(
+                {
+                    "outcome": "continue",
+                    "summary": "synthetic",
+                    "next_action": "review",
+                    "needs_user": False,
+                    "blocker_reason": "",
+                }
+            ),
+            "",
+        )
+
+    result = CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
+        "backend",
+        WorkerState("backend"),
+        TaskItem("B-TEST-ONLY", "Synthetic executor"),
+        "ctx",
+        "sonnet",
+    )
+    assert result.outcome == "continue"
+    assert sp.check_output(["git", "rev-parse", "HEAD"], cwd=backend, text=True).strip() == before
+    assert not (backend / "synthetic-only.txt").exists()
+    assert sp.check_output(["git", "status", "--porcelain"], cwd=backend, text=True).strip() == ""
+
+
+def test_production_codex_review_rejects_mismatched_task_binding(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import json
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.runner import AgentInvocationError, ProcessResult
+    from scripts.dev_orchestrator.types import TaskItem
+
+    config, _backend, _ = _safe_config(tmp_path)
+
+    def fake_run(_command, _cwd, **kwargs):
+        invocation_id = kwargs["activity_metadata"]["invocation_id"]
+        payload = {
+            "outcome": "pass",
+            "summary": "ok",
+            "next_action": "",
+            "needs_user": False,
+            "blocker_reason": "",
+            "task_id": "WRONG",
+            "task_prompt": "",
+            "role": "backend",
+            "invocation_id": invocation_id,
+            "coordination_messages": [],
+            "issue_updates": [],
+        }
+        return ProcessResult(0, json.dumps(payload), "")
+
+    monkeypatch.setattr(runner, "run_command", fake_run)
+    invoker = runner.CliAgentInvoker(config)
+    with pytest.raises(AgentInvocationError, match="binding mismatch"):
+        invoker.review(
+            "backend", WorkerState("backend"), TaskItem("B-BOUND", "Review"), "ctx", TERRA_MODEL
+        )
+
+
+def test_production_codex_lead_rejects_empty_role_and_invocation_binding(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import json
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.runner import AgentInvocationError, ProcessResult
+
+    config, _backend, _ = _safe_config(tmp_path)
+
+    def fake_run(_command, _cwd, **_kwargs):
+        payload = {
+            "outcome": "assign",
+            "summary": "assign",
+            "next_action": "",
+            "needs_user": False,
+            "blocker_reason": "",
+            "task_id": "B-NEXT",
+            "task_prompt": "Do it",
+            "role": "",
+            "invocation_id": "",
+            "coordination_messages": [],
+            "issue_updates": [],
+        }
+        return ProcessResult(0, json.dumps(payload), "")
+
+    monkeypatch.setattr(runner, "run_command", fake_run)
+    invoker = runner.CliAgentInvoker(config)
+    with pytest.raises(AgentInvocationError, match="binding mismatch"):
+        invoker.lead("backend", WorkerState("backend"), "ctx")
+
+
+def test_production_claude_keeps_activity_marker_until_handoff_is_durable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import json
+    import re
+    import sys
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.types import TaskItem
+
+    config, backend, _ = _safe_config(tmp_path)
+    marker = config.coordination_root / "active-agents" / "backend.json"
+    observed = {}
+
+    monkeypatch.setattr(runner, "ensure_claude_sandbox_image", lambda: None)
+
+    def fake_sandbox(_repo, prompt, _model, *, container_name):
+        invocation_id = re.search(r"Invocation-ID: ([0-9a-f-]+)", prompt).group(1)
+        payload = json.dumps(
+            {
+                "outcome": "ready_for_review",
+                "summary": "done",
+                "next_action": "review",
+                "needs_user": False,
+                "blocker_reason": "",
+                "task_id": "B-DURABLE",
+                "role": "backend",
+                "invocation_id": invocation_id,
+                "coordination_messages": [],
+                "issue_updates": [],
+            }
+        )
+        code = (
+            "from pathlib import Path; Path('durable.txt').write_text('ok\\n', encoding='utf-8'); print("
+            + repr(payload)
+            + ")"
+        )
+        return [sys.executable, "-c", code]
+
+    monkeypatch.setattr(runner, "build_claude_sandbox_command", fake_sandbox)
+    real_advance = runner.advance_handoff
+
+    def observing_advance(*args, **kwargs):
+        observed.update(json.loads(marker.read_text(encoding="utf-8")))
+        return real_advance(*args, **kwargs)
+
+    monkeypatch.setattr(runner, "advance_handoff", observing_advance)
+    result = runner.CliAgentInvoker(config).implement(
+        "backend", WorkerState("backend"), TaskItem("B-DURABLE", "Durable"), "ctx", "sonnet"
+    )
+    assert result.outcome == "ready_for_review"
+    assert observed["status"] == "postprocessing"
+    assert not marker.exists()
+    assert (backend / "durable.txt").read_text(encoding="utf-8") == "ok\n"
+
+
+def test_production_claude_preserves_scratch_and_marker_when_publication_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import json
+    import re
+    import sys
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.handoff import HandoffRequired
+    from scripts.dev_orchestrator.types import TaskItem
+
+    config, _, _ = _safe_config(tmp_path)
+    marker = config.coordination_root / "active-agents" / "backend.json"
+    monkeypatch.setattr(runner, "ensure_claude_sandbox_image", lambda: None)
+
+    def fake_sandbox(_repo, prompt, _model, *, container_name):
+        invocation_id = re.search(r"Invocation-ID: ([0-9a-f-]+)", prompt).group(1)
+        payload = json.dumps(
+            {
+                "outcome": "ready_for_review",
+                "summary": "done",
+                "next_action": "review",
+                "needs_user": False,
+                "blocker_reason": "",
+                "task_id": "B-PRESERVE",
+                "role": "backend",
+                "invocation_id": invocation_id,
+                "coordination_messages": [],
+                "issue_updates": [],
+            }
+        )
+        code = (
+            "from pathlib import Path; Path('recoverable.txt').write_text('keep\\n', encoding='utf-8'); print("
+            + repr(payload)
+            + ")"
+        )
+        return [sys.executable, "-c", code]
+
+    monkeypatch.setattr(runner, "build_claude_sandbox_command", fake_sandbox)
+
+    def fail_publish(*_args, **_kwargs):
+        raise HandoffRequired("simulated publication failure")
+
+    monkeypatch.setattr(runner, "_publish_scratch_commit", fail_publish)
+    with pytest.raises(HandoffRequired, match="simulated publication failure"):
+        runner.CliAgentInvoker(config).implement(
+            "backend", WorkerState("backend"), TaskItem("B-PRESERVE", "Preserve"), "ctx", "sonnet"
+        )
+    assert marker.is_file()
+    marker_payload = json.loads(marker.read_text(encoding="utf-8"))
+    assert marker_payload["status"] == "postprocessing"
+    scratch = Path(marker_payload["scratch_path"])
+    assert scratch.is_dir()
+    assert (scratch / "recoverable.txt").read_text(encoding="utf-8") == "keep\n"

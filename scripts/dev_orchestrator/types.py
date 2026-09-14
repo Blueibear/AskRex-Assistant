@@ -17,6 +17,22 @@ class WorkerStatus(StrEnum):
 
 
 @dataclass(frozen=True)
+class CoordinationMessage:
+    to: str
+    priority: str
+    related: str
+    needs_response: bool
+    body: str
+
+
+@dataclass(frozen=True)
+class IssueUpdate:
+    issue_id: str
+    status: str
+    note: str
+
+
+@dataclass(frozen=True)
 class AgentResult:
     outcome: str
     summary: str
@@ -25,6 +41,10 @@ class AgentResult:
     blocker_reason: str = ""
     task_id: str = ""
     task_prompt: str = ""
+    role: str = ""
+    invocation_id: str = ""
+    coordination_messages: tuple[CoordinationMessage, ...] = ()
+    issue_updates: tuple[IssueUpdate, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -50,6 +70,7 @@ class WorkerState:
     resume_status: WorkerStatus | None = None
     claude_session_id: str = ""
     codex_session_id: str = ""
+    last_result_invocation_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)

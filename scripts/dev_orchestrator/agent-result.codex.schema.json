@@ -7,7 +7,13 @@
     "summary",
     "next_action",
     "needs_user",
-    "blocker_reason"
+    "blocker_reason",
+    "task_id",
+    "task_prompt",
+    "role",
+    "invocation_id",
+    "coordination_messages",
+    "issue_updates"
   ],
   "properties": {
     "outcome": {
@@ -117,47 +123,5 @@
         }
       }
     }
-  },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "needs_user": {
-            "const": true
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "outcome": {
-            "const": "blocked_user"
-          },
-          "blocker_reason": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "outcome": {
-            "const": "blocked_user"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "needs_user": {
-            "const": true
-          },
-          "blocker_reason": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    }
-  ]
+  }
 }

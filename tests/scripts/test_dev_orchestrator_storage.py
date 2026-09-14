@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
@@ -41,7 +41,7 @@ def test_config_rejects_frozen_worktree_as_worker_root(tmp_path: Path) -> None:
 
 
 def test_agent_result_validation_rejects_unknown_outcome() -> None:
-    with pytest.raises(ValueError, match="outcome"):
+    with pytest.raises(ValueError, match="schema"):
         validate_agent_result({"outcome": "magic", "summary": "nope", "next_action": ""})
 
 
@@ -84,3 +84,93 @@ def test_atomic_store_retries_windows_replace_sharing_violation(
 
     assert calls == 2
     assert store.read() == {"status": "working"}
+
+
+def test_agent_result_rejects_needs_user_with_success_outcome() -> None:
+    with pytest.raises(ValueError, match="schema"):
+        validate_agent_result(
+            {
+                "outcome": "pass",
+                "summary": "looks good",
+                "next_action": "",
+                "needs_user": True,
+                "blocker_reason": "needs hardware confirmation",
+            }
+        )
+
+
+def test_blocked_user_requires_needs_user_and_reason() -> None:
+    with pytest.raises(ValueError, match="schema"):
+        validate_agent_result(
+            {
+                "outcome": "blocked_user",
+                "summary": "blocked",
+                "next_action": "confirm",
+                "needs_user": False,
+                "blocker_reason": "",
+            }
+        )
+
+
+def test_control_plane_lock_serializes_concurrent_mutation(tmp_path: Path) -> None:
+    import threading
+    import time
+
+    from scripts.dev_orchestrator.lifecycle import ControlPlaneLock
+
+    path = tmp_path / "control-plane.lock"
+    entered = threading.Event()
+    finished = threading.Event()
+
+    def contender() -> None:
+        entered.set()
+        with ControlPlaneLock(path):
+            finished.set()
+
+    with ControlPlaneLock(path):
+        thread = threading.Thread(target=contender)
+        thread.start()
+        assert entered.wait(timeout=1)
+        time.sleep(0.05)
+        assert finished.is_set() is False
+    thread.join(timeout=2)
+    assert finished.is_set() is True
+    assert path.exists()
+    with ControlPlaneLock(path):
+        assert path.exists()
+    assert path.exists()
+
+
+def test_agent_result_requires_declared_json_schema_fields() -> None:
+    with pytest.raises(ValueError, match="schema"):
+        validate_agent_result({"outcome": "continue", "summary": "x", "next_action": "x"})
+
+
+def test_agent_result_rejects_additional_properties() -> None:
+    with pytest.raises(ValueError, match="schema"):
+        validate_agent_result(
+            {
+                "outcome": "continue",
+                "summary": "x",
+                "next_action": "x",
+                "needs_user": False,
+                "blocker_reason": "",
+                "unexpected": "must be rejected",
+            }
+        )
+
+
+def test_agent_result_rejects_incomplete_nested_coordination_message() -> None:
+    with pytest.raises(ValueError, match="schema"):
+        validate_agent_result(
+            {
+                "outcome": "pass",
+                "summary": "x",
+                "next_action": "x",
+                "needs_user": False,
+                "blocker_reason": "",
+                "coordination_messages": [
+                    {"to": "backend", "priority": "high", "related": "B-1", "needs_response": False}
+                ],
+            }
+        )
