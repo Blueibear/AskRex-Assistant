@@ -412,3 +412,15 @@ These five stories require no external credentials, hardware, or account provisi
 | Physical phone for LAN/WAN pairing | S7, S8 | Device access during test cycle |
 | Windows code-signing certificate | S31, S32 | Certificate purchase/provisioning (no paid service without approval per operating rules) |
 | Apple Developer / Google Play accounts | S33 | Account provisioning by James |
+
+## 7. Agent Runtime / MCP roadmap amendment (2026-09-14)
+
+The approved Agent Runtime, MCP, skills, delegation, and controlled self-extension program is a continuation of this backlog rather than a separate project. After S35, use dependency-ordered stories S36-S58 from `docs/planning/AGENT_RUNTIME_MCP_INTEGRATED_BACKLOG.md`.
+
+Authoritative architecture: `docs/architecture/ADR-AGENT-RUNTIME-MCP-001.md` and `docs/superpowers/specs/2026-09-14-agent-runtime-mcp-skills-design.md`.
+
+Source-of-truth acceptance checklist: `docs/planning/source-of-truth/REX_AGENT_RUNTIME_MCP_CHECKLIST.md`.
+
+Implementation plan: `docs/superpowers/plans/2026-09-14-agent-runtime-mcp-implementation.md`.
+
+Rex Core remains authoritative for identity, permissions, credentials, memory, model routing, capability metadata, action lifecycle, verification, audit, scheduling, and security. Agent configuration may reduce authority but may never create authority. MCP extends the canonical capability model and does not replace Rex internal coordination or the Ralph/supervisor workflow.

@@ -333,3 +333,14 @@ OpenClaw acts as a modular external tool and capability provider.
 
 Rex 2.0 capability principle:
 New capabilities such as AI Provenance & Watermark must plug into the canonical Rex runtime/action lifecycle. A skill may provide discovery and natural-language intent metadata, but mutations must not bypass Rex authorization, verification, audit, cancellation, or user-scoped policy.
+
+## Agent Runtime / MCP Architecture Amendment (2026-09-14)
+
+- [x] Canonical architecture defined in `docs/architecture/ADR-AGENT-RUNTIME-MCP-001.md`.
+- [x] Detailed design defined in `docs/superpowers/specs/2026-09-14-agent-runtime-mcp-skills-design.md`.
+- [x] Source-of-truth acceptance checklist defined in `docs/planning/source-of-truth/REX_AGENT_RUNTIME_MCP_CHECKLIST.md`.
+- [x] Dependency-ordered S36-S58 backlog defined in `docs/planning/AGENT_RUNTIME_MCP_INTEGRATED_BACKLOG.md`.
+- [x] TDD implementation plan and initial Agent/MCP vertical-slice milestones defined in `docs/superpowers/plans/2026-09-14-agent-runtime-mcp-implementation.md`.
+- [ ] S36+ implementation may begin only through the verified Ralph worker/reviewer path after the active S35 work reaches a safe checkpoint.
+
+Foundational invariant: an agent configuration may reduce authority but must never create authority. Effective authority is the intersection of live user/service-principal authority, workspace/data authority, agent policy, capability policy, and current Rex security/risk/approval policy.
