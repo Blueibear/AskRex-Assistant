@@ -47,6 +47,7 @@ def _config_payload(config: OrchestratorConfig) -> dict:
         "implementation_escalation_after": config.implementation_escalation_after,
         "review_escalation_after": config.review_escalation_after,
         "astra_adjudication_after": config.astra_adjudication_after,
+        "metadata": config.metadata,
     }
 
 
@@ -88,6 +89,7 @@ def load_config(root: Path) -> OrchestratorConfig:
         implementation_escalation_after=int(payload.get("implementation_escalation_after", 2)),
         review_escalation_after=int(payload.get("review_escalation_after", 2)),
         astra_adjudication_after=int(payload.get("astra_adjudication_after", 4)),
+        metadata=dict(payload.get("metadata") or {}),
     )
     assert config.backend_root is not None
     assert config.mobile_root is not None

@@ -98,6 +98,32 @@ def test_init_persists_observe_only_config_and_loads_it(tmp_path: Path) -> None:
     assert config.frozen_worktree == frozen
 
 
+def test_config_round_trips_iteration_validation_metadata(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from scripts.dev_orchestrator.cli import save_config
+
+    root = tmp_path / "coordination"
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "rex-ai-pc-test"
+    for path in (root, backend, mobile, frozen):
+        path.mkdir()
+    config = initialize_runtime(root, backend, mobile, frozen)
+    metadata = {
+        "iteration_validation": {
+            "enabled": True,
+            "backend": {
+                "gates": [{"name": "focused", "command": ["py", "-3.11", "-m", "pytest", "-q"]}]
+            },
+        }
+    }
+
+    save_config(replace(config, metadata=metadata))
+
+    assert load_config(root).metadata == metadata
+
+
 def test_heartbeat_staleness_is_deterministic(tmp_path: Path) -> None:
     path = tmp_path / "heartbeat.json"
     now = datetime(2026, 9, 11, tzinfo=UTC)

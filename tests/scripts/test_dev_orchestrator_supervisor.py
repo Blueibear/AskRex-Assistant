@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import sys
+from dataclasses import replace
 from pathlib import Path
 
 from scripts.dev_orchestrator.supervisor import Supervisor
 from scripts.dev_orchestrator.types import (
     AgentResult,
+    CoordinationMessage,
     IssueUpdate,
     OrchestratorConfig,
     TaskItem,
@@ -68,6 +71,7 @@ def make_config(tmp_path: Path, *, observe_only: bool) -> OrchestratorConfig:
         mobile_root=mobile,
         frozen_worktree=frozen,
         observe_only=observe_only,
+        metadata={"iteration_validation": {"enabled": False}},
     )
 
 
@@ -108,6 +112,187 @@ def test_task_requires_implementation_and_independent_review_pass(tmp_path: Path
     state = supervisor.load_state("backend")
     assert state.status is WorkerStatus.IDLE
     assert state.task is None
+
+
+def test_ready_for_review_fails_deterministic_validation_before_review(tmp_path: Path) -> None:
+    invoker = FakeInvoker()
+    invoker.add("backend", "implement", result("ready_for_review"))
+    config = replace(
+        make_config(tmp_path, observe_only=False),
+        metadata={
+            "iteration_validation": {
+                "enabled": True,
+                "backend": {
+                    "gates": [
+                        {
+                            "name": "focused backend validation",
+                            "command": [
+                                sys.executable,
+                                "-c",
+                                "import sys; print('BROKEN-GATE'); sys.exit(7)",
+                            ],
+                        }
+                    ]
+                },
+            }
+        },
+    )
+    supervisor = Supervisor(config, invoker)
+    supervisor.enqueue("backend", TaskItem("B-VALIDATE", "Fix backend"))
+
+    supervisor.run_cycle()
+
+    state = supervisor.load_state("backend")
+    assert state.status is WorkerStatus.IMPLEMENTING
+    assert state.task is not None
+    assert "focused backend validation" in state.task.feedback
+    assert "Exit code: 7" in state.task.feedback
+    assert "BROKEN-GATE" in state.task.feedback
+    assert not any(phase == "review" for _role, phase, _task in invoker.calls)
+
+
+def test_failed_validation_does_not_publish_ready_for_review_coordination(tmp_path: Path) -> None:
+    invoker = FakeInvoker()
+    invoker.add(
+        "backend",
+        "implement",
+        AgentResult(
+            "ready_for_review",
+            "ready",
+            "review",
+            invocation_id="test-validation-message-1",
+            coordination_messages=(
+                CoordinationMessage("mobile", "high", "B-VALIDATE", False, "Unvalidated contract"),
+            ),
+        ),
+    )
+    config = replace(
+        make_config(tmp_path, observe_only=False),
+        metadata={
+            "iteration_validation": {
+                "enabled": True,
+                "backend": {
+                    "gates": [
+                        {
+                            "name": "reject contract",
+                            "command": [sys.executable, "-c", "import sys; sys.exit(4)"],
+                        }
+                    ]
+                },
+            }
+        },
+    )
+    supervisor = Supervisor(config, invoker)
+    supervisor.enqueue("backend", TaskItem("B-VALIDATE", "Fix backend"))
+
+    supervisor.run_cycle()
+
+    assert supervisor.load_state("backend").status is WorkerStatus.IMPLEMENTING
+    assert list((supervisor.root / "mailbox" / "mobile").glob("MSG-*.md")) == []
+
+
+def test_ready_for_review_advances_only_after_deterministic_validation_passes(
+    tmp_path: Path,
+) -> None:
+    invoker = FakeInvoker()
+    invoker.add("backend", "implement", result("ready_for_review"))
+    config = replace(
+        make_config(tmp_path, observe_only=False),
+        metadata={
+            "iteration_validation": {
+                "enabled": True,
+                "backend": {
+                    "gates": [
+                        {
+                            "name": "focused backend validation",
+                            "command": [sys.executable, "-c", "print('VALIDATION_OK')"],
+                        }
+                    ]
+                },
+            }
+        },
+    )
+    supervisor = Supervisor(config, invoker)
+    supervisor.enqueue("backend", TaskItem("B-VALIDATE", "Fix backend"))
+
+    supervisor.run_cycle()
+
+    state = supervisor.load_state("backend")
+    assert state.status is WorkerStatus.REVIEWING
+    assert state.task == TaskItem("B-VALIDATE", "Fix backend")
+
+
+def test_task_prefix_validation_override_replaces_role_default(tmp_path: Path) -> None:
+    invoker = FakeInvoker()
+    invoker.add("backend", "implement", result("ready_for_review"))
+    config = replace(
+        make_config(tmp_path, observe_only=False),
+        metadata={
+            "iteration_validation": {
+                "enabled": True,
+                "backend": {
+                    "gates": [{"name": "default pass", "command": [sys.executable, "-c", "pass"]}],
+                    "overrides": [
+                        {
+                            "task_prefix": "S35-",
+                            "gates": [
+                                {
+                                    "name": "S35 focused validation",
+                                    "command": [
+                                        sys.executable,
+                                        "-c",
+                                        "import sys; print('S35-BROKEN'); sys.exit(9)",
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                },
+            }
+        },
+    )
+    supervisor = Supervisor(config, invoker)
+    supervisor.enqueue("backend", TaskItem("S35-BACKEND", "Fix speech"))
+
+    supervisor.run_cycle()
+
+    state = supervisor.load_state("backend")
+    assert state.status is WorkerStatus.IMPLEMENTING
+    assert state.task is not None
+    assert "S35 focused validation" in state.task.feedback
+    assert "S35-BROKEN" in state.task.feedback
+    assert "default pass" not in state.task.feedback
+
+
+def test_validation_infrastructure_failure_blocks_system(tmp_path: Path) -> None:
+    invoker = FakeInvoker()
+    invoker.add("backend", "implement", result("ready_for_review"))
+    config = replace(
+        make_config(tmp_path, observe_only=False),
+        metadata={
+            "iteration_validation": {
+                "enabled": True,
+                "backend": {
+                    "gates": [
+                        {
+                            "name": "missing runner",
+                            "command": ["definitely-not-an-askrex-executable-9d31"],
+                        }
+                    ]
+                },
+            }
+        },
+    )
+    supervisor = Supervisor(config, invoker)
+    supervisor.enqueue("backend", TaskItem("B-VALIDATE", "Fix backend"))
+
+    supervisor.run_cycle()
+
+    state = supervisor.load_state("backend")
+    assert state.status is WorkerStatus.BLOCKED_SYSTEM
+    assert state.blocker_kind == "system"
+    assert state.resume_status is WorkerStatus.IMPLEMENTING
+    assert "missing runner" in state.blocked_reason
 
 
 def test_review_changes_required_loops_back_to_implementation(tmp_path: Path) -> None:
@@ -598,6 +783,86 @@ def test_astra_adjudication_publication_rejection_blocks_assignment(
     assert state.status is WorkerStatus.BLOCKED_SYSTEM
     assert state.task == TaskItem("B-OLD", "Old")
     assert "publication rejection" in state.blocked_reason
+
+
+def test_validation_infrastructure_retry_reuses_durable_result_without_reinvoking_worker(
+    tmp_path: Path,
+) -> None:
+    task = TaskItem("B-RECOVER-VALIDATE", "Validate durable implementation")
+    failing_config = replace(
+        make_config(tmp_path, observe_only=False),
+        metadata={
+            "iteration_validation": {
+                "enabled": True,
+                "backend": {
+                    "gates": [
+                        {
+                            "name": "missing runner",
+                            "command": ["definitely-not-an-askrex-executable-9d31"],
+                        }
+                    ]
+                },
+            }
+        },
+    )
+    invoker = FakeInvoker()
+    supervisor = Supervisor(failing_config, invoker)
+    supervisor.save_state(WorkerState(role="backend", status=WorkerStatus.IMPLEMENTING, task=task))
+    pending = {
+        "phase": "implement",
+        "role": "backend",
+        "task_id": task.task_id,
+        "invocation_id": "inv-validation-recover-1",
+        "pre_head": "aaa",
+        "post_head": "bbb",
+        "result": {
+            "outcome": "ready_for_review",
+            "summary": "implementation already published",
+            "next_action": "validate it",
+            "needs_user": False,
+            "blocker_reason": "",
+            "task_id": task.task_id,
+            "task_prompt": "",
+            "role": "backend",
+            "invocation_id": "inv-validation-recover-1",
+            "coordination_messages": [],
+            "issue_updates": [],
+        },
+    }
+    lease = failing_config.coordination_root / "handoff" / "backend.json"
+    lease.parent.mkdir(parents=True, exist_ok=True)
+    lease.write_text(
+        __import__("json").dumps({"owner": "supervisor", "head": "bbb", "pending_result": pending}),
+        encoding="utf-8",
+    )
+
+    supervisor._run_role("backend")
+
+    blocked = supervisor.load_state("backend")
+    assert blocked.status is WorkerStatus.BLOCKED_SYSTEM
+    assert invoker.calls == []
+    assert "pending_result" in __import__("json").loads(lease.read_text(encoding="utf-8"))
+
+    passing_config = replace(
+        failing_config,
+        metadata={
+            "iteration_validation": {
+                "enabled": True,
+                "backend": {
+                    "gates": [
+                        {"name": "validation restored", "command": [sys.executable, "-c", "pass"]}
+                    ]
+                },
+            }
+        },
+    )
+    recovered = Supervisor(passing_config, invoker)
+    recovered._run_role("backend")
+
+    state = recovered.load_state("backend")
+    assert state.status is WorkerStatus.REVIEWING
+    assert invoker.calls == []
+    assert "pending_result" not in __import__("json").loads(lease.read_text(encoding="utf-8"))
 
 
 def test_restart_consumes_durable_implementation_result_without_reinvoking_model(

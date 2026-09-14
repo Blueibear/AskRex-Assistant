@@ -37,7 +37,7 @@ Astra is event-driven. Use it when a queue needs a next-task decision, repeated 
 
 Each repo has one durable current task and one state: `idle`, `planning`, `implementing`, `reviewing`, `blocked_user`, `blocked_system`, or `done`.
 
-Implementation may return `continue` or `ready_for_review`. Independent review must return `pass` before the task is cleared. `changes_required` returns review feedback to the implementer. Repeated failures escalate models and eventually invoke Astra for adjudication.
+Implementation may return `continue` or `ready_for_review`. A published `ready_for_review` checkpoint must pass the supervisor's configured deterministic local validation gates before the workstream may enter independent review. Normal gate failures return the exact gate, command, exit code, and captured output to implementation feedback; validation-infrastructure failures park as `blocked_system` while preserving the durable implementation result so recovery retries validation without reinvoking the worker. Independent review must return `pass` before the task is cleared. `changes_required` returns review feedback to the implementer. Repeated failures escalate models and eventually invoke Astra for adjudication.
 
 A blocker affects only its workstream. Backend may continue while mobile awaits an iPhone test, and mobile may continue while backend awaits a Windows acceptance step. Backend and mobile role cycles execute independently so one long model invocation does not serialize the other workstream.
 

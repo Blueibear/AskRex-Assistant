@@ -28,6 +28,7 @@ from .schema import validate_agent_result
 from .storage import AtomicJsonStore
 from .types import AgentResult, OrchestratorConfig, TaskItem, WorkerState, WorkerStatus
 from .usage import UsageBudget, handle_usage_limit
+from .validation import run_iteration_validation
 
 
 class AgentInvoker(Protocol):
@@ -92,6 +93,12 @@ class Supervisor:
             clear_pending_result(self.config, state.role, invocation_id=invocation_id)
             self._result_context.role = ""
             self._result_context.invocation_id = ""
+
+    def _save_state_preserving_pending_result(self, state: WorkerState) -> None:
+        self._result_context.role = ""
+        self._result_context.invocation_id = ""
+        with ControlPlaneLock(self.root / "control-plane.lock"):
+            self._state_store(state.role).write(state.to_dict())
 
     def enqueue(self, role: str, task: TaskItem) -> None:
         with ControlPlaneLock(self.root / "control-plane.lock"):
@@ -501,12 +508,39 @@ class Supervisor:
         except AgentInvocationError as exc:
             self._handle_invocation_error(role, state, "implement", exc, context)
             return
-        if not self._accept_result(role, state, result, allow_issue_updates=False):
-            return
         if result.outcome == "ready_for_review":
+            report = run_iteration_validation(self.config, role, state.task.task_id)
+            if report.system_error:
+                self._save_state_preserving_pending_result(
+                    replace(
+                        state,
+                        status=WorkerStatus.BLOCKED_SYSTEM,
+                        blocked_reason=report.system_error,
+                        blocker_kind="system",
+                        resume_status=WorkerStatus.IMPLEMENTING,
+                    )
+                )
+                return
+            if not report.passed:
+                self.save_state(
+                    replace(
+                        state,
+                        status=WorkerStatus.IMPLEMENTING,
+                        task=replace(state.task, feedback=report.feedback),
+                        iteration=state.iteration + 1,
+                        blocked_reason="",
+                        blocker_kind="",
+                        resume_status=None,
+                    )
+                )
+                return
+            if not self._accept_result(role, state, result, allow_issue_updates=False):
+                return
             self.save_state(
                 replace(state, status=WorkerStatus.REVIEWING, iteration=state.iteration + 1)
             )
+            return
+        if not self._accept_result(role, state, result, allow_issue_updates=False):
             return
         if result.outcome == "continue":
             self.save_state(
