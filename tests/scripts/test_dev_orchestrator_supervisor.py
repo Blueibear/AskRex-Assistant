@@ -265,6 +265,48 @@ def test_usage_limit_records_exact_resume_phase(tmp_path: Path) -> None:
     assert state.resume_status is WorkerStatus.REVIEWING
 
 
+def test_dependency_block_resumes_only_after_peer_moves_off_story_and_publishes_contract(
+    tmp_path: Path,
+) -> None:
+    invoker = FakeInvoker()
+    invoker.add("mobile", "implement", result("continue", task_id="S35-MOBILE"))
+    supervisor = Supervisor(make_config(tmp_path, observe_only=False), invoker)
+    supervisor.save_state(
+        WorkerState(
+            role="backend",
+            status=WorkerStatus.IMPLEMENTING,
+            task=TaskItem("S35-BACKEND", "Finish backend contract"),
+        )
+    )
+    supervisor.save_state(
+        WorkerState(
+            role="mobile",
+            status=WorkerStatus.BLOCKED_USER,
+            task=TaskItem("S35-MOBILE", "Consume backend contract"),
+            blocked_reason="Waiting for backend S35 contract; no user action required.",
+            blocker_kind="dependency",
+            resume_status=WorkerStatus.IMPLEMENTING,
+        )
+    )
+    mailbox = supervisor.root / "mailbox" / "mobile" / "MSG-backend-s35.md"
+    mailbox.write_text(
+        "From: backend\nTo: mobile\nRelated: STORY-S35-SPEECH-ROUTER\nNeeds response: no\n",
+        encoding="utf-8",
+    )
+
+    supervisor._run_role("mobile")
+    assert invoker.calls == []
+    assert supervisor.load_state("mobile").status is WorkerStatus.BLOCKED_USER
+
+    supervisor.save_state(WorkerState(role="backend", status=WorkerStatus.IDLE))
+    supervisor._run_role("mobile")
+
+    assert ("mobile", "implement", "S35-MOBILE") in invoker.calls
+    state = supervisor.load_state("mobile")
+    assert state.status is WorkerStatus.IMPLEMENTING
+    assert state.blocker_kind == ""
+
+
 def test_final_completion_auth_gate_blocks_user_instead_of_assigning_work(
     tmp_path: Path, monkeypatch
 ) -> None:

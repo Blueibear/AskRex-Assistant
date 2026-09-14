@@ -180,6 +180,42 @@ class Supervisor:
                         )
                     )
 
+    @staticmethod
+    def _task_family(task_id: str) -> str:
+        return task_id.rsplit("-", 1)[0] if "-" in task_id else task_id
+
+    @staticmethod
+    def _message_field(text: str, field: str) -> str:
+        prefix = field.lower() + ":"
+        for line in text.splitlines():
+            if line.lower().startswith(prefix):
+                return line.split(":", 1)[1].strip()
+        return ""
+
+    def _dependency_ready(self, role: str, state: WorkerState) -> bool:
+        if state.task is None:
+            return False
+        peer = "mobile" if role == "backend" else "backend"
+        family = self._task_family(state.task.task_id)
+        peer_state = self.load_state(peer)
+        if peer_state.task and self._task_family(peer_state.task.task_id) == family:
+            return False
+
+        mailbox = self.root / "mailbox" / role
+        if not mailbox.is_dir():
+            return False
+        needle = f"-{family.lower()}-"
+        for path in sorted(mailbox.glob("*.md"), reverse=True):
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
+            if self._message_field(text, "From").lower() != peer:
+                continue
+            if self._message_field(text, "Needs response").lower() != "no":
+                continue
+            related = self._message_field(text, "Related")
+            if needle in f"-{related.lower()}-":
+                return True
+        return False
+
     def _run_role(self, role: str) -> None:
         state = self.load_state(role)
         if state.status is WorkerStatus.BLOCKED_SYSTEM:
@@ -188,6 +224,17 @@ class Supervisor:
             state = replace(
                 state,
                 status=state.resume_status,
+                blocked_reason="",
+                blocker_kind="",
+                resume_status=None,
+            )
+            self.save_state(state)
+        if state.status is WorkerStatus.BLOCKED_USER and state.blocker_kind == "dependency":
+            if not self._dependency_ready(role, state):
+                return
+            state = replace(
+                state,
+                status=state.resume_status or WorkerStatus.IMPLEMENTING,
                 blocked_reason="",
                 blocker_kind="",
                 resume_status=None,
