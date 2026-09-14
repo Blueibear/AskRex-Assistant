@@ -151,6 +151,41 @@ def test_ready_for_review_fails_deterministic_validation_before_review(tmp_path:
     assert not any(phase == "review" for _role, phase, _task in invoker.calls)
 
 
+def test_validation_feedback_is_bounded_for_windows_provider_prompts(tmp_path: Path) -> None:
+    invoker = FakeInvoker()
+    invoker.add("backend", "implement", result("ready_for_review"))
+    config = replace(
+        make_config(tmp_path, observe_only=False),
+        metadata={
+            "iteration_validation": {
+                "enabled": True,
+                "backend": {
+                    "gates": [
+                        {
+                            "name": "bounded validation",
+                            "command": [
+                                sys.executable,
+                                "-c",
+                                "import sys; print('X' * 30000); print('DECISIVE-TAIL'); sys.exit(5)",
+                            ],
+                        }
+                    ]
+                },
+            }
+        },
+    )
+    supervisor = Supervisor(config, invoker)
+    supervisor.enqueue("backend", TaskItem("B-BOUNDED", "Fix backend"))
+
+    supervisor.run_cycle()
+
+    state = supervisor.load_state("backend")
+    assert state.task is not None
+    assert len(state.task.feedback) < 6000
+    assert "DECISIVE-TAIL" in state.task.feedback
+    assert "output truncated" in state.task.feedback
+
+
 def test_failed_validation_does_not_publish_ready_for_review_coordination(tmp_path: Path) -> None:
     invoker = FakeInvoker()
     invoker.add(

@@ -7,7 +7,7 @@ from typing import Any
 
 from .types import OrchestratorConfig
 
-_MAX_OUTPUT_CHARS = 12_000
+_MAX_OUTPUT_CHARS = 4_000
 
 
 @dataclass(frozen=True)
