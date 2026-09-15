@@ -1,6 +1,6 @@
 # Ralph OpenAI Model Worker Design
 
-**Status:** Proposed for implementation after owner review
+**Status:** Approved for implementation by owner
 **Date:** 2026-09-15
 **Scope:** Development orchestrator only; not the AskRex product Agent Runtime
 
@@ -286,6 +286,8 @@ Routing/security settings must be typed rather than hidden inside arbitrary meta
 - `openai_max_astra_calls_per_escalation: int = 1`
 
 Model values are validated against a local allowlist. The API endpoint is not configurable in v1. The credential itself is never represented by these fields.
+
+Astra remains emergency-only even when enabled. Trusted pricing metadata must exist before an Astra reservation can be made; missing or unrecognized pricing makes Astra ineligible rather than permitting an unpriced request.
 
 Enabling the worker without a usable credential does not break implementation routing. Ralph records the API provider as unavailable and follows the trusted Codex fallback policy.
 
