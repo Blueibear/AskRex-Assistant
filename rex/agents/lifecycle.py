@@ -46,7 +46,7 @@ def transition(
     allowed: dict[AgentLifecycle, frozenset[AgentLifecycle]] = {
         AgentLifecycle.DRAFT: frozenset({AgentLifecycle.VALIDATED}),
         AgentLifecycle.VALIDATED: frozenset({AgentLifecycle.APPROVED}),
-        AgentLifecycle.APPROVED: frozenset({AgentLifecycle.ACTIVE}),
+        AgentLifecycle.APPROVED: frozenset({AgentLifecycle.ACTIVE, AgentLifecycle.REVOKED}),
         AgentLifecycle.ACTIVE: frozenset({AgentLifecycle.PAUSED, AgentLifecycle.REVOKED}),
         AgentLifecycle.PAUSED: frozenset({AgentLifecycle.ACTIVE, AgentLifecycle.REVOKED}),
         AgentLifecycle.REVOKED: frozenset(),

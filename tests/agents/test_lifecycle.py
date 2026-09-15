@@ -22,6 +22,7 @@ def test_lifecycle_invalid_skips_fail_closed(current: AgentLifecycle, target: Ag
 
 
 def test_pause_revoke_and_archive_semantics() -> None:
+    assert transition(AgentLifecycle.APPROVED, AgentLifecycle.REVOKED) is AgentLifecycle.REVOKED
     assert transition(AgentLifecycle.ACTIVE, AgentLifecycle.PAUSED) is AgentLifecycle.PAUSED
     assert transition(AgentLifecycle.PAUSED, AgentLifecycle.REVOKED) is AgentLifecycle.REVOKED
     assert transition(AgentLifecycle.REVOKED, AgentLifecycle.ARCHIVED) is AgentLifecycle.ARCHIVED
