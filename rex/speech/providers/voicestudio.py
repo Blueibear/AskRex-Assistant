@@ -214,6 +214,14 @@ class UrllibVoiceStudioTransport:
                 return self._read_limited(response)
         except TimeoutError as exc:
             raise SpeechProviderTimeoutError("VoiceStudio request timed out") from exc
+        except urllib.error.HTTPError as exc:
+            if 300 <= exc.code < 400:
+                raise SpeechProviderResponseError(
+                    "VoiceStudio redirects are not allowed"
+                ) from exc
+            raise SpeechProviderUnavailableError(
+                f"VoiceStudio returned HTTP {exc.code}"
+            ) from exc
         except urllib.error.URLError as exc:
             raise SpeechProviderUnavailableError(f"VoiceStudio is unreachable: {exc}") from exc
 

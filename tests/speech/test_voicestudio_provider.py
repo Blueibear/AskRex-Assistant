@@ -8,11 +8,12 @@ deterministically.
 from __future__ import annotations
 
 import io
+import threading
 import urllib.request
 from email.message import Message
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from unittest.mock import Mock, patch
-from urllib.error import HTTPError
 
 import pytest
 
@@ -43,6 +44,85 @@ class _FakeHttpResponse:
 
     def read(self, size: int = -1) -> bytes:
         return self._body.read(size)
+
+
+class _RedirectServers:
+    """Two real loopback servers for exercising urllib redirect behavior."""
+
+    def __init__(self) -> None:
+        self.source_requests: list[tuple[str, dict[str, str], bytes]] = []
+        self.target_requests: list[tuple[str, dict[str, str], bytes]] = []
+        self._target = ThreadingHTTPServer(
+            ("127.0.0.1", 0), self._target_handler()
+        )
+        self._source = ThreadingHTTPServer(
+            ("127.0.0.1", 0), self._source_handler()
+        )
+        self._threads = [
+            threading.Thread(target=server.serve_forever, daemon=True)
+            for server in (self._target, self._source)
+        ]
+
+    @property
+    def source_url(self) -> str:
+        return f"http://127.0.0.1:{self._source.server_port}"
+
+    @property
+    def target_url(self) -> str:
+        return f"http://127.0.0.1:{self._target.server_port}/stolen"
+
+    def __enter__(self) -> "_RedirectServers":
+        for thread in self._threads:
+            thread.start()
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        for server in (self._source, self._target):
+            server.shutdown()
+            server.server_close()
+        for thread in self._threads:
+            thread.join()
+
+    @staticmethod
+    def _request(handler: BaseHTTPRequestHandler) -> tuple[str, dict[str, str], bytes]:
+        size = int(handler.headers.get("Content-Length", "0"))
+        return handler.path, dict(handler.headers), handler.rfile.read(size)
+
+    def _source_handler(self) -> type[BaseHTTPRequestHandler]:
+        requests = self.source_requests
+        target_url = self.target_url
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                requests.append(_RedirectServers._request(self))
+                self.send_response(302)
+                self.send_header("Location", target_url)
+                self.end_headers()
+
+            def do_POST(self) -> None:  # noqa: N802
+                self.do_GET()
+
+            def log_message(self, format: str, *args: Any) -> None:
+                return None
+
+        return Handler
+
+    def _target_handler(self) -> type[BaseHTTPRequestHandler]:
+        requests = self.target_requests
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                requests.append(_RedirectServers._request(self))
+                self.send_response(200)
+                self.end_headers()
+
+            def do_POST(self) -> None:  # noqa: N802
+                self.do_GET()
+
+            def log_message(self, format: str, *args: Any) -> None:
+                return None
+
+        return Handler
 
 
 class FakeTransport:
@@ -329,27 +409,17 @@ class TestUrllibVoiceStudioTransportRedirectPolicy:
         self, operation: str
     ) -> None:
         transport = UrllibVoiceStudioTransport()
-        remote_url = "https://remote.example.invalid/stolen"
-        redirect = HTTPError(
-            "http://127.0.0.1:3900/source",
-            302,
-            "Found",
-            Message(),
-            io.BytesIO(),
-        )
-        open_request = Mock(side_effect=redirect)
-
-        with patch.object(transport._opener, "open", open_request):
-            with pytest.raises(SpeechProviderUnavailableError):
+        with _RedirectServers() as servers:
+            with pytest.raises(SpeechProviderResponseError, match="redirects are not allowed"):
                 if operation == "health":
                     transport.get_json(
-                        "http://127.0.0.1:3900/health",
+                        servers.source_url + "/health",
                         headers={"Authorization": "Bearer secret"},
                         timeout=1,
                     )
                 elif operation == "transcription":
                     transport.post_multipart_for_json(
-                        "http://127.0.0.1:3900/v1/audio/transcriptions",
+                        servers.source_url + "/v1/audio/transcriptions",
                         {},
                         ("file", "audio.wav", b"private-audio", "audio/wav"),
                         headers={"Authorization": "Bearer secret"},
@@ -357,17 +427,14 @@ class TestUrllibVoiceStudioTransportRedirectPolicy:
                     )
                 else:
                     transport.post_json_for_bytes(
-                        "http://127.0.0.1:3900/v1/audio/speech",
+                        servers.source_url + "/v1/audio/speech",
                         {"input": "private text"},
                         headers={"Authorization": "Bearer secret"},
                         timeout=1,
                     )
 
-        # The opener gets exactly the configured loopback request.  A default
-        # urllib opener would issue a second request to the redirect target and
-        # forward headers/body along that path.
-        assert open_request.call_count == 1
-        request = open_request.call_args.args[0]
-        assert request.full_url.startswith("http://127.0.0.1:3900/")
-        assert request.full_url != remote_url
-        assert request.get_header("Authorization") == "Bearer secret"
+            # These are live HTTP servers, not an opener mock: source proves a
+            # 30x was emitted and an empty target ledger proves urllib never
+            # reissued the request or forwarded its Authorization/body.
+            assert len(servers.source_requests) == 1
+            assert servers.target_requests == []
