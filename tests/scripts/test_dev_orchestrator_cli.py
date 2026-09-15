@@ -98,6 +98,128 @@ def test_init_persists_observe_only_config_and_loads_it(tmp_path: Path) -> None:
     assert config.frozen_worktree == frozen
 
 
+def test_openai_policy_defaults_are_fail_closed_and_secret_free(tmp_path: Path) -> None:
+    import json
+    from decimal import Decimal
+
+    from scripts.dev_orchestrator.cli import _config_payload
+
+    root = tmp_path / "coordination"
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "rex-ai-pc-test"
+    for candidate in (root, backend, mobile, frozen):
+        candidate.mkdir()
+
+    config = initialize_runtime(root, backend, mobile, frozen)
+    payload = _config_payload(config)
+
+    assert config.openai_worker_enabled is False
+    assert config.openai_monthly_budget_usd == Decimal("30.00")
+    assert config.openai_astra_enabled is True
+    assert config.openai_project_hard_limit_confirmed is False
+    assert payload["openai_monthly_budget_usd"] == "30.00"
+    assert "api_key" not in json.dumps(payload).lower()
+
+
+def test_openai_policy_config_round_trips_without_a_credential(tmp_path: Path) -> None:
+    import json
+    from dataclasses import replace
+    from decimal import Decimal
+
+    from scripts.dev_orchestrator.cli import _config_payload, save_config
+
+    root = tmp_path / "coordination"
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "rex-ai-pc-test"
+    for candidate in (root, backend, mobile, frozen):
+        candidate.mkdir()
+
+    config = initialize_runtime(root, backend, mobile, frozen)
+    configured = replace(
+        config,
+        openai_worker_enabled=True,
+        openai_monthly_budget_usd=Decimal("30.00"),
+        openai_project_id="proj-ralph",
+        openai_project_hard_limit_confirmed=True,
+        openai_timeout_seconds=90,
+        openai_max_input_chars=100_000,
+        openai_max_output_tokens=3_000,
+        openai_max_calls_per_cycle=3,
+    )
+    save_config(configured)
+
+    loaded = load_config(root)
+    payload = _config_payload(loaded)
+    openai_fields = (
+        "openai_worker_enabled",
+        "openai_review_model",
+        "openai_escalation_model",
+        "openai_planning_model",
+        "openai_astra_model",
+        "openai_astra_enabled",
+        "openai_monthly_budget_usd",
+        "openai_project_id",
+        "openai_project_hard_limit_confirmed",
+        "openai_timeout_seconds",
+        "openai_max_input_chars",
+        "openai_max_output_tokens",
+        "openai_max_calls_per_cycle",
+        "openai_max_astra_calls_per_escalation",
+    )
+    for field_name in openai_fields:
+        assert getattr(loaded, field_name) == getattr(configured, field_name)
+    assert "api_key" not in json.dumps(payload).lower()
+
+
+def test_confirm_openai_project_limit_records_prerequisite_without_enabling_worker(
+    tmp_path: Path, capsys
+) -> None:
+    from scripts.dev_orchestrator.cli import main
+
+    root = tmp_path / "coordination"
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "rex-ai-pc-test"
+    for candidate in (root, backend, mobile, frozen):
+        candidate.mkdir()
+    initialize_runtime(root, backend, mobile, frozen)
+
+    assert (
+        main(
+            [
+                "confirm-openai-project-limit",
+                "--coordination-root",
+                str(root),
+                "--project-id",
+                "proj-ralph",
+                "--monthly-usd",
+                "30.00",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    loaded = load_config(root)
+    assert loaded.openai_project_id == "proj-ralph"
+    assert loaded.openai_project_hard_limit_confirmed is True
+    assert loaded.openai_worker_enabled is False
+
+    with pytest.raises(ValueError):
+        main(
+            [
+                "confirm-openai-project-limit",
+                "--coordination-root",
+                str(root),
+                "--project-id",
+                "proj-ralph",
+                "--monthly-usd",
+                "29.99",
+            ]
+        )
+
+
 def test_config_round_trips_iteration_validation_metadata(tmp_path: Path) -> None:
     from dataclasses import replace
 

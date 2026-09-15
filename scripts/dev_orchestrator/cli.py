@@ -3,6 +3,7 @@ import json
 import time
 from dataclasses import replace
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 from .completion import record_acceptance
@@ -14,6 +15,7 @@ from .handoff import (
 )
 from .lifecycle import ControlPlaneLock, HeartbeatPump, SupervisorLock, read_heartbeat
 from .paths import validate_runtime_paths
+from .routing import validate_openai_policy
 from .runner import CliAgentInvoker
 from .storage import AtomicJsonStore
 from .supervisor import Supervisor
@@ -47,6 +49,20 @@ def _config_payload(config: OrchestratorConfig) -> dict:
         "implementation_escalation_after": config.implementation_escalation_after,
         "review_escalation_after": config.review_escalation_after,
         "astra_adjudication_after": config.astra_adjudication_after,
+        "openai_worker_enabled": config.openai_worker_enabled,
+        "openai_review_model": config.openai_review_model,
+        "openai_escalation_model": config.openai_escalation_model,
+        "openai_planning_model": config.openai_planning_model,
+        "openai_astra_model": config.openai_astra_model,
+        "openai_astra_enabled": config.openai_astra_enabled,
+        "openai_monthly_budget_usd": str(config.openai_monthly_budget_usd),
+        "openai_project_id": config.openai_project_id,
+        "openai_project_hard_limit_confirmed": config.openai_project_hard_limit_confirmed,
+        "openai_timeout_seconds": config.openai_timeout_seconds,
+        "openai_max_input_chars": config.openai_max_input_chars,
+        "openai_max_output_tokens": config.openai_max_output_tokens,
+        "openai_max_calls_per_cycle": config.openai_max_calls_per_cycle,
+        "openai_max_astra_calls_per_escalation": config.openai_max_astra_calls_per_escalation,
         "metadata": config.metadata,
     }
 
@@ -89,6 +105,24 @@ def load_config(root: Path) -> OrchestratorConfig:
         implementation_escalation_after=int(payload.get("implementation_escalation_after", 2)),
         review_escalation_after=int(payload.get("review_escalation_after", 2)),
         astra_adjudication_after=int(payload.get("astra_adjudication_after", 4)),
+        openai_worker_enabled=bool(payload.get("openai_worker_enabled", False)),
+        openai_review_model=str(payload.get("openai_review_model", "gpt-5.6-terra")),
+        openai_escalation_model=str(payload.get("openai_escalation_model", "gpt-5.6-sol")),
+        openai_planning_model=str(payload.get("openai_planning_model", "gpt-5.6-sol")),
+        openai_astra_model=str(payload.get("openai_astra_model", "gpt-6-astra")),
+        openai_astra_enabled=bool(payload.get("openai_astra_enabled", True)),
+        openai_monthly_budget_usd=Decimal(str(payload.get("openai_monthly_budget_usd", "30.00"))),
+        openai_project_id=str(payload.get("openai_project_id", "")),
+        openai_project_hard_limit_confirmed=bool(
+            payload.get("openai_project_hard_limit_confirmed", False)
+        ),
+        openai_timeout_seconds=int(payload.get("openai_timeout_seconds", 120)),
+        openai_max_input_chars=int(payload.get("openai_max_input_chars", 120_000)),
+        openai_max_output_tokens=int(payload.get("openai_max_output_tokens", 4_000)),
+        openai_max_calls_per_cycle=int(payload.get("openai_max_calls_per_cycle", 4)),
+        openai_max_astra_calls_per_escalation=int(
+            payload.get("openai_max_astra_calls_per_escalation", 1)
+        ),
         metadata=dict(payload.get("metadata") or {}),
     )
     assert config.backend_root is not None
@@ -100,11 +134,32 @@ def load_config(root: Path) -> OrchestratorConfig:
         config.mobile_root,
         config.frozen_worktree,
     )
+    validate_openai_policy(config)
     return config
 
 
 def save_config(config: OrchestratorConfig) -> None:
+    validate_openai_policy(config)
     AtomicJsonStore(config.coordination_root / _CONFIG_NAME).write(_config_payload(config))
+
+
+def record_openai_project_limit_confirmation(
+    root: Path, project_id: str, monthly_usd: Decimal
+) -> OrchestratorConfig:
+    if monthly_usd != Decimal("30.00"):
+        raise ValueError("OpenAI project hard limit must be exactly $30.00/month")
+    normalized_project_id = project_id.strip()
+    if not normalized_project_id:
+        raise ValueError("OpenAI project ID is required")
+    with ControlPlaneLock(root / "control-plane.lock"):
+        config = load_config(root)
+        updated = replace(
+            config,
+            openai_project_id=normalized_project_id,
+            openai_project_hard_limit_confirmed=True,
+        )
+        save_config(updated)
+        return updated
 
 
 def set_observe_only(root: Path, observe_only: bool) -> OrchestratorConfig:
@@ -338,6 +393,11 @@ def build_parser() -> argparse.ArgumentParser:
     worker_ack.add_argument("--nonce", required=True)
     worker_ack.add_argument("--worker-session", required=True)
 
+    openai_limit = sub.add_parser("confirm-openai-project-limit")
+    openai_limit.add_argument("--coordination-root", type=Path, required=True)
+    openai_limit.add_argument("--project-id", required=True)
+    openai_limit.add_argument("--monthly-usd", type=Decimal, required=True)
+
     resets = sub.add_parser("confirm-resets")
     resets.add_argument("--coordination-root", type=Path, required=True)
     resets.add_argument("--remaining", type=int, required=True)
@@ -399,6 +459,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "pause":
         print(render_status(set_observe_only(root, True)))
+        return 0
+    if args.command == "confirm-openai-project-limit":
+        print(
+            render_status(
+                record_openai_project_limit_confirmation(root, args.project_id, args.monthly_usd)
+            )
+        )
         return 0
     if args.command == "confirm-resets":
         print(render_status(record_confirmed_resets(root, args.remaining)))

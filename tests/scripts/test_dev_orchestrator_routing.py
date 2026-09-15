@@ -51,6 +51,46 @@ def test_routine_and_escalated_models_are_explicit() -> None:
     assert ASTRA_MODEL == "gpt-6-astra"
 
 
+def test_openai_policy_validator_fails_closed() -> None:
+    from dataclasses import replace
+    from decimal import Decimal
+
+    from scripts.dev_orchestrator.routing import validate_openai_policy
+    from scripts.dev_orchestrator.types import OrchestratorConfig
+
+    config = OrchestratorConfig.default(Path("."))
+    validate_openai_policy(config)
+
+    invalid = (
+        replace(config, openai_monthly_budget_usd=Decimal("30.01")),
+        replace(config, openai_review_model="gpt-unknown"),
+        replace(config, openai_timeout_seconds=0),
+        replace(config, openai_max_input_chars=0),
+        replace(config, openai_max_output_tokens=0),
+        replace(config, openai_max_calls_per_cycle=0),
+        replace(config, openai_max_astra_calls_per_escalation=2),
+        replace(config, openai_worker_enabled=True),
+        replace(
+            config,
+            openai_worker_enabled=True,
+            openai_project_id="proj-ralph",
+            openai_project_hard_limit_confirmed=False,
+        ),
+    )
+    for candidate in invalid:
+        with pytest.raises(ValueError):
+            validate_openai_policy(candidate)
+
+    validate_openai_policy(
+        replace(
+            config,
+            openai_worker_enabled=True,
+            openai_project_id="proj-ralph",
+            openai_project_hard_limit_confirmed=True,
+        )
+    )
+
+
 def test_codex_commands_override_global_astra_default(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     review = build_codex_command("review", repo, "Review this task.", TERRA_MODEL)

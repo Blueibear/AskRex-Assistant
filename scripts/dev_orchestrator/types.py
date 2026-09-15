@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, replace
+from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -92,6 +93,20 @@ class OrchestratorConfig:
     implementation_escalation_after: int = 2
     review_escalation_after: int = 2
     astra_adjudication_after: int = 4
+    openai_worker_enabled: bool = False
+    openai_review_model: str = "gpt-5.6-terra"
+    openai_escalation_model: str = "gpt-5.6-sol"
+    openai_planning_model: str = "gpt-5.6-sol"
+    openai_astra_model: str = "gpt-6-astra"
+    openai_astra_enabled: bool = True
+    openai_monthly_budget_usd: Decimal = Decimal("30.00")
+    openai_project_id: str = ""
+    openai_project_hard_limit_confirmed: bool = False
+    openai_timeout_seconds: int = 120
+    openai_max_input_chars: int = 120_000
+    openai_max_output_tokens: int = 4_000
+    openai_max_calls_per_cycle: int = 4
+    openai_max_astra_calls_per_escalation: int = 1
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
