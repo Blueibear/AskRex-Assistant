@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -48,6 +49,7 @@ def _state_from_dict(role: str, data: dict | None) -> WorkerState:
         role=role,
         status=WorkerStatus(data.get("status", "idle")),
         task=task,
+        task_base_head=str(data.get("task_base_head", "")),
         iteration=int(data.get("iteration", 0)),
         implementation_failures=int(data.get("implementation_failures", 0)),
         review_failures=int(data.get("review_failures", 0)),
@@ -171,6 +173,19 @@ class Supervisor:
             raise ValueError("frozen worktree cannot be used by supervisor")
         return root
 
+    def _capture_task_base_head(self, role: str) -> str:
+        repo = self._repo_root(role)
+        try:
+            with ControlPlaneLock(role_lease_lock_path(self.config, role)):
+                return subprocess.check_output(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=repo,
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                ).strip()
+        except (OSError, subprocess.CalledProcessError):
+            return ""
+
     def run_cycle(self) -> None:
         if self.config.observe_only:
             return
@@ -288,7 +303,12 @@ class Supervisor:
         if state.task is None:
             queued = self._dequeue(role)
             if queued is not None:
-                state = replace(state, task=queued, status=WorkerStatus.IMPLEMENTING)
+                state = replace(
+                    state,
+                    task=queued,
+                    task_base_head=self._capture_task_base_head(role),
+                    status=WorkerStatus.IMPLEMENTING,
+                )
             else:
                 self._plan(role, state, context)
                 return
@@ -357,6 +377,7 @@ class Supervisor:
                         state,
                         status=WorkerStatus.BLOCKED_USER,
                         task=TaskItem(first.stem, "Await canonical testing verification"),
+                        task_base_head=self._capture_task_base_head(role),
                         blocked_reason=f"{first.stem} requires testing/retest before completion",
                         blocker_kind="retest",
                         resume_status=WorkerStatus.PLANNING,
@@ -370,6 +391,7 @@ class Supervisor:
                     task=TaskItem(
                         first.stem, f"Resolve remaining owned issue {first.stem}.\n\n{text[:6000]}"
                     ),
+                    task_base_head=self._capture_task_base_head(role),
                     blocked_reason="",
                 )
             )
@@ -395,6 +417,7 @@ class Supervisor:
                     state,
                     status=WorkerStatus.IMPLEMENTING,
                     task=TaskItem(f"FINAL-{role}", prompt),
+                    task_base_head=self._capture_task_base_head(role),
                     blocked_reason="",
                 )
             )
@@ -445,6 +468,7 @@ class Supervisor:
                                 f"FINAL-{role}",
                                 "Satisfy deterministic final completion gates: " + reason,
                             ),
+                            task_base_head=self._capture_task_base_head(role),
                             blocked_reason="",
                         )
                     )
@@ -454,7 +478,10 @@ class Supervisor:
             prompt = "\n\n".join(part for part in (result.summary, result.next_action) if part)
             self.save_state(
                 replace(
-                    state, status=WorkerStatus.IMPLEMENTING, task=TaskItem(f"FINAL-{role}", prompt)
+                    state,
+                    status=WorkerStatus.IMPLEMENTING,
+                    task=TaskItem(f"FINAL-{role}", prompt),
+                    task_base_head=self._capture_task_base_head(role),
                 )
             )
             return
@@ -484,6 +511,7 @@ class Supervisor:
                     state,
                     status=WorkerStatus.IMPLEMENTING,
                     task=TaskItem(result.task_id, result.task_prompt),
+                    task_base_head=self._capture_task_base_head(role),
                     blocked_reason="",
                 )
             )
@@ -509,7 +537,14 @@ class Supervisor:
             self._handle_invocation_error(role, state, "implement", exc, context)
             return
         if result.outcome == "ready_for_review":
-            report = run_iteration_validation(self.config, role, state.task.task_id)
+            validation_head = self._capture_task_base_head(role)
+            report = run_iteration_validation(
+                self.config,
+                role,
+                state.task.task_id,
+                base_head=state.task_base_head,
+                head=validation_head,
+            )
             if report.system_error:
                 self._save_state_preserving_pending_result(
                     replace(
@@ -652,6 +687,7 @@ class Supervisor:
                     state,
                     status=WorkerStatus.IMPLEMENTING,
                     task=TaskItem(result.task_id, result.task_prompt),
+                    task_base_head=self._capture_task_base_head(role),
                     implementation_failures=0,
                     review_failures=0,
                     blocked_reason="",

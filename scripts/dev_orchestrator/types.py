@@ -63,6 +63,7 @@ class WorkerState:
     role: str
     status: WorkerStatus = WorkerStatus.IDLE
     task: TaskItem | None = None
+    task_base_head: str = ""
     iteration: int = 0
     implementation_failures: int = 0
     review_failures: int = 0

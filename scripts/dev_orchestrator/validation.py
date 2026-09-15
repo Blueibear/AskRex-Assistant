@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
 import subprocess
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .storage import AtomicJsonStore
 from .types import OrchestratorConfig
 
 _MAX_OUTPUT_CHARS = 4_000
@@ -19,10 +22,131 @@ class ValidationGate:
 
 
 @dataclass(frozen=True)
+class ValidationGateEvidence:
+    name: str
+    command: tuple[str, ...]
+    cwd: str
+    exit_code: int
+    stdout: str
+    stderr: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "command": list(self.command),
+            "cwd": self.cwd,
+            "exit_code": self.exit_code,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+        }
+
+
+@dataclass(frozen=True)
+class ValidationReceipt:
+    role: str
+    task_id: str
+    base_head: str
+    head: str
+    gates: tuple[ValidationGateEvidence, ...]
+    passed_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "role": self.role,
+            "task_id": self.task_id,
+            "base_head": self.base_head,
+            "head": self.head,
+            "gates": [gate.to_dict() for gate in self.gates],
+            "passed_at": self.passed_at,
+        }
+
+
+@dataclass(frozen=True)
 class ValidationReport:
     passed: bool
     feedback: str = ""
     system_error: str = ""
+    receipt: ValidationReceipt | None = None
+
+
+def _receipt_path(config: OrchestratorConfig, role: str, task_id: str) -> Path:
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", task_id) is None:
+        raise ValueError("validation receipt requires a safe non-empty task id")
+    return config.coordination_root / "validation" / f"{role}-{task_id}.json"
+
+
+def _clear_receipt(config: OrchestratorConfig, role: str, task_id: str) -> None:
+    _receipt_path(config, role, task_id).unlink(missing_ok=True)
+
+
+def _git_head(repo: Path) -> str:
+    return subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=repo, text=True, stderr=subprocess.DEVNULL
+    ).strip()
+
+
+def load_validation_receipt(
+    config: OrchestratorConfig,
+    role: str,
+    task_id: str,
+    *,
+    base_head: str,
+    head: str,
+) -> ValidationReceipt:
+    payload = AtomicJsonStore(_receipt_path(config, role, task_id)).read(default=None)
+    if not isinstance(payload, dict):
+        raise FileNotFoundError("matching validation receipt is missing")
+    if (
+        payload.get("role") != role
+        or payload.get("task_id") != task_id
+        or payload.get("base_head") != base_head
+        or payload.get("head") != head
+    ):
+        raise ValueError("validation receipt revision binding mismatch")
+    raw_gates = payload.get("gates")
+    if not isinstance(raw_gates, list):
+        raise ValueError("validation receipt gates are malformed")
+    gates: list[ValidationGateEvidence] = []
+    for raw in raw_gates:
+        if not isinstance(raw, dict):
+            raise ValueError("validation receipt gate is malformed")
+        command = raw.get("command")
+        if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
+            raise ValueError("validation receipt command is malformed")
+        try:
+            exit_code = int(raw.get("exit_code", -1))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("validation receipt exit code is malformed") from exc
+        if exit_code != 0:
+            raise ValueError("validation receipt must contain only successful gates")
+        name = str(raw.get("name", "")).strip()
+        if not name:
+            raise ValueError("validation receipt gate name is malformed")
+        gates.append(
+            ValidationGateEvidence(
+                name=name,
+                command=tuple(command),
+                cwd=str(raw.get("cwd", "")),
+                exit_code=exit_code,
+                stdout=str(raw.get("stdout", "")),
+                stderr=str(raw.get("stderr", "")),
+            )
+        )
+    passed_at = str(payload.get("passed_at", ""))
+    try:
+        passed_stamp = datetime.fromisoformat(passed_at)
+    except ValueError as exc:
+        raise ValueError("validation receipt timestamp is malformed") from exc
+    if passed_stamp.tzinfo is None or passed_stamp.utcoffset() is None:
+        raise ValueError("validation receipt timestamp must be timezone-aware")
+    return ValidationReceipt(
+        role=role,
+        task_id=task_id,
+        base_head=base_head,
+        head=head,
+        gates=tuple(gates),
+        passed_at=passed_at,
+    )
 
 
 _DEFAULT_GATES: dict[str, tuple[ValidationGate, ...]] = {
@@ -121,13 +245,23 @@ def _render_failure(
 
 
 def run_iteration_validation(
-    config: OrchestratorConfig, role: str, task_id: str
+    config: OrchestratorConfig,
+    role: str,
+    task_id: str,
+    *,
+    base_head: str = "",
+    head: str = "",
 ) -> ValidationReport:
+    _receipt_path(config, role, task_id)
     try:
+        _clear_receipt(config, role, task_id)
         gates = _gates_for(config, role, task_id)
         if not gates:
             return ValidationReport(True)
         repo = _repo_root(config, role)
+        if head and _git_head(repo) != head:
+            raise ValueError("validation target revision changed before gates ran")
+        evidence: list[ValidationGateEvidence] = []
         for gate in gates:
             cwd = (repo / gate.cwd).resolve()
             if cwd != repo and repo not in cwd.parents:
@@ -142,13 +276,34 @@ def run_iteration_validation(
             )
             if result.returncode != 0:
                 return ValidationReport(False, _render_failure(gate, cwd, result))
-        return ValidationReport(True)
+            evidence.append(
+                ValidationGateEvidence(
+                    name=gate.name,
+                    command=gate.command,
+                    cwd=gate.cwd,
+                    exit_code=result.returncode,
+                    stdout=_bounded(result.stdout or ""),
+                    stderr=_bounded(result.stderr or ""),
+                )
+            )
+        if head and _git_head(repo) != head:
+            raise ValueError("validation target revision changed while gates ran")
+        receipt = ValidationReceipt(
+            role=role,
+            task_id=task_id,
+            base_head=base_head,
+            head=head,
+            gates=tuple(evidence),
+            passed_at=datetime.now(UTC).isoformat(),
+        )
+        AtomicJsonStore(_receipt_path(config, role, task_id)).write(receipt.to_dict())
+        return ValidationReport(True, receipt=receipt)
     except subprocess.TimeoutExpired as exc:
         output = _bounded((exc.stdout or "") + (exc.stderr or ""))
         return ValidationReport(
             False, f"Deterministic validation timed out before review.\n{output}"
         )
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         gate_name = locals().get("gate")
         detail = f" for {gate_name.name}" if isinstance(gate_name, ValidationGate) else ""
         return ValidationReport(

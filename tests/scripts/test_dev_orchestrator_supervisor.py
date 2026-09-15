@@ -945,3 +945,39 @@ def test_restart_consumes_durable_implementation_result_without_reinvoking_model
     assert invoker.calls == []
     persisted_lease = __import__("json").loads(lease.read_text(encoding="utf-8"))
     assert "pending_result" not in persisted_lease
+
+
+def test_task_base_head_is_stable_until_task_completes(tmp_path: Path) -> None:
+    import subprocess
+
+    config = make_config(tmp_path, observe_only=False)
+    assert config.backend_root is not None
+    repo = config.backend_root
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    (repo / "README.md").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+    base_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+
+    invoker = FakeInvoker()
+    invoker.add("backend", "implement", result("continue"), result("ready_for_review"))
+    invoker.add("backend", "review", result("changes_required", summary="fix"))
+    invoker.add("backend", "implement", result("ready_for_review"))
+    invoker.add("backend", "review", result("pass"))
+    supervisor = Supervisor(config, invoker)
+    supervisor.enqueue("backend", TaskItem("B-BASE", "work"))
+
+    supervisor._run_role("backend")
+    assert supervisor.load_state("backend").task_base_head == base_head
+    supervisor._run_role("backend")
+    assert supervisor.load_state("backend").task_base_head == base_head
+    supervisor._run_role("backend")
+    assert supervisor.load_state("backend").task_base_head == base_head
+    supervisor._run_role("backend")
+    assert supervisor.load_state("backend").task_base_head == base_head
+    supervisor._run_role("backend")
+    completed = supervisor.load_state("backend")
+    assert completed.status is WorkerStatus.IDLE
+    assert completed.task_base_head == ""
