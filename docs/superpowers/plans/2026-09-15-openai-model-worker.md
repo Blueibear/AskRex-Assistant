@@ -23,6 +23,7 @@
 - Secrets never enter config, prompts, evidence, logs, activity markers, tests, or coordination files.
 - Normal tests must make zero external network calls.
 - Preserve lease, scratch, provenance, durable pending-result replay, coordination safety, and frozen-worktree protections.
+- Keep new isolation/invocation/validation/provenance primitives reusable by future Rex Skill/Plugin/MCP/Automation builders; Ralph-specific policy must not become the only usable interface to the underlying builder mechanisms.
 
 ---
 ### Task 1: Typed OpenAI policy configuration and fail-closed activation
@@ -302,21 +303,21 @@ Commit: `git add scripts/dev_orchestrator/evidence.py scripts/dev_orchestrator/t
 - `OpenAIModelWorker.review(...)` and `.lead(..., phase: Literal["plan", "adjudicate"], model: str)` return canonical `AgentResult` objects only.
 - The worker composes `prepare -> reserve -> send -> reconcile -> validate_agent_result -> binding check -> advance_handoff` in that order.
 
-- [ ] **Step 1: Write characterization tests before extracting scratch helpers**
+- [x] **Step 1: Write characterization tests before extracting scratch helpers**
 
 Prove the current CLI invoker still creates detached disposable clones, never gives reviewers a writable live checkout, preserves a clean live repository, and publishes only implementation commits. These tests must pass before and after extraction.
 
-- [ ] **Step 2: Extract the scratch helpers without behavior change**
+- [x] **Step 2: Extract the scratch helpers without behavior change**
 
 Move `_temporary_scratch_root()`, `_remove_scratch_tree()`, and `_clone_scratch_repo()` into `scratch.py`; import them back into `runner.py`. Run the existing routing/safety/lease suite immediately.
 
 Run: `py -3.11 -m pytest -q tests/scripts/test_dev_orchestrator_routing.py tests/scripts/test_dev_orchestrator_safety.py tests/scripts/test_dev_orchestrator_lease.py`
 Expected: PASS before adding the API worker.
 
-- [ ] **Step 3: Write RED worker tests**
+- [x] **Step 3: Write RED worker tests**
 
 Assert the API worker receives only bounded evidence from the disposable snapshot; reserves budget before `send()` is entered; never sends when reservation fails; reconciles valid usage; keeps the full reservation on missing/malformed usage; validates the canonical schema and exact role/task/invocation binding; and rejects a repository change occurring during the read-only invocation.
-- [ ] **Step 4: Add OpenAI as an explicitly read-only handoff provider**
+- [x] **Step 4: Add OpenAI as an explicitly read-only handoff provider**
 
 In `advance_handoff()`, accept `provider == "openai"` only when `post_head == pre_head`. It may write a durable `pending_result`, but it may never verify or publish invocation commits.
 
@@ -328,7 +329,7 @@ elif provider == "openai":
 
 Add a test proving an OpenAI provider record cannot smuggle a repository delta through the handoff path.
 
-- [ ] **Step 5: Implement the worker transaction**
+- [x] **Step 5: Implement the worker transaction**
 
 Hold the existing per-role lease lock; validate handoff; snapshot the clean leased HEAD; clone the exact revision into a disposable read-only evidence snapshot; prepare the secret-free request; reserve its worst-case cost; then call `send()`.
 
@@ -336,7 +337,7 @@ On success, reconcile usage before accepting the model result. Then run `validat
 
 If the transport result is uncertain after dispatch, call `mark_uncertain()` before propagating a typed error. Never refund an uncertain paid request.
 
-- [ ] **Step 6: Run focused tests and commit**
+- [x] **Step 6: Run focused tests and commit**
 
 Run: `py -3.11 -m pytest -q tests/scripts/test_dev_orchestrator_openai_worker.py tests/scripts/test_dev_orchestrator_routing.py tests/scripts/test_dev_orchestrator_safety.py tests/scripts/test_dev_orchestrator_lease.py`
 Expected: PASS.

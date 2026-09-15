@@ -950,9 +950,11 @@ data/
 ```
 
 
-### Controlled Self-Maintenance and Capability Acquisition
+### First-Class Controlled Self-Extension, Self-Maintenance, and Capability Acquisition
 
-Rex should eventually be able to maintain and extend itself, but only through the same policy, verification, source-control, and rollback rules that apply to other high-impact actions. Self-maintenance is a controlled developer workflow, not unrestricted runtime source mutation.
+Safe self-extension is a foundational Rex product capability, not a post-completion enhancement. The architecture must support it from the initial product baseline even when individual extension paths remain disabled until their safety dependencies are verified. Rex must be able to detect a capability gap, discover existing capabilities, compose permitted capabilities, build a bounded skill/plugin/MCP adapter when needed, validate and permission-scope the result, register or promote it through policy, and later disable or roll it back. Core source modification remains the highest-risk last resort.
+
+Self-maintenance and self-extension must use the same policy, verification, isolation, provenance, source-control, and rollback rules that apply to other high-impact actions. They are controlled build/deployment workflows, not unrestricted runtime source mutation.
 
 #### Capability acquisition hierarchy
 
@@ -980,6 +982,12 @@ The self-maintenance system should build on existing Rex components rather than 
 | CI / required checks | Independent validation before merge or release |
 
 Existing components are foundations only. They do not, by themselves, constitute a complete autonomous self-maintenance pipeline.
+
+#### Reusable Builder Runtime
+
+Rex must not grow one bespoke development loop for core maintenance and a second unrelated loop for skill/plugin generation. Shared build primitives should be provider-neutral and artifact-neutral: build task identity, isolated workspace creation, model/provider routing, bounded evidence, deterministic validation, security/capability validation, provenance, approval policy, publication/registration, health monitoring, and rollback.
+
+Ralph/dev-orchestrator is one privileged consumer of those primitives for AskRex source maintenance. Product-facing Skill Builder, Plugin Builder, MCP Adapter Builder, and Automation Builder flows should consume the same primitives through narrower capability policies. Ordinary TurnEngine execution must never inherit Ralph core-repository mutation authority merely because the underlying build infrastructure is shared.
 
 #### Required self-maintenance components
 

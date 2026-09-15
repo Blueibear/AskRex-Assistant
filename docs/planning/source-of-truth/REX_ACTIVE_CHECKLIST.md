@@ -117,6 +117,14 @@
 - [x] means current code plus tests/evidence verify the entire checklist item.
 - [ ] means missing, only partially implemented, or not yet reconciled against current `master`.
 - Do not rebuild an existing component under a second architecture. Reuse and harden the foundations below.
+- Safe self-extension is a foundational Rex product requirement. Its architecture must exist from the product baseline even when higher-risk extension paths remain disabled until prerequisite safety gates are verified.
+
+### Reusable Builder Runtime
+- [ ] Define provider-neutral/artifact-neutral build-task and build-result contracts shared by maintenance and self-extension flows
+- [ ] Reuse one isolated-workspace abstraction for Rex core maintenance and generated skill/plugin/MCP artifacts
+- [ ] Reuse deterministic validation, security/capability validation, provenance, approval, and rollback primitives across builders
+- [ ] Expose narrower Skill Builder, Plugin Builder, MCP Adapter Builder, and Automation Builder policies without granting ordinary runtime core-repository mutation authority
+- [ ] Keep Ralph/dev-orchestrator as a privileged consumer of shared builder primitives rather than the product-facing self-extension API itself
 
 ### Verified Existing Foundations to Reuse
 - [x] Rex skill registry exists and persists registered skills

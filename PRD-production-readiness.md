@@ -3994,9 +3994,13 @@ grep -n "askrex.app\|Cloudflare\|CORS\|rate limit\|revocation" docs/deployment.m
 
 ---
 
+### Foundational self-extension rule
+
+Safe self-extension is part of the Rex product baseline, not an optional post-release enhancement. US-115 through US-117 remain dependency-ordered behind the policy, capability, evaluation, and verification foundations they require, but they are release-critical capabilities. Shared builder primitives must be reusable by Rex core maintenance and by narrower Skill/Plugin/MCP/Automation builders rather than duplicated into separate development systems.
+
 ### US-115: Compose capability gaps declaratively
 
-**Priority:** P1 | **Workstream:** Capabilities / Planning / Self-extension | **Dependencies:** US-078, US-107, US-109, US-108.
+**Priority:** P0 | **Workstream:** Capabilities / Planning / Self-extension | **Dependencies:** US-078, US-107, US-109, US-108.
 
 **Description:** Satisfy supported gaps by composing existing permitted capabilities into a typed declarative graph before considering generated code.
 
@@ -4018,7 +4022,7 @@ grep -n "askrex.app\|Cloudflare\|CORS\|rate limit\|revocation" docs/deployment.m
 
 ### US-116: Build and assess Forge packages
 
-**Priority:** P1 | **Workstream:** Forge / Security / Evaluation | **Dependencies:** US-115; RexBench primitives from US-075 and later stories.
+**Priority:** P0 | **Workstream:** Forge / Security / Evaluation | **Dependencies:** US-115; RexBench primitives from US-075 and later stories.
 
 **Description:** Implement a disabled-by-default Forge build pipeline that creates a bounded capability package plus manifest/tests and assesses it without granting runtime authority.
 
@@ -4040,7 +4044,7 @@ grep -n "askrex.app\|Cloudflare\|CORS\|rate limit\|revocation" docs/deployment.m
 
 ### US-117: Gate Forge promotion and rollback
 
-**Priority:** P1 | **Workstream:** Forge / Approval / Operations | **Dependencies:** US-116, US-109, US-106.
+**Priority:** P0 | **Workstream:** Forge / Approval / Operations | **Dependencies:** US-116, US-109, US-106.
 
 **Description:** Add risk-based promotion, canary observation, traceable human approval for wider authority, and atomic rollback/revocation for Forge packages.
 

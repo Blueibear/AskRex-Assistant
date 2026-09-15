@@ -68,7 +68,11 @@ ProviderRoutingInvoker
 
 Provider routing is deterministic configuration, never a model decision. A worker cannot select another provider, grant itself tools, alter its permitted phases, or change fallback policy.
 
-The existing scratch/lease machinery remains in force even for an API-only read operation. The API worker never receives paths outside the bounded evidence assembled by Ralph and never writes into its scratch clone.## Provider capability matrix
+The worker-specific policy in this design belongs to Ralph, but the underlying build primitives should remain reusable: isolated workspace handling, invocation identity, bounded evidence, deterministic validation, provenance, approval, and replay must not be coupled so tightly to AskRex core maintenance that Rex later needs a separate implementation for Skill Builder, Plugin Builder, MCP Adapter Builder, or Automation Builder flows. Reuse does not transfer Ralph core-repository mutation authority to ordinary product execution.
+
+The existing scratch/lease machinery remains in force even for an API-only read operation. The API worker never receives paths outside the bounded evidence assembled by Ralph and never writes into its scratch clone.
+
+## Provider capability matrix
 
 | Phase | Claude Code | Codex | OpenAI API v1 |
 |---|---:|---:|---:|
