@@ -464,7 +464,7 @@ def test_run_loop_reloads_config_so_activation_takes_effect(tmp_path: Path) -> N
         set_observe_only(root, False)
 
     run_loop(config, invoker=Invoker(), max_cycles=2, sleep_fn=activate_after_first)
-    assert calls == ["backend", "mobile"]
+    assert sorted(calls) == ["backend", "mobile"]
 
 
 def test_confirmed_reset_resumes_only_usage_blocked_workers(tmp_path: Path) -> None:

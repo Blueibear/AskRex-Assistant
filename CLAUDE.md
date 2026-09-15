@@ -701,6 +701,7 @@ Add a short rule here that would have prevented the mistake.
 
 ### Learned rules
 
+- Codex review and lead sandboxes remain read-only. Deterministic supervisor validation owns execution of configured test/build/diff gates before review; reviewer prompts must inspect the supplied gate evidence and must not rerun pytest, builds, formatters, cache-generating commands, or other validation that requires repository or temporary writes.
 - When lazy-importing a module that triggers side-effect imports (e.g. TTS importing from transformers), use `find_spec()` to check availability and apply any compatibility shims BEFORE calling `import_module()`. Never use `_import_optional()` for the availability check if it triggers the full import chain.
 - The root-level `voice_loop.py` and `rex/voice_loop.py` are two separate implementations. `rex/voice_loop.py` is the **canonical** implementation: `rex_loop.py` imports `build_voice_loop` from `rex.voice_loop` (the package). Root `voice_loop.py` is a legacy file kept only for `AsyncRexAssistant` backward-compat re-exports. Changes to root `voice_loop.py` do NOT affect the CLI voice loop startup path.
 - `AppConfig.whisper_device` defaults to `"auto"`. When device is `"auto"`, resolve to `"cuda"` or `"cpu"` at model load time using `torch.cuda.is_available()`.

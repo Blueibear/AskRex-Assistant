@@ -12,11 +12,12 @@ from scripts.dev_orchestrator.routing import (
     select_reviewer_model,
 )
 from scripts.dev_orchestrator.runner import (
+    _review_prompt,
     build_claude_command,
     build_codex_command,
     classify_cli_failure,
 )
-from scripts.dev_orchestrator.types import WorkerState
+from scripts.dev_orchestrator.types import TaskItem, WorkerState
 
 
 def _safe_config(tmp_path: Path):
@@ -60,6 +61,19 @@ def test_codex_commands_override_global_astra_default(tmp_path: Path) -> None:
     assert "read-only" in review
     assert "read-only" in lead
     assert not any("dangerously-bypass" in part for part in review + lead)
+
+
+def test_review_prompt_keeps_validation_execution_outside_read_only_reviewer(
+    tmp_path: Path,
+) -> None:
+    task = TaskItem("S35-TEST", "Validate the current checkpoint.")
+
+    prompt = _review_prompt("backend", task, tmp_path, "bounded context", "inv-123")
+
+    assert "deterministic supervisor validation" in prompt.lower()
+    assert "do not rerun" in prompt.lower()
+    assert "pytest" in prompt.lower()
+    assert "read-only" in prompt.lower()
 
 
 def test_claude_command_uses_structured_output_and_safe_permissions(tmp_path: Path) -> None:

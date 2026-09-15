@@ -465,7 +465,11 @@ def _review_prompt(
     return (
         f"Independently review AskRex {role} task {task.task_id}: {task.prompt}. "
         "Inspect the current diff, relevant tests, security/ownership constraints, and claimed validation. "
-        "Do not modify files. Return pass only when the task is actually ready; otherwise return changes_required, "
+        "Deterministic supervisor validation runs configured test/build/diff gates before review; treat the supplied "
+        "gate evidence as execution evidence. This review sandbox is intentionally read-only: do not rerun pytest, "
+        "build, formatter, cache-generating, or other commands that require writing repository or temporary files. "
+        "Use read-only inspection commands only. Do not modify files. Return pass only when the task is actually ready; "
+        "otherwise return changes_required, "
         "blocked_user, blocked_system, or failed using the required structured result. On a passing owned TEST issue, "
         "include an issue_updates request for fixed-needs-retest; never request verified. "
         f"Return task_id={task.task_id!r}, role={role!r}, and invocation_id={invocation_id!r} exactly.\n\n"
