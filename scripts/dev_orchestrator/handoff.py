@@ -390,6 +390,9 @@ def advance_handoff(
             verify_invocation_commits(checkout.root, pre_head, post_head, invocation_id)
     elif provider == "claude":
         verify_invocation_commits(checkout.root, pre_head, post_head, invocation_id)
+    elif provider == "openai":
+        if post_head != pre_head:
+            raise HandoffRequired("read-only OpenAI invocation changed repository HEAD")
     else:
         raise HandoffRequired(f"unsupported invocation provider: {provider}")
     record["head"] = post_head

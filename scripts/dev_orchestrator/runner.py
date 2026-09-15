@@ -8,7 +8,6 @@ import stat
 import subprocess
 import tempfile
 import threading
-import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
@@ -16,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from . import scratch as _scratch
 from .coordination import validate_agent_updates
 from .handoff import (
     HandoffRequired,
@@ -28,6 +28,11 @@ from .lifecycle import ControlPlaneLock
 from .paths import validate_runtime_paths
 from .schema import validate_agent_result
 from .types import AgentResult
+
+_clone_scratch_repo = _scratch._clone_scratch_repo
+_remove_scratch_tree = _scratch._remove_scratch_tree
+_temporary_scratch_root = _scratch._temporary_scratch_root
+time = _scratch.time
 
 _SCHEMA_PATH = Path(__file__).with_name("agent-result.schema.json")
 _CODEX_SCHEMA_PATH = Path(__file__).with_name("agent-result.codex.schema.json")
@@ -42,32 +47,6 @@ class ProcessResult:
     returncode: int
     stdout: str
     stderr: str
-
-
-def _remove_scratch_tree(path: Path, *, attempts: int = 60, delay_seconds: float = 0.25) -> None:
-    for attempt in range(attempts):
-        try:
-            tempfile.TemporaryDirectory._rmtree(str(path), ignore_errors=False)
-            return
-        except FileNotFoundError:
-            return
-        except PermissionError as exc:
-            if getattr(exc, "winerror", None) != 32:
-                raise
-            if attempt + 1 >= attempts:
-                return
-            time.sleep(delay_seconds)
-
-
-@contextmanager
-def _temporary_scratch_root(prefix: str):
-    root = Path(tempfile.mkdtemp(prefix=prefix))
-    cleanup = {"remove": True}
-    try:
-        yield root, cleanup
-    finally:
-        if cleanup["remove"]:
-            _remove_scratch_tree(root)
 
 
 def _schema_json() -> str:
@@ -495,28 +474,6 @@ def _lead_prompt(role: str, coordination_root: Path, context: str, invocation_id
 
 def _git_run(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, cwd=repo, capture_output=True, text=True, check=False)
-
-
-def _clone_scratch_repo(repo: Path, pre_head: str, scratch: Path) -> None:
-    cloned = subprocess.run(
-        ["git", "clone", "--quiet", "--no-hardlinks", "--no-checkout", str(repo), str(scratch)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if cloned.returncode != 0:
-        raise HandoffRequired(f"cannot create Claude scratch clone: {cloned.stderr.strip()}")
-    checked = subprocess.run(
-        ["git", "checkout", "--quiet", "--detach", pre_head],
-        cwd=scratch,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if checked.returncode != 0:
-        raise HandoffRequired(
-            f"cannot checkout leased HEAD in scratch clone: {checked.stderr.strip()}"
-        )
 
 
 def _write_scratch_owner(scratch: Path, *, role: str, invocation_id: str, pre_head: str) -> str:

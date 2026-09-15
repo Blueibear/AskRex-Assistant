@@ -423,3 +423,63 @@ def test_advance_handoff_persists_pending_result_with_lease(tmp_path: Path) -> N
 
     clear_pending_result(config, "backend", invocation_id="inv-pending-1")
     assert read_pending_result(config, "backend") is None
+
+
+def _accept_test_lease(config: OrchestratorConfig, role: str) -> None:
+    request = request_handoff(config, role, worker_session=f"{role}-openai-test")
+    nonce = json.loads(request.read_text(encoding="utf-8"))["nonce"]
+    worker_ack_handoff(
+        config,
+        role,
+        nonce=nonce,
+        source="test",
+        worker_session=f"{role}-openai-test",
+    )
+    accept_handoff(config, role, nonce=nonce, source="test")
+
+
+def test_openai_handoff_accepts_read_only_pending_result(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    repo = config.backend_root
+    assert repo is not None
+    _accept_test_lease(config, "backend")
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    pending = {
+        "invocation_id": "openai-1",
+        "role": "backend",
+        "phase": "review",
+        "task_id": "B-1",
+        "result": {"outcome": "pass"},
+    }
+    advance_handoff(
+        config,
+        "backend",
+        pre_head=head,
+        post_head=head,
+        invocation_id="openai-1",
+        provider="openai",
+        pending_result=pending,
+    )
+    assert read_pending_result(config, "backend") == pending
+
+
+def test_openai_handoff_rejects_repository_delta(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    repo = config.backend_root
+    assert repo is not None
+    _accept_test_lease(config, "backend")
+    pre = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    (repo / "smuggled.txt").write_text("delta\n", encoding="utf-8")
+    subprocess.run(["git", "add", "smuggled.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "smuggled delta"], cwd=repo, check=True)
+    post = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+
+    with pytest.raises(HandoffRequired, match="read-only OpenAI"):
+        advance_handoff(
+            config,
+            "backend",
+            pre_head=pre,
+            post_head=post,
+            invocation_id="openai-2",
+            provider="openai",
+        )
