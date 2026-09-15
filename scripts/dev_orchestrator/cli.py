@@ -14,6 +14,7 @@ from .handoff import (
     worker_ack_handoff,
 )
 from .lifecycle import ControlPlaneLock, HeartbeatPump, SupervisorLock, read_heartbeat
+from .openai_budget import OpenAIBudgetLedger
 from .paths import validate_runtime_paths
 from .routing import validate_openai_policy
 from .runner import CliAgentInvoker
@@ -34,6 +35,7 @@ _RUNTIME_DIRS = (
     "handoff",
     "active-agents",
     "completion",
+    "usage",
 )
 
 
@@ -298,10 +300,15 @@ def render_status(config: OrchestratorConfig) -> str:
             "task_id": task.get("task_id", ""),
             "blocked_reason": payload.get("blocked_reason", ""),
         }
+    openai_budget = OpenAIBudgetLedger(
+        config.coordination_root,
+        monthly_cap_usd=config.openai_monthly_budget_usd,
+    ).status()
     data = {
         "observe_only": config.observe_only,
         "banked_resets_remaining": config.banked_resets_remaining,
         "reserve_last_reset": config.reserve_last_reset,
+        "openai_api_budget": {key: str(value) for key, value in openai_budget.items()},
         "workers": workers,
     }
     return json.dumps(data, indent=2, sort_keys=True)

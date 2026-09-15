@@ -220,6 +220,41 @@ def test_confirm_openai_project_limit_records_prerequisite_without_enabling_work
         )
 
 
+def test_status_exposes_privacy_safe_openai_budget_summary(tmp_path: Path) -> None:
+    import json
+
+    from scripts.dev_orchestrator.openai_budget import OpenAIBudgetLedger
+
+    root = tmp_path / "coordination"
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "rex-ai-pc-test"
+    for candidate in (root, backend, mobile, frozen):
+        candidate.mkdir()
+    config = initialize_runtime(root, backend, mobile, frozen)
+    reservation = OpenAIBudgetLedger(
+        root, monthly_cap_usd=config.openai_monthly_budget_usd
+    ).reserve(
+        model="gpt-5.6-terra",
+        input_token_ceiling=1_000,
+        output_token_ceiling=100,
+    )
+
+    status = json.loads(render_status(config))
+    budget = status["openai_api_budget"]
+    assert budget["cap_usd"] == "30.00"
+    assert budget["spent_or_reserved_usd"] == str(reservation.reserved_usd)
+    assert budget["remaining_usd"] == str(
+        config.openai_monthly_budget_usd - reservation.reserved_usd
+    )
+    assert set(budget) == {
+        "month",
+        "cap_usd",
+        "spent_or_reserved_usd",
+        "remaining_usd",
+    }
+
+
 def test_config_round_trips_iteration_validation_metadata(tmp_path: Path) -> None:
     from dataclasses import replace
 
