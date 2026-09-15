@@ -133,18 +133,25 @@ The API worker is disabled by default in generic configuration. Enabling it is a
 
 ## Cost controls
 
-API billing is independent of ChatGPT/Codex usage. Ralph therefore requires explicit cost bounds:
+API billing is independent of ChatGPT/Codex usage. The operator-set hard monthly Ralph API budget is **$30.00 USD per UTC calendar month**.
 
-- maximum serialized evidence size;
-- maximum response tokens;
-- approved model allowlist;
-- per-phase reasoning effort;
-- maximum API invocations per role cycle;
-- no automatic retries that can create an unbounded billing loop.
+Cost enforcement is defense-in-depth:
 
-A transient request may receive one bounded transport retry only when the failure is known to have occurred before a usable model response. Server errors after uncertain processing are not blindly retried.
+- Ralph keeps a durable local monthly spend ledger, separate from worker/model state;
+- before any API call, Ralph reserves the request's worst-case allowed cost from the remaining monthly budget;
+- the reservation uses trusted model pricing metadata plus bounded input/output ceilings, never model-supplied estimates;
+- if the reservation would exceed the remaining monthly budget, Ralph makes no request and parks the phase with a budget blocker;
+- after a successful response, Ralph reconciles the reservation against provider-reported token usage and records the actual charge estimate;
+- unknown/malformed usage or unknown pricing fails closed for additional paid calls until reconciled;
+- a dedicated OpenAI project for Ralph must also have an enforced **$30/month project spend limit** as the provider-side backstop before live API routing is enabled.
 
-No worker may alter these cost limits. Changing model allowlists, enabling the API worker, or materially increasing budgets is an operator-controlled configuration change.## Routing and fallback policy
+Ralph also requires maximum serialized evidence size, maximum response tokens, an approved model allowlist, bounded reasoning effort, maximum API invocations per role cycle, and no retry policy that can create an unbounded billing loop.
+
+A transient request may receive one bounded transport retry only when failure is known to have occurred before a usable model response. Server errors after uncertain processing are not blindly retried.
+
+No worker may alter these cost limits. Increasing the $30 monthly cap, model allowlists, token ceilings, or enabling the API worker is an operator-controlled configuration change.
+
+## Routing and fallback policy
 
 Implementation routing remains unchanged in v1:
 
@@ -155,15 +162,25 @@ Claude Code -> Codex implementation fallback -> usage-limit blocker
 Reasoning routing becomes independently configurable:
 
 ```text
-Review: OpenAI API Terra -> Codex Terra/Sol fallback
+Routine review: OpenAI API Terra -> Codex Terra/Sol fallback
 Escalated review: OpenAI API Sol -> Codex Sol fallback
-Planning/adjudication: OpenAI API Astra -> existing Codex/Astra path fallback
+Routine planning: OpenAI API Sol -> existing lower-cost fallback
+Adjudication: deterministic gates -> Sol adjudication -> Astra only if still unresolved
 Final release review: existing Codex Sol only
 ```
 
-API-backed lead/adjudication uses the actual `gpt-6-astra` model when enabled. Provider and model provenance are recorded truthfully; no alias or substitute may be labeled Astra.
+Astra is an emergency adjudicator, not a routine worker. It is eligible only when all of the following are true:
 
-Routing decisions are based on trusted phase, configured policy, failure category, and existing failure counters. Model output cannot influence its own fallback or escalation.
+1. the phase is adjudication, never routine review, planning, implementation, or final verification;
+2. deterministic supervisor evidence cannot resolve the decision;
+3. lower-cost Sol adjudication has already failed, returned an explicitly unresolved result, or is unavailable;
+4. the task has reached the configured adjudication threshold or involves a security/architecture conflict that cannot safely proceed without higher-level resolution;
+5. no Astra call has already been made for the same escalation episode; and
+6. the monthly budget gate can reserve the worst-case allowed Astra request.
+
+If any condition is false, Ralph must not call Astra. Provider and model provenance are recorded truthfully; no alias or substitute may be labeled Astra.
+
+Routing decisions are based on trusted phase, configured policy, failure category, budget state, and existing failure counters. Model output cannot widen its own eligibility, budget, fallback, or escalation authority.
 
 A provider failure must preserve the interrupted Ralph phase exactly, just as the current usage-limit path does.
 
@@ -241,7 +258,13 @@ All development follows TDD. Required deterministic coverage includes:
 14. OpenAI review cannot mutate live or scratch repository state;
 15. Codex-implemented checkpoints still force the existing independent Sol review rule;
 16. final release verification stays on the existing final-review path;
-17. normal tests use fake transport only and make zero external network calls.The existing focused orchestrator suite remains mandatory. Ruff, Black, compile/static checks, security audit, `git diff --check`, and the existing frozen-worktree safety assertions must remain green.
+17. normal tests use fake transport only and make zero external network calls;
+18. monthly budget reservation refuses a call whose worst-case cost exceeds the remaining $30 cap;
+19. spend reconciliation uses provider-reported usage and unknown pricing/usage fails closed;
+20. Astra is rejected for routine review/planning and cannot exceed one call per escalation episode;
+21. an exhausted monthly budget preserves the interrupted phase without falling into the Codex reset workflow.
+
+The existing focused orchestrator suite remains mandatory. Ruff, Black, compile/static checks, security audit, `git diff --check`, and the existing frozen-worktree safety assertions must remain green.
 
 A live API smoke test is optional and operator-triggered only. It is never required in ordinary CI and must use a non-sensitive synthetic prompt, a strict spending ceiling, and truthful labeling as live-provider evidence.
 
@@ -252,11 +275,15 @@ Routing/security settings must be typed rather than hidden inside arbitrary meta
 - `openai_worker_enabled: bool = false`
 - `openai_review_model: str = "gpt-5.6-terra"`
 - `openai_escalation_model: str = "gpt-5.6-sol"`
-- `openai_lead_model: str = "gpt-6-astra"`
+- `openai_planning_model: str = "gpt-5.6-sol"`
+- `openai_astra_model: str = "gpt-6-astra"`
+- `openai_astra_enabled: bool = true`
+- `openai_monthly_budget_usd: Decimal = Decimal("30.00")`
 - `openai_timeout_seconds: int`
 - `openai_max_input_chars: int`
 - `openai_max_output_tokens: int`
 - `openai_max_calls_per_cycle: int`
+- `openai_max_astra_calls_per_escalation: int = 1`
 
 Model values are validated against a local allowlist. The API endpoint is not configurable in v1. The credential itself is never represented by these fields.
 
