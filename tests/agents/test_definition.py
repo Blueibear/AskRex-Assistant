@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from math import nan
 
 import pytest
 
@@ -66,6 +67,11 @@ def test_raw_credential_fields_are_rejected(field: str) -> None:
 
     with pytest.raises(AgentDefinitionValidationError, match="secret"):
         AgentDefinition.from_dict(payload)
+
+
+def test_non_finite_json_values_are_rejected() -> None:
+    with pytest.raises(AgentDefinitionValidationError, match="JSON-compatible"):
+        _definition(resource_policy={"max_cost": nan})
 
 
 def test_same_name_agents_have_distinct_stable_ids() -> None:

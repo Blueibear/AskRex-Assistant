@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -46,6 +47,8 @@ def _json_value(value: Any, path: str = "") -> Any:
         return normalized
     if isinstance(value, (list, tuple)):
         return [_json_value(item, path) for item in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        raise AgentDefinitionValidationError("agent policy values must be JSON-compatible")
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     raise AgentDefinitionValidationError("agent policy values must be JSON-compatible")
