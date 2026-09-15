@@ -110,6 +110,7 @@ Each request includes:
 - `store: false`;
 - no built-in tools, web search, file search, MCP, computer use, or function tools;
 - a strict JSON-schema response format derived from the canonical Ralph result schema;
+- the provider schema is a mechanical strict-compatible projection: unsupported conditional/composition keywords are removed and every object property is marked required, while the full canonical schema remains authoritative after parsing;
 - an explicit output-token ceiling and reasoning-effort policy;
 - Ralph's invocation ID as a client request correlation identifier when supported.
 

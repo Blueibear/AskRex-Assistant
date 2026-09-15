@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Mapping
 from pathlib import Path
@@ -27,6 +28,34 @@ _SCHEMA = json.loads(
     Path(__file__).with_name("agent-result.schema.json").read_text(encoding="utf-8")
 )
 _SCHEMA_VALIDATOR = Draft202012Validator(_SCHEMA)
+
+
+_OPENAI_UNSUPPORTED_SCHEMA_KEYWORDS = frozenset(
+    {"$schema", "allOf", "not", "dependentRequired", "dependentSchemas", "if", "then", "else"}
+)
+
+
+def _openai_strict_schema_projection(node: Any) -> Any:
+    if isinstance(node, dict):
+        projected = {
+            key: _openai_strict_schema_projection(value)
+            for key, value in node.items()
+            if key not in _OPENAI_UNSUPPORTED_SCHEMA_KEYWORDS
+        }
+        properties = projected.get("properties")
+        if projected.get("type") == "object" and isinstance(properties, dict):
+            projected["required"] = list(properties)
+        return projected
+    if isinstance(node, list):
+        return [_openai_strict_schema_projection(value) for value in node]
+    return node
+
+
+def agent_result_schema_payload(*, openai_strict: bool = False) -> dict[str, Any]:
+    schema = copy.deepcopy(_SCHEMA)
+    if not openai_strict:
+        return schema
+    return _openai_strict_schema_projection(schema)
 
 
 def _messages(data: Any) -> tuple[CoordinationMessage, ...]:

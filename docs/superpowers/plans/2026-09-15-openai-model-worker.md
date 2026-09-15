@@ -170,7 +170,7 @@ Commit: `git add scripts/dev_orchestrator/openai_budget.py scripts/dev_orchestra
 
 - [ ] **Step 1: Write RED request-contract tests around an injected HTTP opener**
 
-Assert the exact destination is `https://api.openai.com/v1/responses`; `store` is `false`; `tools` is absent or `[]`; `truncation` is `disabled`; model/output/reasoning ceilings are explicit; structured output uses the canonical agent-result JSON schema; and the `Authorization` plus `OpenAI-Project` headers are injected only at send time.
+Assert the exact destination is `https://api.openai.com/v1/responses`; `store` is `false`; `tools` is absent or `[]`; `truncation` is `disabled`; model/output/reasoning ceilings are explicit; structured output uses a strict-compatible projection mechanically derived from the canonical agent-result JSON schema (no duplicated schema authority); and the `Authorization` plus `OpenAI-Project` headers are injected only at send time.
 
 ```python
 assert request.full_url == "https://api.openai.com/v1/responses"
@@ -195,7 +195,7 @@ Expected: FAIL because the transport does not exist.
 
 Default credential resolution is `CredentialManager().get_token("openai")`. Tests inject a resolver and opener. Do not silently enable plaintext credential fallback. `prepare()` must not resolve credentials; `send()` injects them only after the caller has reserved budget.
 
-Build the request using the current Responses contract:
+Build the request using the current Responses contract. The OpenAI strict-schema projection must remove unsupported composition/conditional keywords and mark all object properties required; the returned object is still validated afterward by the full canonical schema:
 
 ```python
 body = {
