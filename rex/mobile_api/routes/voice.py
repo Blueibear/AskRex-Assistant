@@ -120,8 +120,7 @@ def _add_optional_tts(services: MobileApiServices, body: dict[str, Any]) -> None
     try:
         voice_id = services.tts.resolve_voice(None)
         audio_bytes = services.tts.synthesize(response_text, voice_id)
-        body["tts_base64"] = base64.b64encode(audio_bytes).decode("ascii")
-        body["tts_mime_type"] = services.tts.mime_type()
+        body["ttsBase64"] = base64.b64encode(audio_bytes).decode("ascii")
     except MobileApiError:
         logger.info("Voice reply TTS unavailable; returning text only")
 
@@ -178,7 +177,7 @@ def _handle_voice_upload(services: MobileApiServices) -> Any:
         "transcript": transcript,
         "response": response_text,
         "status": STATUS_COMPLETED,
-        "tool_used": None,
+        "toolUsed": None,
     }
     _add_optional_tts(services, body)
     return jsonify(body), 200
@@ -218,8 +217,10 @@ def _handle_tts_playback(services: MobileApiServices) -> Any:
         jsonify(
             {
                 "request_id": getattr(g, "request_id", None),
-                "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
-                "mime_type": services.tts.mime_type(),
+                "audio_url": (
+                    f"data:{services.tts.mime_type()};base64,"
+                    f"{base64.b64encode(audio_bytes).decode('ascii')}"
+                ),
                 "voice": voice_id,
                 "requested_voice": voice.strip() if voice and voice.strip() else "default",
             }

@@ -1,5 +1,5 @@
 {
-  "contract_version": "2026-09-16.323.5",
+  "contract_version": "2026-09-16.s35.1",
   "api_version": "1.0",
   "statuses": {
     "normal_chat": "completed",
@@ -120,9 +120,8 @@
       "transcript": "Turn off the downstairs lights",
       "response": "The downstairs lights are off.",
       "status": "completed",
-      "tool_used": null,
-      "tts_base64": "UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAACAgICA",
-      "tts_mime_type": "audio/wav"
+      "toolUsed": null,
+      "ttsBase64": "UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAACAgICA"
     },
     "tts_request": {
       "text": "The downstairs lights are off.",
@@ -130,8 +129,7 @@
     },
     "tts_response": {
       "request_id": "9a2b1c3d-4444-4444-8444-444444444444",
-      "audio_base64": "UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAACAgICA",
-      "mime_type": "audio/wav",
+      "audio_url": "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAACAgICA",
       "voice": "en-US-AriaNeural",
       "requested_voice": "default"
     },

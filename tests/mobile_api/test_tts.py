@@ -25,7 +25,7 @@ class TestTtsPlayback:
         assert fake_tts.synthesized == []
 
     def test_valid_text_returns_base64_json(self, client, fake_tts) -> None:
-        """TTS-002/TTS-010: JSON base64 with MIME type and request ID."""
+        """TTS-002/TTS-010: JSON data URI with MIME type and request ID."""
         headers = _authed(client)
         response = client.post(
             "/mobile/tts/playback", json={"text": "The lights are off."}, headers=headers
@@ -34,13 +34,13 @@ class TestTtsPlayback:
         body = response.get_json()
         assert set(body.keys()) == {
             "request_id",
-            "audio_base64",
-            "mime_type",
+            "audio_url",
             "voice",
             "requested_voice",
         }
-        assert base64.b64decode(body["audio_base64"]) == fake_tts.audio
-        assert body["mime_type"] == "audio/wav"
+        assert body["audio_url"] == (
+            "data:audio/wav;base64," + base64.b64encode(fake_tts.audio).decode("ascii")
+        )
         assert body["voice"] == "fake-default-voice"
         assert body["requested_voice"] == "default"
         assert body["request_id"]

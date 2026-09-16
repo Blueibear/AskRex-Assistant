@@ -72,10 +72,10 @@ class TestVoiceUpload:
         assert body["transcript"] == fake_stt.transcript
         assert body["response"] == f"echo[{user_id}]: {fake_stt.transcript}"
         assert body["status"] == "completed"
-        assert body["tool_used"] is None
+        assert body["toolUsed"] is None
         assert body["request_id"]
-        assert base64.b64decode(body["tts_base64"]) == fake_tts.audio
-        assert body["tts_mime_type"] == "audio/wav"
+        assert base64.b64decode(body["ttsBase64"]) == fake_tts.audio
+        assert "tts_mime_type" not in body
         assert fake_chat_service.calls == [(fake_stt.transcript, user_id)]
 
     def test_missing_audio_part(self, client) -> None:

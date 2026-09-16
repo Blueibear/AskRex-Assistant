@@ -29,6 +29,7 @@ from tests.mobile_api.conftest import (
 
 VECTORS_PATH = Path(__file__).parent / "contract_vectors.json"
 _SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
+_CAMEL_CASE = re.compile(r"^[a-z][a-zA-Z0-9]*$")
 
 
 @pytest.fixture(scope="module")
@@ -47,10 +48,17 @@ def _assert_snake_case_keys(value, path: str = "$") -> None:
 
 
 class TestVectorHygiene:
-    def test_every_wire_key_is_snake_case(self, vectors) -> None:
-        """camelCase drift anywhere in the contract fails here."""
-        _assert_snake_case_keys(vectors["http"])
+    def test_wire_keys_are_snake_case_except_documented_voice_upload_fields(self, vectors) -> None:
+        """S35 preserves only the documented camelCase upload response fields."""
+        http = dict(vectors["http"])
+        voice_response = dict(http.pop("voice_response"))
+        _assert_snake_case_keys(http)
         _assert_snake_case_keys(vectors["websocket"])
+        assert set(voice_response) == {
+            "request_id", "transcript", "response", "status", "toolUsed", "ttsBase64"
+        }
+        assert _CAMEL_CASE.fullmatch("toolUsed")
+        assert _CAMEL_CASE.fullmatch("ttsBase64")
 
     def test_auth_frame_type_is_auth_not_authenticate(self, vectors) -> None:
         assert vectors["websocket"]["auth_frame"]["type"] == "auth"
@@ -83,8 +91,7 @@ class TestVectorHygiene:
         """The fixture audio fields must be real decodable audio, not the
         literal placeholder text ``"<base64-audio>"``."""
         for pointer, field in (
-            (vectors["http"]["voice_response"], "tts_base64"),
-            (vectors["http"]["tts_response"], "audio_base64"),
+            (vectors["http"]["voice_response"], "ttsBase64"),
         ):
             raw_value = pointer[field]
             assert raw_value != "<base64-audio>"
@@ -97,9 +104,14 @@ class TestVectorHygiene:
                 assert wav_file.getframerate() > 0
                 assert wav_file.readframes(wav_file.getnframes())
 
-    def test_fixture_wav_mime_matches_embedded_audio(self, vectors) -> None:
-        assert vectors["http"]["voice_response"]["tts_mime_type"] == "audio/wav"
-        assert vectors["http"]["tts_response"]["mime_type"] == "audio/wav"
+    def test_playback_audio_url_embeds_the_wav_mime_and_bytes(self, vectors) -> None:
+        url = vectors["http"]["tts_response"]["audio_url"]
+        assert url.startswith("data:audio/wav;base64,")
+        raw = base64.b64decode(url.split(",", 1)[1], validate=True)
+        assert raw[:4] == b"RIFF"
+        with wave.open(io.BytesIO(raw), "rb") as wav_file:
+            assert wav_file.getnframes() > 0
+            assert wav_file.readframes(wav_file.getnframes())
 
 
 class TestEventBuilderConformance:
