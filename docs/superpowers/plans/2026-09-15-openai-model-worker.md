@@ -416,7 +416,7 @@ Commit: `git add scripts/dev_orchestrator/provider_routing.py scripts/dev_orches
 - Test: `tests/scripts/test_dev_orchestrator_usage.py`
 - Test: `tests/scripts/test_dev_orchestrator_provider_routing.py`
 
-- [ ] **Step 1: Write RED tests for API failure categories**
+- [x] **Step 1: Write RED tests for API failure categories**
 
 Cover `auth`, `rate_limit`, `billing`, `budget`, `timeout`, `transient`, `invalid_output`, and `failed`. Assert none can decrement, offer, reserve, or mention ChatGPT/Codex banked resets merely because the provider is OpenAI API.
 
@@ -426,19 +426,19 @@ assert config.banked_resets_remaining == original_resets
 assert not any("banked reset" in p.read_text().lower() for p in alerts)
 ```
 
-- [ ] **Step 2: Guard the legacy usage-limit path by provider**
+- [x] **Step 2: Guard the legacy usage-limit path by provider**
 
 `handle_usage_limit()` remains exclusively for Claude/Codex CLI allowance state. If an `AgentInvocationError(provider="openai", kind="usage_limit", ...)` somehow reaches the supervisor, treat it as an invalid provider classification and fail closed rather than entering reset handling.
 
-- [ ] **Step 3: Preserve the exact interrupted phase for API blockers**
+- [x] **Step 3: Preserve the exact interrupted phase for API blockers**
 
 Map `review -> REVIEWING`, `lead/plan -> PLANNING`, and adjudication back to the state from which adjudication was entered. Budget/billing/auth conditions requiring operator action become `BLOCKED_USER`; transient/invalid-output/system failures become `BLOCKED_SYSTEM` with a resume phase and no hidden state advance.
 
-- [ ] **Step 4: Prove Codex fallback usage limits still use the existing reset flow**
+- [x] **Step 4: Prove Codex fallback usage limits still use the existing reset flow**
 
 If API review fails and the configured Codex fallback then returns a real Codex `usage_limit`, the final error provider is `codex`; the existing banked-reset workflow remains valid. This keeps API billing separate without disabling legitimate Codex reset handling.
 
-- [ ] **Step 5: Run focused tests and commit**
+- [x] **Step 5: Run focused tests and commit**
 
 Run: `py -3.11 -m pytest -q tests/scripts/test_dev_orchestrator_supervisor.py tests/scripts/test_dev_orchestrator_usage.py tests/scripts/test_dev_orchestrator_provider_routing.py`
 Expected: PASS.

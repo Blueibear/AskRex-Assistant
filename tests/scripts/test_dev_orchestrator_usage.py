@@ -89,3 +89,12 @@ def test_claude_usage_limit_requests_user_without_spending_codex_reset(tmp_path:
     assert decision.action == "wait_for_claude"
     assert decision.blocked_user is True
     assert decision.budget.banked_resets_remaining == 3
+
+
+def test_usage_limit_provider_scope_is_cli_only() -> None:
+    from scripts.dev_orchestrator.usage import is_cli_usage_provider
+
+    assert is_cli_usage_provider("claude") is True
+    assert is_cli_usage_provider("codex") is True
+    assert is_cli_usage_provider("openai") is False
+    assert is_cli_usage_provider("other") is False

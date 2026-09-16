@@ -2,6 +2,12 @@ from dataclasses import dataclass, replace
 
 from .alerts import AlertSink
 
+CLI_USAGE_PROVIDERS = frozenset({"claude", "codex"})
+
+
+def is_cli_usage_provider(provider: str) -> bool:
+    return provider in CLI_USAGE_PROVIDERS
+
 
 @dataclass(frozen=True)
 class UsageBudget:
@@ -32,6 +38,9 @@ def handle_usage_limit(
     reason: str,
     claude_available: bool,
 ) -> UsageDecision:
+    if not is_cli_usage_provider(provider):
+        raise ValueError(f"unsupported usage provider: {provider}")
+
     if provider == "codex" and claude_available:
         return UsageDecision("fallback_claude", False, budget)
 
@@ -42,9 +51,6 @@ def handle_usage_limit(
             message=f"{role} is blocked because Claude usage is unavailable: {reason}. Wait for Claude allowance to reset or intervene manually.",
         )
         return UsageDecision("wait_for_claude", True, budget)
-
-    if provider != "codex":
-        raise ValueError(f"unsupported usage provider: {provider}")
 
     if budget.banked_resets_remaining <= 0:
         sink.emit(

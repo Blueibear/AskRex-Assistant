@@ -28,7 +28,7 @@ from .runner import AgentInvocationError
 from .schema import validate_agent_result
 from .storage import AtomicJsonStore
 from .types import AgentResult, OrchestratorConfig, TaskItem, WorkerState, WorkerStatus
-from .usage import UsageBudget, handle_usage_limit
+from .usage import UsageBudget, handle_usage_limit, is_cli_usage_provider
 from .validation import run_iteration_validation
 
 
@@ -499,7 +499,7 @@ class Supervisor:
                 ),
             )
         except AgentInvocationError as exc:
-            self._handle_invocation_error(role, state, "lead", exc, context)
+            self._handle_invocation_error(role, state, "plan", exc, context)
             return
         if not self._accept_result(role, state, result, allow_issue_updates=False):
             return
@@ -675,7 +675,7 @@ class Supervisor:
                 invoke=lambda: self.invoker.lead(role, state, context, task=state.task),
             )
         except AgentInvocationError as exc:
-            self._handle_invocation_error(role, state, "lead", exc, context)
+            self._handle_invocation_error(role, state, "adjudicate", exc, context)
             return
         if not self._accept_result(role, state, result, allow_issue_updates=False):
             return
@@ -705,6 +705,20 @@ class Supervisor:
             return
         self._save_block_or_failure(state, result)
 
+    @staticmethod
+    def _resume_status_for_phase(state: WorkerState, phase: str) -> WorkerStatus:
+        if phase == "implement":
+            return WorkerStatus.IMPLEMENTING
+        if phase == "review":
+            return WorkerStatus.REVIEWING
+        if phase in {"lead", "plan"}:
+            return WorkerStatus.PLANNING
+        if phase == "adjudicate":
+            if state.status in {WorkerStatus.IMPLEMENTING, WorkerStatus.REVIEWING}:
+                return state.status
+            return state.resume_status or state.status
+        return state.status
+
     def _handle_invocation_error(
         self,
         role: str,
@@ -713,7 +727,81 @@ class Supervisor:
         exc: AgentInvocationError,
         context: str,
     ) -> None:
+        resume_status = self._resume_status_for_phase(state, phase)
+        if exc.provider == "openai":
+            if exc.kind == "usage_limit":
+                self.save_state(
+                    replace(
+                        state,
+                        status=WorkerStatus.BLOCKED_SYSTEM,
+                        blocked_reason=(
+                            "invalid OpenAI provider classification: usage_limit; " + exc.detail
+                        ),
+                        blocker_kind="system",
+                        resume_status=resume_status,
+                    )
+                )
+                return
+            if exc.kind in {"auth", "billing", "budget"}:
+                blocker_kind = "auth" if exc.kind == "auth" else "human"
+                self.alerts.emit(
+                    role=role,
+                    kind=f"openai_{exc.kind}",
+                    message=f"{role} needs OpenAI {exc.kind} intervention: {exc.detail}",
+                )
+                self.save_state(
+                    replace(
+                        state,
+                        status=WorkerStatus.BLOCKED_USER,
+                        blocked_reason=f"OpenAI {exc.kind}: {exc.detail}",
+                        blocker_kind=blocker_kind,
+                        resume_status=resume_status,
+                    )
+                )
+                return
+            if exc.kind in {
+                "rate_limit",
+                "timeout",
+                "transient",
+                "invalid_output",
+                "failed",
+            }:
+                self.save_state(
+                    replace(
+                        state,
+                        status=WorkerStatus.BLOCKED_SYSTEM,
+                        blocked_reason=f"OpenAI {exc.kind}: {exc.detail}",
+                        blocker_kind="system",
+                        resume_status=resume_status,
+                    )
+                )
+                return
+            self.save_state(
+                replace(
+                    state,
+                    status=WorkerStatus.BLOCKED_SYSTEM,
+                    blocked_reason=(
+                        f"unsupported OpenAI failure classification {exc.kind!r}: {exc.detail}"
+                    ),
+                    blocker_kind="system",
+                    resume_status=resume_status,
+                )
+            )
+            return
         if exc.kind == "usage_limit":
+            if not is_cli_usage_provider(exc.provider):
+                self.save_state(
+                    replace(
+                        state,
+                        status=WorkerStatus.BLOCKED_SYSTEM,
+                        blocked_reason=(
+                            f"invalid usage-limit provider {exc.provider!r}: {exc.detail}"
+                        ),
+                        blocker_kind="system",
+                        resume_status=resume_status,
+                    )
+                )
+                return
             budget = UsageBudget(
                 self.config.banked_resets_remaining,
                 self.config.reserve_last_reset,
@@ -735,11 +823,7 @@ class Supervisor:
                         f"{decision.budget.banked_resets_remaining} banked resets recorded. {exc.detail}"
                     ),
                     blocker_kind="usage_limit",
-                    resume_status={
-                        "implement": WorkerStatus.IMPLEMENTING,
-                        "review": WorkerStatus.REVIEWING,
-                        "lead": WorkerStatus.PLANNING,
-                    }.get(phase, state.status),
+                    resume_status=resume_status,
                 )
             )
             return
@@ -755,7 +839,7 @@ class Supervisor:
                     status=WorkerStatus.BLOCKED_USER,
                     blocked_reason=exc.detail,
                     blocker_kind="auth",
-                    resume_status=state.status,
+                    resume_status=resume_status,
                 )
             )
             return
@@ -784,7 +868,13 @@ class Supervisor:
                 self.save_state(failed)
             return
         self.save_state(
-            replace(state, status=WorkerStatus.BLOCKED_SYSTEM, blocked_reason=exc.detail)
+            replace(
+                state,
+                status=WorkerStatus.BLOCKED_SYSTEM,
+                blocked_reason=exc.detail,
+                blocker_kind="system",
+                resume_status=resume_status,
+            )
         )
 
     def _save_block_or_failure(self, state: WorkerState, result: AgentResult) -> None:

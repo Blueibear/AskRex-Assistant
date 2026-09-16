@@ -405,3 +405,22 @@ def test_duplicate_astra_reservation_for_episode_is_rejected_atomically(tmp_path
             purpose="astra_adjudication",
             episode_key=episode,
         )
+
+
+def test_api_review_failure_then_codex_usage_limit_preserves_codex_provider(tmp_path: Path) -> None:
+    openai = _FakeOpenAI(
+        review=[AgentInvocationError("openai", "transient", "temporary API failure")]
+    )
+    cli = _FakeCli(review=[AgentInvocationError("codex", "usage_limit", "weekly limit")])
+    router, _config, _cli, _openai, _budget = _router(
+        tmp_path,
+        cli=cli,
+        openai=openai,
+    )
+    task = TaskItem("B-1", "Review")
+
+    with pytest.raises(AgentInvocationError) as caught:
+        router.review("backend", WorkerState("backend"), task, "ctx", TERRA_MODEL)
+
+    assert caught.value.provider == "codex"
+    assert caught.value.kind == "usage_limit"

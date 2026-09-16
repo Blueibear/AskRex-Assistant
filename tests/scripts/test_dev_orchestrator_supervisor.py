@@ -981,3 +981,113 @@ def test_task_base_head_is_stable_until_task_completes(tmp_path: Path) -> None:
     completed = supervisor.load_state("backend")
     assert completed.status is WorkerStatus.IDLE
     assert completed.task_base_head == ""
+
+
+def test_openai_api_failure_categories_never_enter_banked_reset_flow(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.runner import AgentInvocationError
+
+    expected_user = {"auth", "billing", "budget"}
+    categories = (
+        "auth",
+        "rate_limit",
+        "billing",
+        "budget",
+        "timeout",
+        "transient",
+        "invalid_output",
+        "failed",
+    )
+    for kind in categories:
+        case_root = tmp_path / kind
+        case_root.mkdir()
+        config = make_config(case_root, observe_only=False)
+        supervisor = Supervisor(config, FakeInvoker())
+        original = WorkerState(
+            role="backend",
+            status=WorkerStatus.REVIEWING,
+            task=TaskItem("B-API", "Review API failure"),
+            review_failures=2,
+        )
+        supervisor._handle_invocation_error(
+            "backend",
+            original,
+            "review",
+            AgentInvocationError("openai", kind, f"openai {kind}"),
+            "ctx",
+        )
+        saved = supervisor.load_state("backend")
+        expected_status = (
+            WorkerStatus.BLOCKED_USER if kind in expected_user else WorkerStatus.BLOCKED_SYSTEM
+        )
+        assert saved.status is expected_status
+        assert saved.blocker_kind != "usage_limit"
+        assert saved.resume_status is WorkerStatus.REVIEWING
+        assert saved.review_failures == 2
+        assert config.banked_resets_remaining == 3
+        alerts = list((config.coordination_root / "alerts").glob("*.json"))
+        assert not any(
+            "banked reset" in path.read_text(encoding="utf-8").lower() for path in alerts
+        )
+
+
+def test_openai_usage_limit_classification_fails_closed_without_reset_flow(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.runner import AgentInvocationError
+
+    config = make_config(tmp_path, observe_only=False)
+    supervisor = Supervisor(config, FakeInvoker())
+    state = WorkerState(
+        role="backend",
+        status=WorkerStatus.REVIEWING,
+        task=TaskItem("B-API", "Review API failure"),
+    )
+
+    supervisor._handle_invocation_error(
+        "backend",
+        state,
+        "review",
+        AgentInvocationError("openai", "usage_limit", "invalid API classification"),
+        "ctx",
+    )
+
+    saved = supervisor.load_state("backend")
+    assert saved.status is WorkerStatus.BLOCKED_SYSTEM
+    assert saved.blocker_kind == "system"
+    assert saved.resume_status is WorkerStatus.REVIEWING
+    assert "invalid" in saved.blocked_reason.lower()
+    assert not list((config.coordination_root / "alerts").glob("*.json"))
+
+
+def test_openai_api_blockers_preserve_exact_resume_phase(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.runner import AgentInvocationError
+
+    cases = (
+        ("implement", WorkerStatus.IMPLEMENTING, WorkerStatus.IMPLEMENTING),
+        ("review", WorkerStatus.REVIEWING, WorkerStatus.REVIEWING),
+        ("plan", WorkerStatus.IDLE, WorkerStatus.PLANNING),
+        ("lead", WorkerStatus.IDLE, WorkerStatus.PLANNING),
+        ("adjudicate", WorkerStatus.IMPLEMENTING, WorkerStatus.IMPLEMENTING),
+        ("adjudicate", WorkerStatus.REVIEWING, WorkerStatus.REVIEWING),
+    )
+    for index, (phase, starting_status, expected_resume) in enumerate(cases):
+        case_root = tmp_path / f"case-{index}"
+        case_root.mkdir()
+        config = make_config(case_root, observe_only=False)
+        supervisor = Supervisor(config, FakeInvoker())
+        state = WorkerState(
+            role="backend",
+            status=starting_status,
+            task=TaskItem("B-PHASE", "Preserve phase"),
+        )
+
+        supervisor._handle_invocation_error(
+            "backend",
+            state,
+            phase,
+            AgentInvocationError("openai", "transient", "temporary API failure"),
+            "ctx",
+        )
+
+        saved = supervisor.load_state("backend")
+        assert saved.status is WorkerStatus.BLOCKED_SYSTEM
+        assert saved.resume_status is expected_resume
+        assert saved.task == state.task
