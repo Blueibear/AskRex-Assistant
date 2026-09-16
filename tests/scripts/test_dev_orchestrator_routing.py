@@ -7,11 +7,13 @@ import pytest
 
 from scripts.dev_orchestrator.routing import (
     ASTRA_MODEL,
+    SOL_MODEL,
     TERRA_MODEL,
     select_implementer_model,
     select_reviewer_model,
 )
 from scripts.dev_orchestrator.runner import (
+    _lead_prompt,
     _review_prompt,
     build_claude_command,
     build_codex_command,
@@ -224,7 +226,7 @@ def test_cli_invoker_runs_claude_in_correct_repo_with_coordination_access(tmp_pa
     assert "context" in command[-1]
 
 
-def test_cli_invoker_uses_codex_for_review_and_astra_for_lead(tmp_path: Path) -> None:
+def test_cli_invoker_uses_codex_for_review_and_sol_for_lead(tmp_path: Path) -> None:
     import json
 
     from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
@@ -256,7 +258,7 @@ def test_cli_invoker_uses_codex_for_review_and_astra_for_lead(tmp_path: Path) ->
     )
     assert invoker.lead("mobile", WorkerState("mobile"), "ctx").outcome == "done"
     assert calls[0][0][calls[0][0].index("-m") + 1] == TERRA_MODEL
-    assert calls[1][0][calls[1][0].index("-m") + 1] == ASTRA_MODEL
+    assert calls[1][0][calls[1][0].index("-m") + 1] == SOL_MODEL
     assert calls[0][1].resolve() != backend.resolve()
     assert calls[1][1].resolve() != mobile.resolve()
     assert str(backend.resolve()) not in calls[0][0]
@@ -1320,3 +1322,10 @@ def test_implementation_prompt_forbids_issue_updates_until_review() -> None:
         "backend", TaskItem("B-PROMPT", "Do work"), Path("C:/coord"), "ctx", "inv-1"
     )
     assert "issue_updates must be an empty array" in prompt
+
+
+def test_cli_lead_prompt_is_provider_neutral_not_astra(tmp_path: Path) -> None:
+    prompt = _lead_prompt("backend", tmp_path, "bounded context", "inv-lead")
+
+    assert "lead engineer" in prompt.lower()
+    assert "astra" not in prompt.lower()

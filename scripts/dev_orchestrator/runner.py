@@ -460,7 +460,7 @@ def _review_prompt(
 
 def _lead_prompt(role: str, coordination_root: Path, context: str, invocation_id: str) -> str:
     return (
-        f"Act as Astra, lead engineer for the AskRex {role} workstream. Select only the next highest-priority "
+        f"Act as the read-only lead engineer for the AskRex {role} workstream. Select only the next highest-priority "
         "actionable task that belongs to this role and does not require James. Return assign with a stable task_id "
         "and bounded task_prompt, done only when the bounded snapshot appears exhausted, or a truthful blocker. "
         "The deterministic supervisor independently verifies any done claim. Do not modify files. Return only the "
@@ -1044,7 +1044,7 @@ class CliAgentInvoker:
         )
 
     def lead(self, role, state, context, task=None) -> AgentResult:
-        from .routing import ASTRA_MODEL
+        from .routing import SOL_MODEL
 
         repo = self._repo(role)
         invocation_id = str(uuid.uuid4())
@@ -1052,7 +1052,7 @@ class CliAgentInvoker:
             "lead",
             repo,
             _lead_prompt(role, self.config.coordination_root, context, invocation_id),
-            ASTRA_MODEL,
+            SOL_MODEL,
         )
         return self._finish(
             "codex",

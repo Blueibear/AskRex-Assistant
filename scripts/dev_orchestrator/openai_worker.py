@@ -115,12 +115,16 @@ class OpenAIModelWorker:
         *,
         prepared,
         model: str,
+        budget_purpose: str = "",
+        episode_key: str = "",
     ):
         try:
             reservation = self.budget.reserve(
                 model=model,
                 input_token_ceiling=prepared.input_token_ceiling,
                 output_token_ceiling=prepared.max_output_tokens,
+                purpose=budget_purpose,
+                episode_key=episode_key,
             )
         except (OpenAIBudgetExceeded, OpenAIBudgetPolicyError) as exc:
             raise AgentInvocationError("openai", "budget", str(exc)) from exc
@@ -328,6 +332,8 @@ class OpenAIModelWorker:
         *,
         phase: Literal["plan", "adjudicate"],
         model: str,
+        budget_purpose: str = "",
+        episode_key: str = "",
     ) -> AgentResult:
         if phase not in {"plan", "adjudicate"}:
             raise ValueError(f"unsupported OpenAI lead phase: {phase}")
@@ -352,7 +358,12 @@ class OpenAIModelWorker:
                     phase,
                 ),
             )
-            response = self._dispatch(prepared=prepared, model=model)
+            response = self._dispatch(
+                prepared=prepared,
+                model=model,
+                budget_purpose=budget_purpose,
+                episode_key=episode_key,
+            )
             result = self._parse_and_bind(
                 response.output,
                 role=role,

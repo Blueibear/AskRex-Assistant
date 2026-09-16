@@ -353,12 +353,14 @@ Commit: `git add scripts/dev_orchestrator/scratch.py scripts/dev_orchestrator/op
 - Test: `tests/scripts/test_dev_orchestrator_provider_routing.py`
 - Test: `tests/scripts/test_dev_orchestrator_routing.py`
 
+**Implementation note:** Task 6 defines and verifies routing policy only. Active ProviderRoutingInvoker/OpenAIModelWorker construction in cli.py remains intentionally deferred to Task 8 so live API routing cannot activate early.
+
 **Interfaces:**
 - `ProviderRoutingInvoker` implements the existing `AgentInvoker` protocol and owns all phase-to-provider fallback order.
 - `CliAgentInvoker.lead()` becomes a generic read-only **Sol** planner/adjudicator; `_lead_prompt()` must stop claiming to be Astra.
 - `OpenAIBudgetLedger.has_astra_attempt(episode_key)` makes the one-Astra limit crash-safe.
 
-- [ ] **Step 1: Write the complete routing matrix as RED parameterized tests**
+- [x] **Step 1: Write the complete routing matrix as RED parameterized tests**
 
 Required routes:
 
@@ -374,10 +376,10 @@ FINAL-VERIFY-*             -> Codex Sol only
 
 With `openai_worker_enabled=false`, review/planning/adjudication must reproduce the existing Codex behavior except routine planning now uses Sol, never Astra.
 
-- [ ] **Step 2: Write explicit negative Astra tests**
+- [x] **Step 2: Write explicit negative Astra tests**
 
 Prove Astra is never selected for implementation, planning, routine/escalated review, final verification, a Sol `assign`, a Sol `done`, a Sol blocker, a Sol successful/pass-equivalent adjudication, or a task below `astra_adjudication_after`.
-- [ ] **Step 3: Define one conservative escalation episode key**
+- [x] **Step 3: Define one conservative escalation episode key**
 
 Use a content-free key derived from `role`, `task_id`, and `task_base_head`. This intentionally treats the entire task revision span as one escalation episode, which is stricter than allowing retries to mint fresh Astra eligibility.
 
@@ -389,17 +391,17 @@ episode_key = hashlib.sha256(
 
 An Astra reservation is recorded with `purpose="astra_adjudication"` and this key before dispatch. Any prior Astra reservation/attempt for the key makes Astra permanently ineligible for that episode, including after restart or uncertain billing.
 
-- [ ] **Step 4: Permit Astra only after a Sol adjudication returns explicitly unresolved**
+- [x] **Step 4: Permit Astra only after a Sol adjudication returns explicitly unresolved**
 
 Use `AgentResult.outcome == "failed"` as the only v1 unresolved signal eligible for Astra. Provider transport errors do not themselves prove that the reasoning problem needs Astra; first exhaust the trusted Sol fallback chain. If Sol cannot produce a valid result at all, park with the real provider/blocker reason rather than automatically spending on Astra.
 
 Then require all of: adjudication phase; failure threshold met; Astra enabled; trusted Astra pricing present; no prior Astra attempt for episode; and budget reservation succeeds. If reservation fails, propagate a budget blocker without sending a request.
 
-- [ ] **Step 5: Remove routine Astra identity from CLI planning**
+- [x] **Step 5: Remove routine Astra identity from CLI planning**
 
 Change `_lead_prompt()` from `Act as Astra` to a provider-neutral lead/planner instruction and change `CliAgentInvoker.lead()` to use `SOL_MODEL`. There must be no `ASTRA_MODEL` reference in ordinary CLI planning/review code.
 
-- [ ] **Step 6: Run routing tests and commit**
+- [x] **Step 6: Run routing tests and commit**
 
 Run: `py -3.11 -m pytest -q tests/scripts/test_dev_orchestrator_provider_routing.py tests/scripts/test_dev_orchestrator_routing.py`
 Expected: PASS, including max-one-Astra and all negative-path assertions.

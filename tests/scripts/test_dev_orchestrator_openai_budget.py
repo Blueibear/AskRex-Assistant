@@ -46,6 +46,8 @@ def test_reservation_is_durable_and_reconciliation_releases_unused_risk(tmp_path
     assert set(entry) == {
         "reservation_id",
         "model",
+        "purpose",
+        "episode_key",
         "reserved_usd",
         "actual_usd",
         "input_tokens",
@@ -54,6 +56,8 @@ def test_reservation_is_durable_and_reconciliation_releases_unused_risk(tmp_path
         "created_at",
         "updated_at",
     }
+    assert entry["purpose"] == ""
+    assert entry["episode_key"] == ""
 
     actual = reloaded.reconcile(
         reservation.reservation_id,

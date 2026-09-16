@@ -145,13 +145,54 @@ class OpenAIBudgetLedger:
                 raise OpenAIBudgetPolicyError("OpenAI budget reservation status is malformed")
         return total
 
+    @staticmethod
+    def _validate_episode_key(episode_key: str) -> None:
+        lowered = episode_key.lower()
+        if len(lowered) != 64 or any(char not in "0123456789abcdef" for char in lowered):
+            raise OpenAIBudgetPolicyError(
+                "Astra escalation episode key must be a SHA-256 hex digest"
+            )
+
+    @staticmethod
+    def _has_astra_attempt_in_data(data: dict[str, Any], episode_key: str) -> bool:
+        for bucket in data["months"].values():
+            if not isinstance(bucket, dict):
+                raise OpenAIBudgetPolicyError("OpenAI budget month bucket is malformed")
+            entries = bucket.get("reservations")
+            if not isinstance(entries, list):
+                raise OpenAIBudgetPolicyError("OpenAI budget month bucket is malformed")
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    raise OpenAIBudgetPolicyError("OpenAI budget reservation is malformed")
+                if (
+                    entry.get("purpose") == "astra_adjudication"
+                    and entry.get("episode_key") == episode_key
+                ):
+                    return True
+        return False
+
+    def has_astra_attempt(self, episode_key: str) -> bool:
+        self._validate_episode_key(episode_key)
+        with ControlPlaneLock(self._lock_path):
+            return self._has_astra_attempt_in_data(self._load(), episode_key)
+
     def reserve(
         self,
         *,
         model: str,
         input_token_ceiling: int,
         output_token_ceiling: int,
+        purpose: str = "",
+        episode_key: str = "",
     ) -> BudgetReservation:
+        if purpose not in {"", "astra_adjudication"}:
+            raise OpenAIBudgetPolicyError("unsupported OpenAI budget reservation purpose")
+        if purpose == "astra_adjudication":
+            if model != "gpt-6-astra":
+                raise OpenAIBudgetPolicyError("Astra adjudication purpose requires the Astra model")
+            self._validate_episode_key(episode_key)
+        elif episode_key:
+            raise OpenAIBudgetPolicyError("episode key requires an Astra adjudication purpose")
         reserved_usd = self.estimate_cost(
             model=model,
             input_tokens=input_token_ceiling,
@@ -162,6 +203,12 @@ class OpenAIBudgetLedger:
         reservation_id = uuid4().hex
         with ControlPlaneLock(self._lock_path):
             data = self._load()
+            if purpose == "astra_adjudication" and self._has_astra_attempt_in_data(
+                data, episode_key
+            ):
+                raise OpenAIBudgetPolicyError(
+                    "Astra adjudication attempt already exists for this escalation episode"
+                )
             entries = self._month_entries(data, month)
             total = self._spent_or_reserved(entries)
             if total + reserved_usd > self.monthly_cap_usd:
@@ -169,6 +216,8 @@ class OpenAIBudgetLedger:
             entry = {
                 "reservation_id": reservation_id,
                 "model": model,
+                "purpose": purpose,
+                "episode_key": episode_key,
                 "reserved_usd": str(reserved_usd),
                 "actual_usd": None,
                 "input_tokens": None,

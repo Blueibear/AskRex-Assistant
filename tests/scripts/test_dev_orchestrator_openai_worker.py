@@ -98,6 +98,7 @@ class _FakeBudget:
         self.reserve_error = reserve_error
         self.uncertain: list[str] = []
         self.reconciled: list[tuple[str, OpenAIUsage]] = []
+        self.reservations: list[dict[str, Any]] = []
 
     def reserve(
         self,
@@ -105,8 +106,11 @@ class _FakeBudget:
         model: str,
         input_token_ceiling: int,
         output_token_ceiling: int,
+        purpose: str = "",
+        episode_key: str = "",
     ) -> BudgetReservation:
         self.events.append("reserve")
+        self.reservations.append({"model": model, "purpose": purpose, "episode_key": episode_key})
         if self.reserve_error is not None:
             raise self.reserve_error
         assert input_token_ceiling > 0
@@ -341,3 +345,37 @@ def test_review_evidence_does_not_disclose_live_worktree_path(tmp_path: Path) ->
     worker.review("backend", state, task, "coordination", "gpt-5.6-terra")
 
     assert str(repo) not in transport.input_text
+
+
+def test_astra_lead_tags_actual_budget_reservation_with_episode(tmp_path: Path) -> None:
+    config = replace(
+        _config(tmp_path),
+        openai_worker_enabled=True,
+        openai_project_id="proj-test",
+        openai_project_hard_limit_confirmed=True,
+    )
+    _accept_test_lease(config, "backend")
+    events: list[str] = []
+    budget = _FakeBudget(events)
+    transport = _FakeTransport(
+        events,
+        _agent_output("inv-astra", outcome="assign", task_id="B-1"),
+    )
+    worker = _worker(config, transport, budget, "inv-astra")
+    task = TaskItem("B-1", "Adjudicate")
+    state = WorkerState(role="backend", task=task, task_base_head="base", implementation_failures=4)
+
+    worker.lead(
+        "backend",
+        state,
+        task,
+        "coordination",
+        phase="adjudicate",
+        model="gpt-6-astra",
+        budget_purpose="astra_adjudication",
+        episode_key="episode-1",
+    )
+
+    assert budget.reservations == [
+        {"model": "gpt-6-astra", "purpose": "astra_adjudication", "episode_key": "episode-1"}
+    ]
