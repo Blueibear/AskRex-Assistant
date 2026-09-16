@@ -132,23 +132,46 @@ non-empty, decodable audio, not placeholder text.
 ## Revision
 
 This document is authoritative as of backend base commit
-`0d6420b656d6d1a40f3ecf552c03d03b93a2e285` (detached `HEAD`, cloned from
-`lead/production-readiness-live-test` per `.git/HEAD` and `.git/logs/HEAD` at
-the time this file was written; a prior draft of this section named a
-different, unverifiable commit id and has been corrected). This change itself
-is uncommitted in this working tree — the deterministic supervisor creates
-the actual Git checkpoint on top of this base commit, so the final committed
-revision will be a descendant of `0d6420b656d6d1a40f3ecf552c03d03b93a2e285`,
-not that hash itself. `contract_vectors.json`'s `contract_version` field was
-bumped to `"2026-09-16.323.5"` alongside this change; that version string,
-not any mailbox-quoted hash, is the way to confirm a copy is current.
+`60d67f2eb417b7eb5803f055ee794677989ca98c` (`detached HEAD`, verified
+directly from `.git/HEAD`, `.git/logs/HEAD`, and `.git/packed-refs`, where
+it is identical to `refs/remotes/origin/lead/production-readiness-live-test`
+at the time this revision was written). A prior draft of this section named
+`0d6420b656d6d1a40f3ecf552c03d03b93a2e285`, which does not match this HEAD
+and has been corrected. This change itself is uncommitted in this working
+tree — the deterministic supervisor creates the actual Git checkpoint on top
+of this base commit, so the final committed revision will be a descendant of
+`60d67f2eb417b7eb5803f055ee794677989ca98c`, not that hash itself.
+`contract_vectors.json`'s `contract_version` field is `"2026-09-16.323.5"`;
+that version string, not any mailbox-quoted hash, is the way to confirm a
+copy is current absent a freshly computed SHA-256 (below).
+
+This backend snapshot contains only the mobile-gateway voice/TTS routes from
+issue #323 (`rex/mobile_api/routes/voice.py`, `rex/mobile_api/voice.py`).
+Direct search of this tree at this HEAD confirms `rex/speech/`,
+`tests/speech/`, and `docs/voice/SPEECH_ROUTER_VOICESTUDIO.md` do not exist
+here. Any mailbox guidance about a provider-neutral `SpeechRouter`,
+VoiceStudio integration, redirect-origin hardening, or bidirectional
+call-time provider fallback (`STORY-S35-SPEECH-ROUTER`) describes a
+different, broader story that is not present in this snapshot and is out of
+scope for this document, which covers only the `/mobile/voice/upload` and
+`/mobile/tts/playback` wire contract.
 
 A SHA-256 of the exact `tests/mobile_api/contract_vectors.json` bytes was
 not computed by this change: this session has no shell/code-execution
 access, and several previously mailbox-quoted "SHA-256" values (e.g.
 65–66 hex characters) are not valid SHA-256 digests (32 bytes / 64 hex
-characters) and must not be trusted. The deterministic supervisor test run
-should compute it, e.g.:
+characters) and must not be trusted. The fixture's `tts_base64`/
+`audio_base64` value (`UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAACAgICA`)
+was hand-verified, base64 group by base64 group, to decode to exactly these
+48 bytes (hex): `52 49 46 46 28 00 00 00 57 41 56 45 66 6D 74 20 10 00 00 00
+01 00 01 00 40 1F 00 00 40 1F 00 00 01 00 08 00 64 61 74 61 04 00 00 00 80
+80 80 80` — a structurally valid RIFF/WAVE/fmt/data 8 kHz mono 8-bit PCM WAV
+(`ChunkSize=40`, `Subchunk1Size=16`, `AudioFormat=1`, `NumChannels=1`,
+`SampleRate=8000`, `ByteRate=8000`, `BlockAlign=1`, `BitsPerSample=8`,
+`Subchunk2Size=4`, 4 bytes of `0x80` silence), matching what
+`test_fixture_audio_vectors_are_valid_decodable_wav` asserts. The
+deterministic supervisor test run must still compute the whole-file
+SHA-256, e.g.:
 
 ```
 python -c "import hashlib,pathlib; print(hashlib.sha256(pathlib.Path('tests/mobile_api/contract_vectors.json').read_bytes()).hexdigest())"
