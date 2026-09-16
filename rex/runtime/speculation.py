@@ -160,8 +160,6 @@ class SpeculativePrefetcher:
         if not eligible_ids:
             return SpeculationOutcome(results={}, attempts=tuple(attempts))
 
-        context = contextvars.copy_context()
-
         def _run(capability_id: str) -> tuple[ToolResult | None, str, float]:
             started = time.monotonic()
             try:
@@ -189,7 +187,7 @@ class SpeculativePrefetcher:
         results: dict[str, SpeculativeResult] = {}
         try:
             futures = {
-                pool.submit(context.run, _run, capability_id): capability_id
+                pool.submit(contextvars.copy_context().run, _run, capability_id): capability_id
                 for capability_id in eligible_ids
             }
             done, not_done = concurrent.futures.wait(
