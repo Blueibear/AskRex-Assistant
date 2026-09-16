@@ -44,8 +44,10 @@ The canonical primary branch is **`master`**.
 
 ## Self-Maintenance and AI Maintainer Guardrails
 
-These rules apply to Claude/Codex work today and to any future Rex self-maintenance workflow.
+These rules apply to Claude/Codex work today and to any future Rex self-maintenance workflow. Safe self-extension is a foundational Rex product requirement, not an optional post-release enhancement; higher-risk extension paths may remain disabled until their prerequisite safety gates are verified.
 
+- Shared builder primitives must be reused across core maintenance and Skill/Plugin/MCP/Automation builders rather than duplicated into separate architectures. Ralph/dev-orchestrator is a privileged consumer of those primitives and must not confer core-repository mutation authority on ordinary Rex runtime execution.
+- Every generated skill/plugin/MCP/automation build has an explicit model-locality policy: `local-only`, `hybrid`, or `cloud`. Ask per build unless the affected user has explicitly saved a default. `local-only` is a hard disclosure boundary: no cloud/frontier model may receive build evidence, prompts, source, or review context unless the user separately approves an escalation. If local execution cannot finish safely, stop, explain what failed and what was tried, explain why cloud assistance may help and what would be disclosed, then request explicit one-time permission. Never silently fall back from local to cloud. A remembered local preference never implies cloud fallback consent; any remembered cloud fallback itself requires explicit opt-in and remains revocable in Settings.
 - Never edit, commit, or push code directly to protected `master`. Use an isolated task branch; self-maintenance code changes should also use a dedicated Git worktree so the running known-good checkout remains untouched.
 - A machine maintainer identity must use least privilege and repository-specific installation scope. Never use a user's personal GitHub token as Rex's permanent maintainer identity.
 - Rex/agents may not increase their own GitHub permissions, expand repository installation scope, remove branch/ruleset protections, bypass required checks, delete the repository, or force-push protected branches.
