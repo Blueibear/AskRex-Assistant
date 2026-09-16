@@ -655,7 +655,11 @@ def test_execute_tools_never_speculatively_dispatches_mutating_tool() -> None:
     results = dispatcher.execute_tools([write_tool, read_tool], "archive", user_id="james")
 
     assert results["archive_read"] == {"value": "ok"}
-    assert results["archive_write"] == {"ok": True}
+    # write_tool has no verifier, so the canonical truthful lifecycle reports
+    # its outcome as attempted-but-unverified rather than echoing the raw
+    # handler payload as a confirmed success.
+    assert "attempted" in results["archive_write"]
+    assert "not independently verified" in results["archive_write"]
     # If the mutating tool had ever been included in speculative prefetch, its
     # handler would run twice (once speculatively, once for real). It never
     # runs more than once because operation="mutation" is never eligible.
