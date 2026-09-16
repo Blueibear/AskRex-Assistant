@@ -132,14 +132,18 @@ non-empty, decodable audio, not placeholder text.
 ## Revision
 
 This document is authoritative as of backend base commit
-`6b35130ddd3f578dd6ce9a2df5dd000d71bc14ab` (`detached HEAD`, re-verified
-directly from `.git/HEAD`, `.git/logs/HEAD`, and `.git/packed-refs`; it is
-currently identical to `refs/remotes/origin/lead/production-readiness-live-test`).
-Two earlier drafts of this section named `0d6420b656d6d1a40f3ecf552c03d03b93a2e285`
-and, later, `60d67f2eb417b7eb5803f055ee794677989ca98c`; neither matches the
-current HEAD (the live branch tip advanced between those drafts and this
-one) and both are corrected here. Whoever next edits this file must
-re-read `.git/HEAD` rather than trust either superseded hash.
+`491cf1952d88d8f73d045b97513775c9b6c9970c` (`detached HEAD`, re-verified
+directly from `.git/HEAD` and `.git/logs/HEAD`, which shows this checkout
+was cloned and then checked out at this exact commit from
+`C:\Users\james\rex-ai-test\rex-ai-production-readiness`; `.git/packed-refs`
+confirms this is currently identical to
+`refs/remotes/origin/lead/production-readiness-live-test`).
+Three earlier drafts of this section named `0d6420b656d6d1a40f3ecf552c03d03b93a2e285`,
+`60d67f2eb417b7eb5803f055ee794677989ca98c`, and
+`6b35130ddd3f578dd6ce9a2df5dd000d71bc14ab`; none matches the current HEAD
+(the live branch tip advanced between those drafts and this one) and all
+three are corrected here. Whoever next edits this file must re-read
+`.git/HEAD` rather than trust any superseded hash, including this one.
 
 This working tree's `.git/config` records `origin` as
 `C:\Users\james\rex-ai-test\rex-ai-production-readiness`, and this HEAD is
