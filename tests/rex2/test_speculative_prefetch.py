@@ -27,6 +27,7 @@ from rex.runtime.turn import (
 )
 from rex.runtime.turn_engine import TurnEngine
 from rex.tools.dispatcher import ToolDispatcher
+from rex.tools.execution import ToolExecutionLifecycle
 from rex.tools.protocol import ToolResult
 from rex.tools.registry import Tool, ToolRegistry
 
@@ -656,6 +657,165 @@ def test_prefetch_does_not_block_caller_past_timeout_even_when_pool_is_saturated
 
 
 # ---------------------------------------------------------------------------
+# The underlying dispatch itself must be bound to the speculation deadline,
+# never the dispatcher's own (much larger) ordinary timeout, so a timed-out
+# candidate cannot occupy the bounded pool past the declared budget.
+# ---------------------------------------------------------------------------
+
+
+def test_speculative_dispatch_context_bounds_underlying_timeout_to_remaining_budget() -> None:
+    captured: dict[str, object] = {}
+    real_execute = ToolExecutionLifecycle.execute
+
+    def spy_execute(self, tool, args, context=None, **kwargs):  # noqa: ANN001
+        if context and context.get("speculative"):
+            captured["timeout_seconds"] = kwargs.get("timeout_seconds")
+        return real_execute(self, tool, args, context, **kwargs)
+
+    read_tool = Tool(
+        name="archive_read",
+        description="Read archive",
+        capability_tags=["archive"],
+        requires_config=[],
+        handler=lambda **_kw: {"value": "ok"},
+        operation="read",
+        risk="safe",
+        health="healthy",
+    )
+    registry = ToolRegistry()
+    registry.register(read_tool)
+    # A dispatcher-level timeout far larger than the speculation budget: the
+    # underlying dispatch call must never be allowed to inherit this value
+    # for a speculative candidate.
+    config = SimpleNamespace(tool_timeout_seconds=10.0)
+    dispatcher = ToolDispatcher(registry, config=config)
+    dispatcher._prefetcher = SpeculativePrefetcher(
+        registry.capability_registry,
+        dispatcher,
+        budget=SpeculationBudget(max_candidates=1, max_concurrency=1, total_timeout_seconds=0.05),
+    )
+
+    with patch("rex.tools.execution.ToolExecutionLifecycle.execute", spy_execute):
+        dispatcher._prefetcher.prefetch(
+            ("archive_read",), user_id="james", scope="user", granted_permissions=frozenset()
+        )
+
+    assert captured, "expected the speculative call to reach ToolExecutionLifecycle.execute"
+    assert captured["timeout_seconds"] is not None
+    assert captured["timeout_seconds"] <= 0.05
+    assert captured["timeout_seconds"] < config.tool_timeout_seconds
+
+
+def test_dispatch_bounds_speculative_call_even_though_handler_and_dispatcher_timeout_are_slower() -> (
+    None
+):
+    handler_started = threading.Event()
+
+    def slow_handler(**_kwargs: object) -> dict[str, str]:
+        handler_started.set()
+        time.sleep(0.6)
+        return {"value": "too-late"}
+
+    read_tool = Tool(
+        name="slow_read",
+        description="Slow read",
+        capability_tags=["slow"],
+        requires_config=[],
+        handler=slow_handler,
+        operation="read",
+        risk="safe",
+        health="healthy",
+    )
+    registry = ToolRegistry()
+    registry.register(read_tool)
+    config = SimpleNamespace(tool_timeout_seconds=5.0)
+    dispatcher = ToolDispatcher(registry, config=config)
+
+    started = time.monotonic()
+    result = dispatcher.dispatch(
+        "slow_read",
+        {},
+        {"speculative": True, "user_id": "james", "_speculative_timeout_seconds": 0.05},
+    )
+    elapsed = time.monotonic() - started
+
+    assert handler_started.wait(timeout=1.0)
+    # Bounded by the (tiny) speculation budget, never by the handler's own
+    # 0.6s sleep nor the dispatcher's much larger configured 5.0s timeout.
+    assert elapsed < 0.4
+    assert result.success is False
+
+
+def test_speculative_prefetch_frees_persistent_pool_promptly_even_with_slow_handler() -> None:
+    """A timed-out speculative candidate must not occupy the bounded pool for
+    the dispatcher's ordinary (much longer) timeout; a subsequent prefetch
+    using the same single-worker pool must still get a chance to run."""
+
+    def slow_handler(**_kwargs: object) -> dict[str, str]:
+        time.sleep(0.6)
+        return {"value": "slow"}
+
+    def fast_handler(**_kwargs: object) -> dict[str, str]:
+        return {"value": "fast"}
+
+    slow_tool = Tool(
+        name="slow_read",
+        description="Slow read",
+        capability_tags=["slow"],
+        requires_config=[],
+        handler=slow_handler,
+        operation="read",
+        risk="safe",
+        health="healthy",
+    )
+    fast_tool = Tool(
+        name="fast_read",
+        description="Fast read",
+        capability_tags=["fast"],
+        requires_config=[],
+        handler=fast_handler,
+        operation="read",
+        risk="safe",
+        health="healthy",
+    )
+    registry = ToolRegistry()
+    registry.register(slow_tool)
+    registry.register(fast_tool)
+    config = SimpleNamespace(tool_timeout_seconds=5.0)
+    dispatcher = ToolDispatcher(registry, config=config)
+    dispatcher._prefetcher = SpeculativePrefetcher(
+        registry.capability_registry,
+        dispatcher,
+        budget=SpeculationBudget(max_candidates=1, max_concurrency=1, total_timeout_seconds=0.05),
+    )
+
+    overall_started = time.monotonic()
+    dispatcher._prefetcher.prefetch(
+        ("slow_read",), user_id="james", scope="user", granted_permissions=frozenset()
+    )
+    # A small buffer past the speculation deadline: if the underlying
+    # dispatch were still bound by the dispatcher's ordinary 5s timeout
+    # instead of the 0.05s speculation budget, the single pool worker would
+    # still be occupied here (it only frees once the 0.6s handler sleep
+    # naturally finishes).
+    time.sleep(0.1)
+
+    outcome = dispatcher._prefetcher.prefetch(
+        ("fast_read",),
+        user_id="james",
+        scope="user",
+        granted_permissions=frozenset(),
+    )
+    overall_elapsed = time.monotonic() - overall_started
+
+    # Well under the slow handler's 0.6s sleep: the pool worker was already
+    # free again by the time this second candidate ran, not still occupied
+    # by the abandoned first one.
+    assert overall_elapsed < 0.5
+    assert outcome.results.get("fast_read") is not None
+
+
+# ---------------------------------------------------------------------------
 # Canonical ToolDispatcher integration (US-101 routing-time wiring)
 # ---------------------------------------------------------------------------
 
@@ -984,3 +1144,146 @@ async def test_action_dispatcher_never_speculatively_dispatches_mutation_through
     # The mutating capability may still be selected and dispatched once for
     # real, but never twice: it was never eligible for speculative prefetch.
     assert call_order.count("archive_write") == 1
+
+
+# ---------------------------------------------------------------------------
+# Routing-time speculation: dispatch begins while routing is still resolving,
+# not only after the authoritative selection has already finished.
+# ---------------------------------------------------------------------------
+
+
+def test_begin_speculative_prefetch_dispatches_before_full_selection_ever_runs() -> None:
+    """`begin_speculative_prefetch` must dispatch from a fast lexical signal
+    alone; it must never require the authoritative hybrid-ranked
+    `select_tools_for_user`/`retrieve()` selection to have run first."""
+    dispatch_started = threading.Event()
+
+    def handler(**_kwargs: object) -> dict[str, str]:
+        dispatch_started.set()
+        return {"value": "ok"}
+
+    read_tool = Tool(
+        name="archive_read",
+        description="Read archived household notes",
+        capability_tags=["archive", "notes"],
+        requires_config=[],
+        handler=handler,
+        operation="read",
+        risk="safe",
+        health="healthy",
+    )
+    dispatcher = _tool_dispatcher_with(read_tool)
+
+    # No call to select_tools/select_tools_for_user/retrieve happens here at
+    # all; only the fast routing-time signal is used.
+    handle = dispatcher.begin_speculative_prefetch(
+        "please read the archived notes", user_id="james", scope="user"
+    )
+
+    assert handle is not None
+    assert dispatch_started.wait(timeout=1.0)
+    outcome = dispatcher._prefetcher.finish(handle)
+    assert outcome.results.get("archive_read") is not None
+
+
+def test_begin_speculative_prefetch_never_dispatches_mutating_capability() -> None:
+    call_order: list[str] = []
+
+    def write_handler(**_kwargs: object) -> dict[str, bool]:
+        call_order.append("archive_write")
+        return {"ok": True}
+
+    write_tool = Tool(
+        name="archive_write",
+        description="Write archive entry",
+        capability_tags=["archive", "write"],
+        requires_config=[],
+        handler=write_handler,
+        operation="mutation",
+        risk="safe",
+        health="healthy",
+    )
+    dispatcher = _tool_dispatcher_with(write_tool)
+
+    handle = dispatcher.begin_speculative_prefetch(
+        "please write to the archive", user_id="james", scope="user"
+    )
+
+    assert handle is None
+    assert call_order == []
+
+
+@pytest.mark.asyncio
+async def test_action_dispatcher_prefetch_overlaps_with_still_resolving_routing_selection() -> None:
+    """The production ActionDispatcher wiring must start speculative dispatch
+    while the authoritative hybrid-ranked selection is still resolving, not
+    only once `select_tools_for_user` has already returned."""
+    handler_started = threading.Event()
+    calls: list[str] = []
+
+    def read_handler(**_kwargs: object) -> dict[str, str]:
+        calls.append("archive_read")
+        handler_started.set()
+        return {"value": "archived-notes"}
+
+    read_tool = Tool(
+        name="archive_read",
+        description="Read archived household notes",
+        capability_tags=["archive", "notes"],
+        requires_config=[],
+        handler=read_handler,
+        operation="read",
+        risk="safe",
+        health="healthy",
+    )
+    tool_dispatcher = _tool_dispatcher_with(read_tool)
+
+    import rex.capabilities.retrieval as retrieval_module
+
+    real_retrieve = retrieval_module.CapabilityRetriever.retrieve
+    retrieve_saw_prefetch_already_running = threading.Event()
+
+    def slow_retrieve(self, *args, **kwargs):  # noqa: ANN001
+        # By the time the authoritative hybrid-ranked selection actually
+        # runs, routing-time speculative dispatch must already be under way
+        # -- proving prefetch began *while* routing was still resolving,
+        # not only once it had already finished.
+        if handler_started.wait(timeout=1.0):
+            retrieve_saw_prefetch_already_running.set()
+        return real_retrieve(self, *args, **kwargs)
+
+    builder = MagicMock()
+    package = SimpleNamespace(messages=[], prompt="prompt")
+    builder.build.return_value = package
+    llm = MagicMock()
+    llm.generate.return_value = "Here is what I found."
+    result_handler = MagicMock()
+    result_handler.process = AsyncMock(return_value="Here is what I found.")
+
+    action_dispatcher = ActionDispatcher(
+        context_builder=builder,
+        llm=llm,
+        result_handler=result_handler,
+        tool_dispatcher=tool_dispatcher,
+    )
+    context = _turn_context()
+    engine = TurnEngine()
+
+    async def operation(events):
+        return await action_dispatcher.dispatch(
+            IntentResult(handled=False, response=None, intent_type=None),
+            package,
+            "please read the archived notes",
+            user_id="james",
+            turn_events=events,
+            scope=context.scope.value,
+        )
+
+    with patch.object(retrieval_module.CapabilityRetriever, "retrieve", slow_retrieve):
+        result = await engine.execute_async(context, operation)
+
+    assert result.success is True
+    assert retrieve_saw_prefetch_already_running.is_set()
+    # Still exactly one real invocation of the read handler: the routing-time
+    # prefetch result is consumed rather than dispatched a second time.
+    assert calls == ["archive_read"]

@@ -84,6 +84,24 @@ class SpeculationOutcome:
         return self.results.get(capability_id)
 
 
+@dataclass
+class PrefetchHandle:
+    """Non-blocking token returned by :meth:`SpeculativePrefetcher.begin`.
+
+    Background dispatch for eligible candidates is already running (or
+    already resolved as skipped/cancelled) by the time this is returned;
+    :meth:`SpeculativePrefetcher.finish` waits only for whatever remains of
+    the *original* budget deadline recorded here, so a caller may keep doing
+    other routing/turn work in between without extending the bound.
+    """
+
+    futures: dict[Any, str]
+    deadline: float
+    user_id: str
+    scope: str
+    pre_attempts: tuple[SpeculativeAttempt, ...] = ()
+
+
 class SpeculativePrefetcher:
     """Speculatively dispatch only healthy, permitted, read-only/low-risk candidates."""
 
@@ -131,7 +149,7 @@ class SpeculativePrefetcher:
             return False
         return self._registry.is_authorized(capability_id, frozenset(granted_permissions))
 
-    def prefetch(
+    def begin(
         self,
         candidate_ids: Sequence[str],
         *,
@@ -139,17 +157,30 @@ class SpeculativePrefetcher:
         scope: str,
         granted_permissions: frozenset[str] | set[str],
         args_by_capability: dict[str, dict[str, Any]] | None = None,
-    ) -> SpeculationOutcome:
-        """Dispatch only eligible candidates, bounded by the configured budget."""
+    ) -> PrefetchHandle:
+        """Submit eligible candidates to the bounded pool without blocking.
+
+        The returned handle's deadline is fixed at call time; the caller may
+        keep resolving other routing work and later call :meth:`finish` to
+        collect whatever completed within the remainder of that same
+        deadline. Each submitted candidate's own dispatch call is bounded to
+        (at most) that same deadline via ``_speculative_timeout_seconds``, so
+        a slow/hung handler cannot occupy this bounded pool past the budget
+        merely because the caller stopped waiting on it.
+        """
         granted = frozenset(granted_permissions)
         args_by_capability = args_by_capability or {}
-        attempts: list[SpeculativeAttempt] = []
+        pre_attempts: list[SpeculativeAttempt] = []
+        deadline = time.monotonic() + self._budget.total_timeout_seconds
 
         cancellation = current_turn_cancellation()
         if cancellation is not None and cancellation.cancelled:
-            return SpeculationOutcome(
-                results={},
-                attempts=tuple(
+            return PrefetchHandle(
+                futures={},
+                deadline=deadline,
+                user_id=user_id,
+                scope=scope,
+                pre_attempts=tuple(
                     SpeculativeAttempt(capability_id, "skipped_cancelled", 0.0)
                     for capability_id in candidate_ids
                 ),
@@ -158,25 +189,42 @@ class SpeculativePrefetcher:
         eligible_ids: list[str] = []
         for capability_id in candidate_ids:
             if len(eligible_ids) >= self._budget.max_candidates:
-                attempts.append(SpeculativeAttempt(capability_id, "skipped_budget", 0.0))
+                pre_attempts.append(SpeculativeAttempt(capability_id, "skipped_budget", 0.0))
                 continue
             if not self.eligible(capability_id, user_id=user_id, granted_permissions=granted):
-                attempts.append(SpeculativeAttempt(capability_id, "skipped_ineligible", 0.0))
+                pre_attempts.append(SpeculativeAttempt(capability_id, "skipped_ineligible", 0.0))
                 continue
             eligible_ids.append(capability_id)
 
         if not eligible_ids:
-            return SpeculationOutcome(results={}, attempts=tuple(attempts))
+            return PrefetchHandle(
+                futures={},
+                deadline=deadline,
+                user_id=user_id,
+                scope=scope,
+                pre_attempts=tuple(pre_attempts),
+            )
 
         def _run(capability_id: str) -> tuple[ToolResult | None, str, float]:
             started = time.monotonic()
             try:
                 if cancellation is not None:
                     cancellation.raise_if_cancelled()
+                # Bound the underlying dispatch itself to whatever remains of
+                # this handle's deadline. Without this, a timed-out/abandoned
+                # candidate keeps its ToolExecutionLifecycle handler running
+                # under the dispatcher's ordinary (much longer) timeout,
+                # occupying this bounded pool well past the speculation
+                # budget declared above.
+                remaining = max(0.001, deadline - time.monotonic())
                 result = self._dispatcher.dispatch(
                     capability_id,
                     dict(args_by_capability.get(capability_id, {})),
-                    {"speculative": True, "user_id": user_id},
+                    {
+                        "speculative": True,
+                        "user_id": user_id,
+                        "_speculative_timeout_seconds": remaining,
+                    },
                 )
                 return result, "completed", (time.monotonic() - started) * 1000
             except TurnCancelledError:
@@ -193,44 +241,89 @@ class SpeculativePrefetcher:
                 )
                 return None, "failed", (time.monotonic() - started) * 1000
 
-        results: dict[str, SpeculativeResult] = {}
         futures = {
             self._executor.submit(
                 contextvars.copy_context().run, _run, capability_id
             ): capability_id
             for capability_id in eligible_ids
         }
-        done, not_done = concurrent.futures.wait(
-            list(futures), timeout=self._budget.total_timeout_seconds
+        return PrefetchHandle(
+            futures=futures,
+            deadline=deadline,
+            user_id=user_id,
+            scope=scope,
+            pre_attempts=tuple(pre_attempts),
         )
+
+    def finish(self, handle: PrefetchHandle) -> SpeculationOutcome:
+        """Collect whatever completed within the remainder of the original budget.
+
+        Never waits past ``handle.deadline``, regardless of how long ago
+        :meth:`begin` was called; a candidate still running at that point is
+        abandoned here exactly as it always was, while the dispatch call
+        itself is independently bounded to the same deadline (see
+        :meth:`begin`) so it cannot keep occupying the bounded pool.
+        """
+        attempts: list[SpeculativeAttempt] = list(handle.pre_attempts)
+        results: dict[str, SpeculativeResult] = {}
+        if not handle.futures:
+            return SpeculationOutcome(results=results, attempts=tuple(attempts))
+
+        remaining_wait = max(0.0, handle.deadline - time.monotonic())
+        done, not_done = concurrent.futures.wait(list(handle.futures), timeout=remaining_wait)
         for future in done:
-            capability_id = futures[future]
+            capability_id = handle.futures[future]
             tool_result, outcome, duration_ms = future.result()
             if outcome == "completed" and tool_result is not None and tool_result.success:
                 results[capability_id] = SpeculativeResult(
                     capability_id=capability_id,
                     tool_result=tool_result,
-                    user_id=user_id,
-                    scope=scope,
+                    user_id=handle.user_id,
+                    scope=handle.scope,
                 )
             attempts.append(SpeculativeAttempt(capability_id, outcome, round(duration_ms, 3)))
+        cancellation = current_turn_cancellation()
         now_cancelled = cancellation is not None and cancellation.cancelled
         for future in not_done:
             # Abandoned candidates (timeout/cancelled) may still be running in
             # the shared bounded pool; never block the caller waiting for them.
             # `cancel()` is best-effort (it only drops futures that have not
             # yet started), but the fixed-size pool still caps how many such
-            # candidates can ever run concurrently for this instance.
+            # candidates can ever run concurrently for this instance, and the
+            # dispatch call each one is running is itself bounded to
+            # `handle.deadline` (see `begin`), so it frees the pool promptly
+            # instead of occupying it for the dispatcher's ordinary timeout.
             future.cancel()
-            capability_id = futures[future]
+            capability_id = handle.futures[future]
             outcome = "cancelled" if now_cancelled else "timeout"
             attempts.append(
-                SpeculativeAttempt(
-                    capability_id, outcome, round(self._budget.total_timeout_seconds * 1000, 3)
-                )
+                SpeculativeAttempt(capability_id, outcome, round(remaining_wait * 1000, 3))
             )
 
         return SpeculationOutcome(results=results, attempts=tuple(attempts))
+
+    def prefetch(
+        self,
+        candidate_ids: Sequence[str],
+        *,
+        user_id: str,
+        scope: str,
+        granted_permissions: frozenset[str] | set[str],
+        args_by_capability: dict[str, dict[str, Any]] | None = None,
+    ) -> SpeculationOutcome:
+        """Dispatch only eligible candidates, bounded by the configured budget.
+
+        Convenience wrapper equivalent to ``finish(begin(...))`` for callers
+        that have no other routing work to overlap the wait with.
+        """
+        handle = self.begin(
+            candidate_ids,
+            user_id=user_id,
+            scope=scope,
+            granted_permissions=granted_permissions,
+            args_by_capability=args_by_capability,
+        )
+        return self.finish(handle)
 
     def close(self) -> None:
         """Release the bounded background executor (explicit teardown)."""
@@ -260,6 +353,7 @@ class SpeculativePrefetcher:
 
 
 __all__ = [
+    "PrefetchHandle",
     "SpeculationBudget",
     "SpeculationOutcome",
     "SpeculativeAttempt",

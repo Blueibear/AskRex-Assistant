@@ -10,6 +10,7 @@ from rex.runtime.cancellation import (
 from rex.runtime.events import EventKind, TerminalStateError, TurnEvent, TurnEventStream
 from rex.runtime.invocation import TurnInvocation, current_turn_invocation, turn_invocation
 from rex.runtime.speculation import (
+    PrefetchHandle,
     SpeculationBudget,
     SpeculationOutcome,
     SpeculativeAttempt,
@@ -28,6 +29,7 @@ from rex.runtime.turn_engine import TurnEngine
 __all__ = [
     "AuthorizationSnapshotRef",
     "EventKind",
+    "PrefetchHandle",
     "ResponseMode",
     "SpeculationBudget",
     "SpeculationOutcome",
