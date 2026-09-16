@@ -216,7 +216,14 @@ class SpeculativePrefetcher:
                 # under the dispatcher's ordinary (much longer) timeout,
                 # occupying this bounded pool well past the speculation
                 # budget declared above.
-                remaining = max(0.001, deadline - time.monotonic())
+                # Clamp explicitly to the declared budget as well as the
+                # deadline remainder.  Floating-point subtraction can be a
+                # few picoseconds larger than the original budget, and this
+                # value is passed to the lifecycle as an enforceable timeout.
+                remaining = min(
+                    self._budget.total_timeout_seconds,
+                    max(0.001, deadline - time.monotonic()),
+                )
                 result = self._dispatcher.dispatch(
                     capability_id,
                     dict(args_by_capability.get(capability_id, {})),
