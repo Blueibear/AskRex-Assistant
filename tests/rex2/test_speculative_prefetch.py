@@ -828,6 +828,41 @@ def test_prefetch_discards_successful_result_larger_than_payload_budget() -> Non
     ]
 
 
+def test_prefetch_result_budget_caps_total_retained_payload_across_candidates() -> None:
+    """The payload cap applies to the complete transient result set, not each result."""
+
+    class _SmallPayloadDispatcher:
+        def dispatch(self, name, args, context=None):  # noqa: ANN001
+            del args, context
+            return ToolResult(
+                success=True,
+                output="aaaaaa" if name == "safe_read" else "bbbbbb",
+            )
+
+    registry = _registry()
+    prefetcher = SpeculativePrefetcher(
+        registry,
+        _SmallPayloadDispatcher(),
+        # Each JSON-encoded string is eight bytes, but retaining both would
+        # exceed this total budget.
+        budget=SpeculationBudget(max_result_bytes=10),
+    )
+
+    outcome = prefetcher.prefetch(
+        ("safe_read", "another_safe_read"),
+        user_id="james",
+        scope="user",
+        granted_permissions=frozenset(),
+    )
+
+    assert len(outcome.results) == 1
+    assert (
+        [attempt.outcome for attempt in outcome.attempts].count("discarded_result_budget")
+        == 1
+    )
+    prefetcher.close()
+
+
 # ---------------------------------------------------------------------------
 # Canonical ToolDispatcher integration (US-101 routing-time wiring)
 # ---------------------------------------------------------------------------

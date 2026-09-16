@@ -285,6 +285,7 @@ class SpeculativePrefetcher:
         """
         attempts: list[SpeculativeAttempt] = list(handle.pre_attempts)
         results: dict[str, SpeculativeResult] = {}
+        retained_result_bytes = 0
         if not handle.futures:
             return SpeculationOutcome(results=results, attempts=tuple(attempts))
 
@@ -294,13 +295,22 @@ class SpeculativePrefetcher:
             capability_id = handle.futures[future]
             tool_result, outcome, duration_ms = future.result()
             if outcome == "completed" and tool_result is not None and tool_result.success:
-                if self._result_size_bytes(tool_result) <= self._budget.max_result_bytes:
+                result_size_bytes = self._result_size_bytes(tool_result)
+                # The payload budget applies to the whole retained result set,
+                # not independently to each candidate. Otherwise several
+                # individually-valid results could collectively exceed the
+                # resource bound for one speculative prefetch.
+                if (
+                    retained_result_bytes + result_size_bytes
+                    <= self._budget.max_result_bytes
+                ):
                     results[capability_id] = SpeculativeResult(
                         capability_id=capability_id,
                         tool_result=tool_result,
                         user_id=handle.user_id,
                         scope=handle.scope,
                     )
+                    retained_result_bytes += result_size_bytes
                 else:
                     outcome = "discarded_result_budget"
             attempts.append(SpeculativeAttempt(capability_id, outcome, round(duration_ms, 3)))
