@@ -809,6 +809,74 @@ def test_timed_out_prefetches_keep_actual_handlers_within_one_bounded_pool() -> 
     dispatcher._prefetcher.close()
 
 
+def test_queued_prefetch_never_dispatches_after_its_original_deadline() -> None:
+    """A saturated pool must not turn a stale queued candidate into a late read."""
+    first_started = threading.Event()
+    release_first = threading.Event()
+    calls: list[str] = []
+
+    def slow_handler(**_kwargs: object) -> dict[str, str]:
+        calls.append("slow")
+        first_started.set()
+        assert release_first.wait(timeout=2.0)
+        return {"value": "slow"}
+
+    def queued_handler(**_kwargs: object) -> dict[str, str]:
+        calls.append("queued")
+        return {"value": "queued"}
+
+    registry = ToolRegistry()
+    registry.register(
+        Tool(
+            name="slow_read",
+            description="Slow read",
+            capability_tags=["slow"],
+            requires_config=[],
+            handler=slow_handler,
+            operation="read",
+            risk="safe",
+            health="healthy",
+        )
+    )
+    registry.register(
+        Tool(
+            name="queued_read",
+            description="Queued read",
+            capability_tags=["queued"],
+            requires_config=[],
+            handler=queued_handler,
+            operation="read",
+            risk="safe",
+            health="healthy",
+        )
+    )
+    dispatcher = ToolDispatcher(
+        registry, config=SimpleNamespace(tool_timeout_seconds=5.0)
+    )
+    prefetcher = SpeculativePrefetcher(
+        registry.capability_registry,
+        dispatcher,
+        budget=SpeculationBudget(
+            max_candidates=1, max_concurrency=1, total_timeout_seconds=0.03
+        ),
+    )
+
+    _first = prefetcher.begin(
+        ("slow_read",), user_id="james", scope="user", granted_permissions=frozenset()
+    )
+    assert first_started.wait(timeout=1.0)
+    second = prefetcher.begin(
+        ("queued_read",), user_id="james", scope="user", granted_permissions=frozenset()
+    )
+    time.sleep(0.05)
+    release_first.set()
+    time.sleep(0.05)
+
+    assert calls == ["slow"]
+    assert prefetcher.finish(second).results == {}
+    prefetcher.close()
+
+
 def test_prefetch_discards_successful_result_larger_than_payload_budget() -> None:
     registry = _registry()
     dispatcher = _SpyDispatcher()

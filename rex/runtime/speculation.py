@@ -214,6 +214,14 @@ class SpeculativePrefetcher:
             try:
                 if cancellation is not None:
                     cancellation.raise_if_cancelled()
+                # A fixed executor can keep this task queued behind an
+                # uncooperative speculative handler.  Do not convert that
+                # queue delay into a new read after this handle's original
+                # deadline: speculation is useful only within its declared
+                # time budget, and dispatching stale work spends authority
+                # and resources without a possible latency benefit.
+                if time.monotonic() >= deadline:
+                    return None, "timeout", (time.monotonic() - started) * 1000
                 # Bound the underlying dispatch itself to whatever remains of
                 # this handle's deadline. Without this, a timed-out/abandoned
                 # candidate keeps its ToolExecutionLifecycle handler running
@@ -226,8 +234,10 @@ class SpeculativePrefetcher:
                 # value is passed to the lifecycle as an enforceable timeout.
                 remaining = min(
                     self._budget.total_timeout_seconds,
-                    max(0.001, deadline - time.monotonic()),
+                    deadline - time.monotonic(),
                 )
+                if remaining <= 0:
+                    return None, "timeout", (time.monotonic() - started) * 1000
                 result = self._dispatcher.dispatch(
                     capability_id,
                     dict(args_by_capability.get(capability_id, {})),

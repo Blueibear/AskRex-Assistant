@@ -337,7 +337,14 @@ class ToolExecutionLifecycle:
             if cancellation is not None:
                 cancellation.raise_if_cancelled()
             executor: concurrent.futures.ThreadPoolExecutor | None = None
+            # A speculative task may have waited in its bounded outer pool
+            # before reaching this lifecycle.  Preserve the original handle
+            # deadline when supplied instead of granting a fresh timeout here.
             deadline = time.monotonic() + timeout_seconds
+            if retain_speculative_worker and isinstance(
+                speculative_deadline, int | float
+            ):
+                deadline = min(deadline, float(speculative_deadline))
             try:
                 if retain_speculative_worker:
                     output = tool.handler(**handler_args)
