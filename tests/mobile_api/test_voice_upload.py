@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import struct
 import wave
 
@@ -107,6 +108,30 @@ class TestVoiceUpload:
         ):
             assert superseded not in body
         assert not body["ttsBase64"].startswith("data:")
+        assert base64.b64decode(body["ttsBase64"], validate=True) == fake_tts.audio
+
+    def test_upload_never_labels_mime_even_for_an_mpeg_provider(
+        self, client, fake_stt, fake_tts
+    ) -> None:
+        """S35: ``ttsBase64`` is unlabelled regardless of the configured provider.
+
+        An edge-tts server synthesizes MPEG bytes, but this route still emits
+        bare base64 with no MIME field and no data-URI prefix, so the response
+        shape does not change with provider configuration. Labelled audio comes
+        only from ``POST /mobile/tts/playback``.
+        """
+        _, headers = _authed(client)
+        fake_tts.mime = "audio/mpeg"
+        body = _upload(client, headers, _wav_bytes()).get_json()
+        assert set(body.keys()) == {
+            "request_id",
+            "transcript",
+            "response",
+            "status",
+            "toolUsed",
+            "ttsBase64",
+        }
+        assert "audio/mpeg" not in json.dumps(body)
         assert base64.b64decode(body["ttsBase64"], validate=True) == fake_tts.audio
 
     def test_upload_omits_tts_when_synthesis_is_unavailable(self, client, fake_tts) -> None:

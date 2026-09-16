@@ -1,17 +1,22 @@
 # S35 Mobile Gateway Speech Contract
 
-Document revision: `2026-09-16.s35.2`.
+Document revision: `2026-09-16.s35.3`.
 Wire contract version (the fixture's `contract_version`): `2026-09-16.s35.1` —
-**unchanged**. Revision `.s35.2` is a documentation-and-regression revision: it
-corrects the recorded base commit, adds the machine-readable fixture identity
-block below, and states the upload `status` vocabulary explicitly. No request or
-response field changed.
+**unchanged**. Revision `.s35.3` is a documentation-and-regression revision: it
+re-points the recorded base commit at the inspected HEAD and adds the
+document/fixture/route agreement regressions listed under "Canonical sources".
+No request or response field changed; `.s35.2` and `.s35.3` describe the same
+wire contract.
 
 This revision is based on backend worktree HEAD
-`6f359dbbea092635e130e09cffb346178ed854dd`. (Revision `.s35.1` recorded
-`3eb777f5bd2d33e4d6a744743312ab39ef68d15a`; that commit is not the HEAD of this
-worktree and the reference was stale.) The supervisor owns the final checkpoint
-commit, so this file may be read while uncommitted.
+`d3994ea1fe5312128ed258ebf746db7b66e5a260`. (Revision `.s35.2` recorded
+`6f359dbbea092635e130e09cffb346178ed854dd` and `.s35.1` recorded
+`3eb777f5bd2d33e4d6a744743312ab39ef68d15a`; neither is the HEAD of this
+worktree.) The supervisor owns the final checkpoint commit, so this file may be
+read while uncommitted and the checkpoint commit is a descendant of the recorded
+base. The base commit is provenance only — it is **not** the synchronization
+key. Use `wire_contract_version` plus `audio_vector_sha256` plus the field sets
+below, as described under "Fixture file identity".
 
 Status: authoritative for the two HTTP routes below. Where this document, an
 older mailbox message, or a mobile-side assumption disagree, the executable
@@ -24,8 +29,9 @@ regressions named in each section.
 |---|---|
 | This contract | `docs/voice/S35_MOBILE_GATEWAY_SPEECH_CONTRACT.md` |
 | Route serializers | `rex/mobile_api/routes/voice.py` |
-| Server-side MIME selection | `rex/mobile_api/voice.py` (`TextToSpeechAdapter.mime_type()`) |
+| Server-side MIME selection (`TextToSpeechAdapter.mime_type()`) | `rex/mobile_api/voice.py` |
 | Cross-repo wire fixture | `tests/mobile_api/contract_vectors.json` |
+| Fixture end-of-line pin | `.gitattributes` |
 | Upload route regressions | `tests/mobile_api/test_voice_upload.py` |
 | Playback route regressions | `tests/mobile_api/test_tts.py` |
 | Fixture/document agreement | `tests/mobile_api/test_contract_vectors.py` |
@@ -80,6 +86,22 @@ returns `audio/mpeg` for the `edge-tts` provider and `audio/wav` for every other
 supported provider — but this route deliberately does not serialize that value.
 MIME follows the configured provider only; never infer it from a voice ID, a
 voice name, or the requested locale.
+`TestTtsPlayback::test_adapter_mime_follows_the_provider_not_the_voice` pins that
+derivation, including the case where a provider that emits WAV is configured with
+an `edge`-style voice name.
+
+So a client has exactly three supported ways to obtain a media type for upload
+inline TTS, in order of preference:
+
+1. Call `POST /mobile/tts/playback` instead when a labelled stream is needed. It
+   is self-describing and is the only route that serializes MIME.
+2. Sniff the decoded bytes (`RIFF`/`WAVE` → `audio/wav`, `ID3`/frame sync →
+   `audio/mpeg`).
+3. Know the server's configured TTS provider out of band and apply the same
+   provider → MIME mapping above.
+
+Guessing `audio/wav` unconditionally is not supported, and the response must not
+be handed to a player as if it were a URL or a data URI.
 
 `toolUsed` is currently always `null` on this route: mobile voice turns do not
 yet surface a tool identifier. Treat it as "nullable string", not as proof that
@@ -125,7 +147,8 @@ audio_vector_base64: UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAAC
 audio_vector_sha256: 93bef78ec2fb0694560ab8a8cb26c1d914799f6a11db73335d3e0f74ab3fc2ae
 audio_vector_bytes: 48
 wire_contract_version: 2026-09-16.s35.1
-document_revision: 2026-09-16.s35.2
+document_revision: 2026-09-16.s35.3
+base_commit: d3994ea1fe5312128ed258ebf746db7b66e5a260
 ```
 
 `audio_vector_sha256` is the SHA-256 of the **decoded** 48 audio bytes, not of
@@ -156,6 +179,32 @@ Regeneration plus the pinned EOL is the authoritative synchronization check.
 A file digest is only meaningful once both sides confirm LF line endings and a
 single trailing newline; comparing `audio_vector_sha256`, `contract_version`, and
 the field sets below is the check that cannot be defeated by checkout settings.
+
+### Authoritative synchronization procedure
+
+Both repositories run these five checks against their own copy. All five passing
+means the copies are equal; no message needs to carry a file digest.
+
+1. `contract_version` equals `wire_contract_version` above.
+2. `http.voice_response` keys are exactly
+   `{request_id, transcript, response, status, toolUsed, ttsBase64}`.
+3. `http.tts_response` keys are exactly
+   `{request_id, audio_url, voice, requested_voice}`.
+4. `http.voice_response.ttsBase64` equals `audio_vector_base64` above, and the
+   base64 payload after `data:audio/wav;base64,` in `http.tts_response.audio_url`
+   is the same string. Base64-decoding it yields `audio_vector_bytes` bytes whose
+   SHA-256 is `audio_vector_sha256`.
+5. The file text equals `json.dumps(parsed, indent=2, ensure_ascii=False) + "\n"`
+   and the checkout materializes LF.
+
+`tests/mobile_api/test_contract_vectors.py` performs all five on the backend
+side. Step 4's digest assertion fails with the *true* digest recomputed from the
+fixture, so this document cannot silently drift from the bytes it describes.
+
+If a raw SHA-256 of the whole file is still wanted for a one-off comparison,
+compute it over LF-normalized bytes on both sides
+(`sha256(path.read_bytes().replace(b"\r\n", b"\n"))`) and treat a mismatch as a
+prompt to re-run the five checks above rather than as the contract itself.
 
 ## Superseded guidance
 

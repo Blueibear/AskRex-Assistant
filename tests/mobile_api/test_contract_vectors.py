@@ -52,6 +52,22 @@ def _doc_identity(doc_text: str, key: str) -> str:
     return match.group(1)
 
 
+def _doc_json_examples(doc_text: str) -> list[dict]:
+    """Parse every fenced ``json`` example in the contract document."""
+    blocks = re.findall(r"^```json\n(.*?)^```$", doc_text, re.MULTILINE | re.DOTALL)
+    assert blocks, f"{CONTRACT_DOC_PATH.name} declares no JSON response examples"
+    return [json.loads(block) for block in blocks]
+
+
+def _doc_canonical_source_paths(doc_text: str) -> list[str]:
+    """Return the repository paths listed in the 'Canonical sources' table."""
+    section = re.search(r"^## Canonical sources\n(.*?)^## ", doc_text, re.MULTILINE | re.DOTALL)
+    assert section, f"{CONTRACT_DOC_PATH.name} is missing its 'Canonical sources' table"
+    paths = re.findall(r"^\|[^|\n]+\|[ \t]*`([^`]+)`[ \t]*\|$", section.group(1), re.MULTILINE)
+    assert paths, "the 'Canonical sources' table lists no paths"
+    return paths
+
+
 def _assert_snake_case_keys(value, path: str = "$") -> None:
     if isinstance(value, dict):
         for key, child in value.items():
@@ -181,6 +197,71 @@ class TestCanonicalContractDocument:
 
         assert vectors["http"]["voice_response"]["status"] == STATUS_COMPLETED == "completed"
         assert STATUS_COMPLETED not in ("attempted", "verified", "failed")
+
+    def test_document_revision_identity_matches_the_prose_header(self, contract_doc) -> None:
+        """One revision string, recorded once in prose and once machine-readably."""
+        declared = _doc_identity(contract_doc, "document_revision")
+        header = re.search(r"^Document revision: `([^`]+)`\.", contract_doc, re.MULTILINE)
+        assert header, "the document must open with a 'Document revision:' line"
+        assert header.group(1) == declared
+
+    def test_document_json_examples_match_the_fixture_field_sets(
+        self, vectors, contract_doc
+    ) -> None:
+        """The document's two response examples are the fixture's two shapes.
+
+        This is the check that makes "one wire contract" mechanical: a prose
+        edit that adds, drops, or re-cases a key in either example fails here
+        instead of reaching the mobile repository as a third contract.
+        """
+        examples = _doc_json_examples(contract_doc)
+        upload = [ex for ex in examples if "transcript" in ex]
+        playback = [ex for ex in examples if "audio_url" in ex]
+        assert len(upload) == 1, "expected exactly one documented upload response example"
+        assert len(playback) == 1, "expected exactly one documented playback response example"
+        assert set(upload[0]) == set(vectors["http"]["voice_response"])
+        assert set(playback[0]) == set(vectors["http"]["tts_response"])
+        assert upload[0]["status"] == vectors["http"]["voice_response"]["status"] == "completed"
+        assert upload[0]["toolUsed"] is None
+
+    def test_document_canonical_source_paths_exist(self, contract_doc) -> None:
+        """Every canonical path the document names must be a real file here."""
+        paths = _doc_canonical_source_paths(contract_doc)
+        for relative in paths:
+            assert (_REPO_ROOT / relative).is_file(), f"canonical source {relative} does not exist"
+        assert "tests/mobile_api/contract_vectors.json" in paths
+        assert "rex/mobile_api/routes/voice.py" in paths
+
+    def test_fixture_playback_mime_is_the_adapter_mime_not_a_hand_written_string(
+        self, vectors
+    ) -> None:
+        """The fixture's data-URI media type comes from the executable source."""
+        from rex.mobile_api.voice import TextToSpeechAdapter
+
+        url = vectors["http"]["tts_response"]["audio_url"]
+        media_type = url.split(":", 1)[1].split(";", 1)[0]
+        assert media_type == TextToSpeechAdapter(provider="xtts").mime_type() == "audio/wav"
+        assert TextToSpeechAdapter(provider="edge-tts").mime_type() == "audio/mpeg"
+
+    def test_fixture_end_of_line_is_pinned_to_lf(self) -> None:
+        """``.gitattributes`` must keep both checkouts byte-identical."""
+        attributes = (_REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
+        assert re.search(
+            r"^tests/mobile_api/contract_vectors\.json[ \t]+text[ \t]+eol=lf[ \t]*$",
+            attributes,
+            re.MULTILINE,
+        ), ".gitattributes must pin tests/mobile_api/contract_vectors.json to eol=lf"
+
+    def test_document_states_upload_inline_tts_is_not_directly_playable(
+        self, vectors, contract_doc
+    ) -> None:
+        """The upload vector must stay bare base64, and the document must say so."""
+        tts_base64 = vectors["http"]["voice_response"]["ttsBase64"]
+        assert not tts_base64.startswith("data:")
+        assert ";base64," not in tts_base64
+        assert "not directly playable" in contract_doc
+        assert "TextToSpeechAdapter.mime_type()" in contract_doc
+        assert "/mobile/tts/playback" in contract_doc
 
 
 class TestEventBuilderConformance:
