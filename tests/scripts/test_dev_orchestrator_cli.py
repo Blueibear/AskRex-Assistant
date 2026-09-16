@@ -241,6 +241,8 @@ def test_status_exposes_privacy_safe_openai_budget_summary(tmp_path: Path) -> No
     )
 
     status = json.loads(render_status(config))
+    assert status["openai_worker_enabled"] is False
+    assert status["openai_project_hard_limit_confirmed"] is False
     budget = status["openai_api_budget"]
     assert budget["cap_usd"] == "30.00"
     assert budget["spent_or_reserved_usd"] == str(reservation.reserved_usd)
@@ -466,7 +468,15 @@ def test_parser_exposes_required_commands() -> None:
         "C:/frozen",
     ]
     assert parser.parse_args(init_args).command == "init"
-    for command in ("status", "cycle", "run", "activate", "pause"):
+    for command in (
+        "status",
+        "cycle",
+        "run",
+        "activate",
+        "pause",
+        "enable-openai-worker",
+        "disable-openai-worker",
+    ):
         parsed = parser.parse_args([command, "--coordination-root", "C:/coord"])
         assert parsed.command == command
     parsed = parser.parse_args(
@@ -846,3 +856,151 @@ def test_resume_human_blocker_requires_matching_kind(tmp_path: Path) -> None:
     state = store.read()
     assert state["status"] == "planning"
     assert state["blocker_kind"] == ""
+
+
+def test_openai_worker_enable_requires_project_cap_and_vault_credential(tmp_path: Path) -> None:
+    from decimal import Decimal
+    from types import SimpleNamespace
+
+    from scripts.dev_orchestrator.cli import (
+        record_openai_project_limit_confirmation,
+        set_openai_worker_enabled,
+    )
+
+    root = tmp_path / "coordination"
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "frozen"
+    for path in (root, backend, mobile, frozen):
+        path.mkdir()
+    initialize_runtime(root, backend, mobile, frozen)
+
+    class Manager:
+        def __init__(self, credential):
+            self.credential = credential
+
+        def get_credential(self, service):
+            assert service == "openai"
+            return self.credential
+
+    vault_credential = SimpleNamespace(token="test-secret-token", source="vault")
+    with pytest.raises(ValueError, match="hard limit"):
+        set_openai_worker_enabled(root, True, credential_manager=Manager(vault_credential))
+
+    record_openai_project_limit_confirmation(root, "proj-test", Decimal("30.00"))
+    with pytest.raises(ValueError, match="credential"):
+        set_openai_worker_enabled(root, True, credential_manager=Manager(None))
+    runtime_credential = SimpleNamespace(token="test-secret-token", source="runtime")
+    with pytest.raises(ValueError, match="vault-backed"):
+        set_openai_worker_enabled(root, True, credential_manager=Manager(runtime_credential))
+    expired_credential = SimpleNamespace(
+        token="test-secret-token", source="vault", is_expired=lambda: True
+    )
+    with pytest.raises(ValueError, match="usable"):
+        set_openai_worker_enabled(root, True, credential_manager=Manager(expired_credential))
+
+    enabled = set_openai_worker_enabled(root, True, credential_manager=Manager(vault_credential))
+    assert enabled.openai_worker_enabled is True
+    config_text = (root / "orchestrator-config.json").read_text(encoding="utf-8")
+    assert "test-secret-token" not in config_text
+
+    disabled = set_openai_worker_enabled(root, False, credential_manager=Manager(None))
+    assert disabled.openai_worker_enabled is False
+
+
+def test_build_active_invoker_wires_openai_router_only_when_enabled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from scripts.dev_orchestrator import cli as cli_module
+
+    root = tmp_path / "coordination"
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "frozen"
+    for path in (root, backend, mobile, frozen):
+        path.mkdir()
+    base = initialize_runtime(root, backend, mobile, frozen)
+    config = replace(
+        base,
+        observe_only=False,
+        openai_worker_enabled=True,
+        openai_project_id="proj-test",
+        openai_project_hard_limit_confirmed=True,
+    )
+    credential = SimpleNamespace(token="test-secret-token", source="vault")
+
+    class Manager:
+        def get_credential(self, service):
+            assert service == "openai"
+            return credential
+
+    active = cli_module._build_active_invoker(config, credential_manager=Manager())
+
+    from scripts.dev_orchestrator.provider_routing import ProviderRoutingInvoker
+
+    assert isinstance(active, ProviderRoutingInvoker)
+    assert active.openai_worker is not None
+    assert active.cli_invoker.__class__.__name__ == "CliAgentInvoker"
+
+    class MissingCredential:
+        def get_credential(self, service):
+            assert service == "openai"
+            return None
+
+    with pytest.raises(ValueError, match="vault-backed"):
+        cli_module._build_active_invoker(config, credential_manager=MissingCredential())
+
+    disabled = replace(config, openai_worker_enabled=False)
+
+    class MustNotReadCredential:
+        def get_credential(self, service):
+            raise AssertionError(f"credential lookup not expected for {service}")
+
+    cli_only = cli_module._build_active_invoker(
+        disabled, credential_manager=MustNotReadCredential()
+    )
+    assert cli_only.__class__.__name__ == "CliAgentInvoker"
+
+
+def test_active_cycle_uses_default_invoker_builder(tmp_path: Path, monkeypatch) -> None:
+    from dataclasses import replace
+
+    from scripts.dev_orchestrator import cli as cli_module
+    from scripts.dev_orchestrator.supervisor import Supervisor
+    from scripts.dev_orchestrator.types import AgentResult, TaskItem
+
+    root = tmp_path / "coordination"
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "frozen"
+    for path in (root, backend, mobile, frozen):
+        path.mkdir()
+    _git_repo(backend)
+    _git_repo(mobile)
+    base = initialize_runtime(root, backend, mobile, frozen)
+    _handoff(base)
+    config = replace(base, observe_only=False)
+    calls = []
+
+    class Invoker:
+        def implement(self, *args):
+            return AgentResult("continue", "ok", "continue")
+
+        def review(self, *args):
+            raise AssertionError("unexpected review")
+
+        def lead(self, *args, **kwargs):
+            return AgentResult("done", "none", "")
+
+    invoker = Invoker()
+    monkeypatch.setattr(
+        cli_module, "_build_active_invoker", lambda value: calls.append(value) or invoker
+    )
+    Supervisor(config, invoker).enqueue("backend", TaskItem("B-BUILDER", "work"))
+
+    cli_module.run_cycle(config)
+
+    assert calls == [config]

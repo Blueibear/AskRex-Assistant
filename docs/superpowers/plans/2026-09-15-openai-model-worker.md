@@ -446,6 +446,9 @@ Expected: PASS.
 Commit: `git add scripts/dev_orchestrator/supervisor.py scripts/dev_orchestrator/usage.py tests/scripts/test_dev_orchestrator_supervisor.py tests/scripts/test_dev_orchestrator_usage.py tests/scripts/test_dev_orchestrator_provider_routing.py && git commit -m "fix(orchestrator): separate api billing from reset limits"`
 ### Task 8: Runtime wiring, activation guard, and operator documentation
 
+
+**Implemented activation boundary:** ordinary `activate` never enables paid routing. `enable-openai-worker` requires the confirmed dedicated-project cap plus a usable vault-backed household OpenAI credential; `disable-openai-worker` is credential-free. Active cycles revalidate vault credential availability when constructing the router, and `FINAL-VERIFY-*` remains Codex Sol only.
+
 **Files:**
 - Modify: `scripts/dev_orchestrator/cli.py`
 - Modify: `CLAUDE.md`
@@ -454,15 +457,15 @@ Commit: `git add scripts/dev_orchestrator/supervisor.py scripts/dev_orchestrator
 - Test: `tests/scripts/test_dev_orchestrator_cli.py`
 - Test: `tests/scripts/test_dev_orchestrator_supervisor.py`
 
-- [ ] **Step 1: Write RED construction/activation tests**
+- [x] **Step 1: Write RED construction/activation tests**
 
 Prove active cycles construct `ProviderRoutingInvoker` with the existing CLI invoker plus OpenAI worker, while observe-only cycles still invoke nothing. Prove API routing cannot become live unless project ID and hard-limit confirmation validate successfully.
 
-- [ ] **Step 2: Preserve final verification as Codex Sol only**
+- [x] **Step 2: Preserve final verification as Codex Sol only**
 
 Add an integration-style fake-router test around `_done_claim()` showing `FINAL-VERIFY-*` bypasses the OpenAI worker even when API routing is enabled and budget remains. The invoked provider/model must be Codex / `gpt-5.6-sol`.
 
-- [ ] **Step 3: Update orchestrator documentation to match actual behavior**
+- [x] **Step 3: Update orchestrator documentation to match actual behavior**
 
 Remove statements that Astra selects ordinary queue work or performs final completion judgment. Document:
 - Claude -> Codex implementation fallback;
@@ -473,11 +476,11 @@ Remove statements that Astra selects ordinary queue work or performs final compl
 - API billing/rate limits never consume ChatGPT/Codex reset accounting;
 - API provider disabled by default until operator activation prerequisites are met.
 
-- [ ] **Step 4: Document operator activation sequence without storing secrets**
+- [x] **Step 4: Document operator activation sequence without storing secrets**
 
 The sequence is: create/use dedicated OpenAI project; configure an **enforced** `$30.00/month` project spend limit in OpenAI; ensure the household vault contains the OpenAI API credential; record project ID + hard-limit confirmation through Ralph CLI; then explicitly enable the API worker. Do not put the API key in commands, docs, config, or coordination files.
 
-- [ ] **Step 5: Run focused tests and commit**
+- [x] **Step 5: Run focused tests and commit**
 
 Run: `py -3.11 -m pytest -q tests/scripts/test_dev_orchestrator_cli.py tests/scripts/test_dev_orchestrator_supervisor.py tests/scripts/test_dev_orchestrator_provider_routing.py`
 Expected: PASS.

@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
+from rex.credentials import CredentialManager
+
 from .completion import record_acceptance
 from .handoff import (
     accept_handoff,
@@ -15,7 +17,10 @@ from .handoff import (
 )
 from .lifecycle import ControlPlaneLock, HeartbeatPump, SupervisorLock, read_heartbeat
 from .openai_budget import OpenAIBudgetLedger
+from .openai_transport import OpenAIResponsesTransport
+from .openai_worker import OpenAIModelWorker
 from .paths import validate_runtime_paths
+from .provider_routing import ProviderRoutingInvoker
 from .routing import validate_openai_policy
 from .runner import CliAgentInvoker
 from .storage import AtomicJsonStore
@@ -164,6 +169,71 @@ def record_openai_project_limit_confirmation(
         return updated
 
 
+def _vault_openai_token(credential_manager) -> str | None:
+    credential = credential_manager.get_credential("openai")
+    if credential is None:
+        return None
+    if getattr(credential, "source", "") != "vault":
+        return None
+    is_expired = getattr(credential, "is_expired", None)
+    if callable(is_expired) and is_expired():
+        return None
+    token = getattr(credential, "token", None)
+    return token if isinstance(token, str) and token else None
+
+
+def set_openai_worker_enabled(
+    root: Path,
+    enabled: bool,
+    *,
+    credential_manager=None,
+) -> OrchestratorConfig:
+    with ControlPlaneLock(root / "control-plane.lock"):
+        config = load_config(root)
+        if enabled:
+            candidate = replace(config, openai_worker_enabled=True)
+            validate_openai_policy(candidate)
+            manager = credential_manager or CredentialManager()
+            credential = manager.get_credential("openai")
+            if credential is None or not getattr(credential, "token", None):
+                raise ValueError("vault-backed OpenAI credential is required")
+            if getattr(credential, "source", "") != "vault":
+                raise ValueError("OpenAI credential must be vault-backed")
+            if _vault_openai_token(manager) is None:
+                raise ValueError("usable vault-backed OpenAI credential is required")
+            config = candidate
+        else:
+            config = replace(config, openai_worker_enabled=False)
+        save_config(config)
+        return config
+
+
+def _build_active_invoker(config: OrchestratorConfig, *, credential_manager=None):
+    cli_invoker = CliAgentInvoker(config)
+    if not config.openai_worker_enabled:
+        return cli_invoker
+    validate_openai_policy(config)
+    manager = credential_manager or CredentialManager()
+    if _vault_openai_token(manager) is None:
+        raise ValueError("vault-backed OpenAI credential is required for active API routing")
+    budget = OpenAIBudgetLedger(
+        config.coordination_root,
+        monthly_cap_usd=config.openai_monthly_budget_usd,
+    )
+    transport = OpenAIResponsesTransport(
+        project_id=config.openai_project_id,
+        credential_resolver=lambda: _vault_openai_token(manager),
+        timeout_seconds=config.openai_timeout_seconds,
+    )
+    worker = OpenAIModelWorker(config, transport=transport, budget=budget)
+    return ProviderRoutingInvoker(
+        config,
+        cli_invoker=cli_invoker,
+        openai_worker=worker,
+        budget=budget,
+    )
+
+
 def set_observe_only(root: Path, observe_only: bool) -> OrchestratorConfig:
     with ControlPlaneLock(root / "control-plane.lock"):
         config = replace(load_config(root), observe_only=observe_only)
@@ -308,6 +378,8 @@ def render_status(config: OrchestratorConfig) -> str:
         "observe_only": config.observe_only,
         "banked_resets_remaining": config.banked_resets_remaining,
         "reserve_last_reset": config.reserve_last_reset,
+        "openai_worker_enabled": config.openai_worker_enabled,
+        "openai_project_hard_limit_confirmed": config.openai_project_hard_limit_confirmed,
         "openai_api_budget": {key: str(value) for key, value in openai_budget.items()},
         "workers": workers,
     }
@@ -339,7 +411,7 @@ def run_cycle(config: OrchestratorConfig, *, invoker=None) -> None:
         Supervisor(config, _ObserveOnlyInvoker()).run_cycle()
         return
     validate_handoffs(config)
-    active_invoker = invoker or CliAgentInvoker(config)
+    active_invoker = invoker or _build_active_invoker(config)
     Supervisor(config, active_invoker).run_cycle()
 
 
@@ -381,7 +453,15 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--mobile-root", type=Path, required=True)
     init_parser.add_argument("--frozen-worktree", type=Path, required=True)
 
-    for name in ("status", "cycle", "run", "activate", "pause"):
+    for name in (
+        "status",
+        "cycle",
+        "run",
+        "activate",
+        "pause",
+        "enable-openai-worker",
+        "disable-openai-worker",
+    ):
         command = sub.add_parser(name)
         command.add_argument("--coordination-root", type=Path, required=True)
 
@@ -473,6 +553,12 @@ def main(argv: list[str] | None = None) -> int:
                 record_openai_project_limit_confirmation(root, args.project_id, args.monthly_usd)
             )
         )
+        return 0
+    if args.command == "enable-openai-worker":
+        print(render_status(set_openai_worker_enabled(root, True)))
+        return 0
+    if args.command == "disable-openai-worker":
+        print(render_status(set_openai_worker_enabled(root, False)))
         return 0
     if args.command == "confirm-resets":
         print(render_status(record_confirmed_resets(root, args.remaining)))

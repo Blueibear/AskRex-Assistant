@@ -424,3 +424,33 @@ def test_api_review_failure_then_codex_usage_limit_preserves_codex_provider(tmp_
 
     assert caught.value.provider == "codex"
     assert caught.value.kind == "usage_limit"
+
+
+def test_done_claim_final_verification_bypasses_openai_even_when_enabled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from dataclasses import replace
+
+    from scripts.dev_orchestrator import supervisor as supervisor_module
+    from scripts.dev_orchestrator.completion import CompletionGate
+    from scripts.dev_orchestrator.supervisor import Supervisor
+    from scripts.dev_orchestrator.types import WorkerStatus
+
+    router, config, cli, openai, _budget = _router(
+        tmp_path,
+        cli=_FakeCli(review=[_result("pass", task_id="FINAL-VERIFY-backend")]),
+    )
+    (config.coordination_root / "issues").mkdir(exist_ok=True)
+    config = replace(config, observe_only=False)
+    router.config = config
+    supervisor = Supervisor(config, router)
+    monkeypatch.setattr(
+        supervisor_module, "evaluate_completion", lambda *_args: CompletionGate(True)
+    )
+    monkeypatch.setattr(supervisor_module, "validate_handoff", lambda *_args: None)
+
+    supervisor._done_claim("backend", WorkerState("backend"), "ctx")
+
+    assert openai.calls == []
+    assert cli.calls == [("review", "backend", "FINAL-VERIFY-backend", SOL_MODEL)]
+    assert supervisor.load_state("backend").status is WorkerStatus.DONE

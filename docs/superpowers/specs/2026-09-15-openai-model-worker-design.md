@@ -167,18 +167,18 @@ Claude Code -> Codex implementation fallback -> usage-limit blocker
 Reasoning routing becomes independently configurable:
 
 ```text
-Routine review: OpenAI API Terra -> Codex Terra/Sol fallback
+Routine review: OpenAI API Terra -> Codex Terra fallback
 Escalated review: OpenAI API Sol -> Codex Sol fallback
-Routine planning: OpenAI API Sol -> existing lower-cost fallback
-Adjudication: deterministic gates -> Sol adjudication -> Astra only if still unresolved
-Final release review: existing Codex Sol only
+Routine planning: OpenAI API Sol -> Codex Sol fallback
+Adjudication: OpenAI API Sol -> Codex Sol -> Astra only after a valid unresolved result
+Final release review: Codex Sol only
 ```
 
 Astra is an emergency adjudicator, not a routine worker. It is eligible only when all of the following are true:
 
 1. the phase is adjudication, never routine review, planning, implementation, or final verification;
 2. deterministic supervisor evidence cannot resolve the decision;
-3. lower-cost Sol adjudication has already failed, returned an explicitly unresolved result, or is unavailable;
+3. the OpenAI API Sol and Codex Sol adjudication chain has produced a valid explicitly unresolved `failed` result; provider transport/auth/rate-limit/billing unavailability alone does not justify Astra;
 4. the task has reached the configured adjudication threshold or involves a security/architecture conflict that cannot safely proceed without higher-level resolution;
 5. no Astra call has already been made for the same escalation episode; and
 6. the monthly budget gate can reserve the worst-case allowed Astra request.
