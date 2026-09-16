@@ -181,11 +181,15 @@ class SpeculativePrefetcher:
                 return result, "completed", (time.monotonic() - started) * 1000
             except TurnCancelledError:
                 return None, "cancelled", (time.monotonic() - started) * 1000
-            except Exception:
+            except Exception as exc:
+                # Content-free by construction: only the bounded capability ID
+                # and exception class name are logged, never the exception
+                # message, args, or a traceback, any of which may embed
+                # private request/result payload content.
                 logger.warning(
-                    "speculative_prefetch: candidate %s raised during dispatch",
+                    "speculative_prefetch: candidate %s raised %s during dispatch",
                     capability_id,
-                    exc_info=True,
+                    type(exc).__name__,
                 )
                 return None, "failed", (time.monotonic() - started) * 1000
 

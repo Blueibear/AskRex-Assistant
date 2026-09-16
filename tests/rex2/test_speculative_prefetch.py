@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from types import SimpleNamespace
@@ -404,6 +405,57 @@ def test_dispatch_failure_is_recorded_without_raising_and_without_payload() -> N
 
     assert outcome.results == {}
     assert outcome.attempts[0].outcome == "failed"
+
+
+class _PayloadBearingDispatcher:
+    """Simulates a dispatch failure whose exception text carries private content."""
+
+    SECRET_PAYLOAD = "ssn=123-45-6789 raw_prompt='tell me about my medical results'"
+
+    def dispatch(self, name, args, context=None):  # noqa: ANN001
+        del name, args, context
+        raise RuntimeError(f"upstream call failed for payload: {self.SECRET_PAYLOAD}")
+
+
+def test_dispatch_failure_never_logs_raw_exception_text_that_may_carry_payload(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = _registry()
+    prefetcher = SpeculativePrefetcher(registry, _PayloadBearingDispatcher())
+
+    with caplog.at_level(logging.DEBUG):
+        outcome = prefetcher.prefetch(
+            ("safe_read",),
+            user_id="james",
+            scope="user",
+            granted_permissions=frozenset(),
+        )
+
+    assert outcome.results == {}
+    assert outcome.attempts[0].outcome == "failed"
+    for record in caplog.records:
+        assert _PayloadBearingDispatcher.SECRET_PAYLOAD not in record.getMessage()
+        assert record.exc_info is None
+        assert record.exc_text is None
+
+
+def test_attempt_records_never_carry_payload_even_on_dispatch_failure() -> None:
+    registry = _registry()
+    prefetcher = SpeculativePrefetcher(registry, _PayloadBearingDispatcher())
+
+    outcome = prefetcher.prefetch(
+        ("safe_read",),
+        user_id="james",
+        scope="user",
+        granted_permissions=frozenset(),
+    )
+
+    for attempt in outcome.attempts:
+        allowed_fields = {"capability_id", "outcome", "duration_ms"}
+        assert set(vars(attempt)) == allowed_fields
+        for value in vars(attempt).values():
+            if isinstance(value, str):
+                assert _PayloadBearingDispatcher.SECRET_PAYLOAD not in value
 
 
 # ---------------------------------------------------------------------------
