@@ -136,6 +136,11 @@ class ToolExecutionLifecycle:
         stages: list[str] = ["capability_availability"]
         operation = ToolOperation(tool.operation)
         risk = ToolRisk(tool.risk)
+        # Speculative candidates (US-101) may only retain content-free
+        # metadata/timing; a failing read's raw exception text can embed
+        # private request/result payload content and must never reach logs
+        # or the persisted audit trail for this call.
+        is_speculative = bool(ambient.get("speculative"))
         cancellation = current_turn_cancellation()
         if cancellation is not None:
             cancellation.raise_if_cancelled()
@@ -412,14 +417,31 @@ class ToolExecutionLifecycle:
                     and _is_transient_error(exc)
                     and not _is_auth_error(exc)
                 ):
-                    logger.debug(
-                        "tool_execution: %r transient read failure; retrying once: %s",
-                        tool.name,
-                        exc,
-                    )
+                    if is_speculative:
+                        logger.debug(
+                            "tool_execution: speculative %r transient read failure "
+                            "(%s); retrying once",
+                            tool.name,
+                            type(exc).__name__,
+                        )
+                    else:
+                        logger.debug(
+                            "tool_execution: %r transient read failure; retrying once: %s",
+                            tool.name,
+                            exc,
+                        )
                     continue
                 return self._finish(
-                    request, ToolOutcome.FAILED, risk, stages, started, error=str(exc)
+                    request,
+                    ToolOutcome.FAILED,
+                    risk,
+                    stages,
+                    started,
+                    error=(
+                        f"Speculative read failed: {type(exc).__name__}"
+                        if is_speculative
+                        else str(exc)
+                    ),
                 )
             finally:
                 executor.shutdown(wait=False, cancel_futures=True)

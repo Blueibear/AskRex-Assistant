@@ -4,11 +4,12 @@ import logging
 import threading
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from rex.actions.dispatcher import ActionDispatcher
+from rex.audit import AuditLogger
 from rex.capabilities.registry import Capability, CapabilityRegistry
 from rex.intent.router import IntentResult
 from rex.runtime.cancellation import TurnCancelledError, TurnCancellation, turn_cancellation_scope
@@ -456,6 +457,52 @@ def test_attempt_records_never_carry_payload_even_on_dispatch_failure() -> None:
         for value in vars(attempt).values():
             if isinstance(value, str):
                 assert _PayloadBearingDispatcher.SECRET_PAYLOAD not in value
+
+
+def test_speculative_prefetch_through_real_dispatcher_never_leaks_raw_failure_text(
+    caplog: pytest.LogCaptureFixture, tmp_path
+) -> None:
+    """Real ToolDispatcher/ToolExecutionLifecycle failure text must never leak."""
+    secret = "ssn=123-45-6789 raw_prompt='tell me about my medical results'"
+
+    def failing_handler(**_kwargs: object) -> dict[str, str]:
+        raise ConnectionError(f"connection failed for payload: {secret}")
+
+    read_tool = Tool(
+        name="archive_read_secret",
+        description="Read archive",
+        capability_tags=["archive"],
+        requires_config=[],
+        handler=failing_handler,
+        operation="read",
+        risk="safe",
+        health="healthy",
+    )
+    dispatcher = _tool_dispatcher_with(read_tool)
+    audit_logger = AuditLogger(log_path=tmp_path / "audit.log")
+
+    with (
+        patch("rex.tools.execution.get_audit_logger", return_value=audit_logger),
+        caplog.at_level(logging.DEBUG),
+    ):
+        outcome = dispatcher._prefetcher.prefetch(
+            ("archive_read_secret",),
+            user_id="james",
+            scope="user",
+            granted_permissions=frozenset(),
+        )
+
+    assert outcome.results == {}
+
+    for record in caplog.records:
+        assert secret not in record.getMessage()
+        assert record.exc_info is None
+        assert record.exc_text is None
+
+    entries = audit_logger.read()
+    assert entries
+    for entry in entries:
+        assert secret not in entry.model_dump_json()
 
 
 # ---------------------------------------------------------------------------
