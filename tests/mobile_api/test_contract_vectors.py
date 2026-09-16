@@ -68,6 +68,14 @@ def _doc_canonical_source_paths(doc_text: str) -> list[str]:
     return paths
 
 
+def _as_fixture_bytes(parsed: dict) -> bytes:
+    """Serialize a mutated fixture exactly the way a real copy is stored.
+
+    Mutations stay in memory: a test must never rewrite the tracked fixture.
+    """
+    return (json.dumps(parsed, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
 def _assert_snake_case_keys(value, path: str = "$") -> None:
     if isinstance(value, dict):
         for key, child in value.items():
@@ -278,6 +286,100 @@ class TestCanonicalContractDocument:
         assert "not directly playable" in contract_doc
         assert "TextToSpeechAdapter.mime_type()" in contract_doc
         assert "/mobile/tts/playback" in contract_doc
+
+
+class TestPortableSynchronizationChecker:
+    """``scripts/check_speech_contract_vectors.py`` is the portable form of the
+    document's five-step synchronization procedure.
+
+    The mobile repository holds the fixture but not the contract document, so
+    the checker carries the canonical identity as constants. These tests pin
+    those constants to the document and to the fixture itself, so the checker
+    can never become a third contract.
+    """
+
+    def test_checker_passes_on_the_canonical_fixture(self, contract_doc) -> None:
+        from scripts import check_speech_contract_vectors as checker
+
+        assert checker.check_fixture(VECTORS_PATH.read_bytes(), contract_doc) == []
+
+    def test_checker_constants_match_the_document_and_the_fixture(
+        self, vectors, contract_doc
+    ) -> None:
+        from scripts import check_speech_contract_vectors as checker
+
+        assert checker.WIRE_CONTRACT_VERSION == vectors["contract_version"]
+        assert checker.WIRE_CONTRACT_VERSION == _doc_identity(contract_doc, "wire_contract_version")
+        assert checker.AUDIO_VECTOR_BASE64 == vectors["http"]["voice_response"]["ttsBase64"]
+        assert checker.AUDIO_VECTOR_BASE64 == _doc_identity(contract_doc, "audio_vector_base64")
+        decoded = base64.b64decode(checker.AUDIO_VECTOR_BASE64, validate=True)
+        assert hashlib.sha256(decoded).hexdigest() == checker.AUDIO_VECTOR_SHA256
+        assert len(decoded) == checker.AUDIO_VECTOR_BYTES
+        assert set(checker.UPLOAD_KEYS) == set(vectors["http"]["voice_response"])
+        assert set(checker.PLAYBACK_KEYS) == set(vectors["http"]["tts_response"])
+
+    def test_checker_rejects_the_superseded_snake_case_upload_shape(self, vectors) -> None:
+        from scripts import check_speech_contract_vectors as checker
+
+        mutated = json.loads(json.dumps(vectors))
+        upload = mutated["http"]["voice_response"]
+        upload["tool_used"] = upload.pop("toolUsed")
+        upload["tts_base64"] = upload.pop("ttsBase64")
+        upload["tts_mime_type"] = "audio/wav"
+        failures = checker.check_fixture(_as_fixture_bytes(mutated))
+        assert any("tool_used" in failure or "keys are" in failure for failure in failures)
+        assert any("tts_mime_type" in failure for failure in failures)
+
+    def test_checker_rejects_the_superseded_playback_shape(self, vectors) -> None:
+        from scripts import check_speech_contract_vectors as checker
+
+        mutated = json.loads(json.dumps(vectors))
+        playback = mutated["http"]["tts_response"]
+        playback["audio_base64"] = playback.pop("audio_url").split(",", 1)[1]
+        playback["mime_type"] = "audio/wav"
+        failures = checker.check_fixture(_as_fixture_bytes(mutated))
+        assert any("audio_url" in failure for failure in failures)
+        assert any("mime_type" in failure for failure in failures)
+
+    def test_checker_rejects_placeholder_or_base64_text_audio(self, vectors) -> None:
+        """A fixture carrying text instead of decodable audio must fail."""
+        from scripts import check_speech_contract_vectors as checker
+
+        for placeholder in ("<base64-audio>", base64.b64encode(b"AskRex").decode("ascii")):
+            mutated = json.loads(json.dumps(vectors))
+            mutated["http"]["voice_response"]["ttsBase64"] = placeholder
+            mutated["http"]["tts_response"]["audio_url"] = f"data:audio/wav;base64,{placeholder}"
+            failures = checker.check_fixture(_as_fixture_bytes(mutated))
+            assert any(
+                "valid base64" in failure or "RIFF/WAVE" in failure for failure in failures
+            ), f"{placeholder!r} must be rejected as undecodable audio, got {failures}"
+
+    def test_checker_rejects_crlf_bytes(self) -> None:
+        from scripts import check_speech_contract_vectors as checker
+
+        crlf = VECTORS_PATH.read_bytes().replace(b"\n", b"\r\n")
+        failures = checker.check_fixture(crlf)
+        assert any("LF" in failure for failure in failures)
+
+    def test_checker_rejects_a_document_that_records_the_wrong_digest(self, contract_doc) -> None:
+        from scripts import check_speech_contract_vectors as checker
+
+        drifted = contract_doc.replace(checker.AUDIO_VECTOR_SHA256, "0" * 64)
+        failures = checker.check_fixture(VECTORS_PATH.read_bytes(), drifted)
+        assert any("audio_vector_sha256" in failure for failure in failures)
+
+    def test_checker_main_reports_digests_and_passes(self, capsys) -> None:
+        from scripts import check_speech_contract_vectors as checker
+
+        assert checker.main(["--vectors", str(VECTORS_PATH)]) == 0
+        out = capsys.readouterr().out
+        assert f"audio_vector_sha256: {checker.AUDIO_VECTOR_SHA256}" in out
+        assert "file_sha256_lf_normalized: " in out
+        assert "OK: this copy matches the canonical S35 speech contract fixture." in out
+
+    def test_checker_is_listed_as_a_canonical_source(self, contract_doc) -> None:
+        paths = _doc_canonical_source_paths(contract_doc)
+        assert "scripts/check_speech_contract_vectors.py" in paths
 
 
 class TestEventBuilderConformance:

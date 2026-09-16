@@ -1,15 +1,17 @@
 # S35 Mobile Gateway Speech Contract
 
-Document revision: `2026-09-16.s35.4`.
+Document revision: `2026-09-16.s35.5`.
 Wire contract version (the fixture's `contract_version`): `2026-09-16.s35.1` —
-**unchanged**. Revision `.s35.4` is a documentation-and-regression revision: it
-adds the byte-level end-of-line regression described under "Fixture file
-identity" and re-points the recorded base commit. No request or response field
-changed; `.s35.2`, `.s35.3`, and `.s35.4` describe the same wire contract, and
-`wire_contract_version` deliberately does not move with the document revision.
+**unchanged**. Revision `.s35.5` is a documentation-and-tooling revision: it adds
+the portable synchronization checker `scripts/check_speech_contract_vectors.py`
+so either repository can verify its own copy of the fixture without a
+hand-carried file digest. No request or response field changed; `.s35.2` through
+`.s35.5` describe the same wire contract, and `wire_contract_version`
+deliberately does not move with the document revision.
 
 `base_commit` below records the commit this revision was authored against:
-`7bbf1cd998284ac0cd85f46a2b3cbf12619bc208`. (Earlier revisions recorded
+`3780f744d295ea3d06a1a59382f438a4a5fec030`. (Earlier revisions recorded
+`7bbf1cd998284ac0cd85f46a2b3cbf12619bc208`,
 `d3994ea1fe5312128ed258ebf746db7b66e5a260`, `6f359dbbea092635e130e09cffb346178ed854dd`,
 and `3eb777f5bd2d33e4d6a744743312ab39ef68d15a`.) The supervisor owns the final
 checkpoint commit, so this file may be read while uncommitted and the checkpoint
@@ -33,6 +35,7 @@ regressions named in each section.
 | Server-side MIME selection (`TextToSpeechAdapter.mime_type()`) | `rex/mobile_api/voice.py` |
 | Cross-repo wire fixture | `tests/mobile_api/contract_vectors.json` |
 | Fixture end-of-line pin | `.gitattributes` |
+| Portable synchronization checker | `scripts/check_speech_contract_vectors.py` |
 | Upload route regressions | `tests/mobile_api/test_voice_upload.py` |
 | Playback route regressions | `tests/mobile_api/test_tts.py` |
 | Fixture/document agreement | `tests/mobile_api/test_contract_vectors.py` |
@@ -148,8 +151,8 @@ audio_vector_base64: UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAAC
 audio_vector_sha256: 93bef78ec2fb0694560ab8a8cb26c1d914799f6a11db73335d3e0f74ab3fc2ae
 audio_vector_bytes: 48
 wire_contract_version: 2026-09-16.s35.1
-document_revision: 2026-09-16.s35.4
-base_commit: 7bbf1cd998284ac0cd85f46a2b3cbf12619bc208
+document_revision: 2026-09-16.s35.5
+base_commit: 3780f744d295ea3d06a1a59382f438a4a5fec030
 ```
 
 `audio_vector_sha256` is the SHA-256 of the **decoded** 48 audio bytes, not of
@@ -208,6 +211,27 @@ means the copies are equal; no message needs to carry a file digest.
 `tests/mobile_api/test_contract_vectors.py` performs all five on the backend
 side. Step 4's digest assertion fails with the *true* digest recomputed from the
 fixture, so this document cannot silently drift from the bytes it describes.
+
+`scripts/check_speech_contract_vectors.py` performs the same five checks as a
+standalone stdlib-only script, so the mobile repository can verify its own copy
+without a copy of this document and without a hand-carried file digest:
+
+```bash
+python scripts/check_speech_contract_vectors.py                        # backend copy
+python scripts/check_speech_contract_vectors.py --vectors <path> --no-doc
+CANONICAL_SPEECH_VECTORS_PATH=<path> python scripts/check_speech_contract_vectors.py --no-doc
+```
+
+The script exits non-zero with one line per failure, and always prints the
+recomputed `audio_vector_sha256` plus both the raw and the LF-normalized
+whole-file digests — so a comparison that does want a file digest can read the
+true value from the run rather than from a message. Because the mobile copy has
+no document, the script carries `wire_contract_version`, the two key sets, and
+the audio-vector identity as constants;
+`TestPortableSynchronizationChecker::test_checker_constants_match_the_document_and_the_fixture`
+pins those constants to this document and to the fixture so the checker cannot
+become a third contract. Use `--no-doc` only where this document is genuinely
+absent; in this repository the document cross-check runs by default.
 
 If a raw SHA-256 of the whole file is still wanted for a one-off comparison,
 compute it over LF-normalized bytes on both sides
