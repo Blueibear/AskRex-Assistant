@@ -20,7 +20,7 @@ class _SearchDispatcher:
     def select_tools(self, transcript):
         return [SimpleNamespace(name="web_search", operation="read")]
 
-    def execute_tools(self, selected, transcript, *, user_id):
+    def execute_tools(self, selected, transcript, *, user_id, scope="user"):
         return {"web_search": self.result}
 
     def format_tool_context(self, results):

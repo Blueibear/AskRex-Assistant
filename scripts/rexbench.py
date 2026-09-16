@@ -631,6 +631,7 @@ def run_speculative_prefetch(iterations: int) -> dict:
                 stages_ms={"consume": consume_elapsed_ms, "total": consume_elapsed_ms},
             )
         )
+        prefetcher.close()
     return build_report(samples, profile="speculative-prefetch")
 
 

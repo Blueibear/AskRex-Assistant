@@ -97,6 +97,14 @@ class SpeculativePrefetcher:
         self._registry = registry
         self._dispatcher = dispatcher
         self._budget = budget or SpeculationBudget()
+        # One persistent, fixed-size pool owned by this instance bounds total
+        # background dispatch work to `max_concurrency` threads for the life
+        # of the prefetcher, instead of creating (and abandoning) a fresh pool
+        # object per call whenever candidates are still running at timeout.
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=self._budget.max_concurrency,
+            thread_name_prefix="rex-speculative-prefetch",
+        )
 
     def eligible(
         self,
@@ -181,44 +189,48 @@ class SpeculativePrefetcher:
                 )
                 return None, "failed", (time.monotonic() - started) * 1000
 
-        pool = concurrent.futures.ThreadPoolExecutor(
-            max_workers=min(self._budget.max_concurrency, len(eligible_ids))
-        )
         results: dict[str, SpeculativeResult] = {}
-        try:
-            futures = {
-                pool.submit(contextvars.copy_context().run, _run, capability_id): capability_id
-                for capability_id in eligible_ids
-            }
-            done, not_done = concurrent.futures.wait(
-                list(futures), timeout=self._budget.total_timeout_seconds
-            )
-            for future in done:
-                capability_id = futures[future]
-                tool_result, outcome, duration_ms = future.result()
-                if outcome == "completed" and tool_result is not None and tool_result.success:
-                    results[capability_id] = SpeculativeResult(
-                        capability_id=capability_id,
-                        tool_result=tool_result,
-                        user_id=user_id,
-                        scope=scope,
-                    )
-                attempts.append(SpeculativeAttempt(capability_id, outcome, round(duration_ms, 3)))
-            now_cancelled = cancellation is not None and cancellation.cancelled
-            for future in not_done:
-                capability_id = futures[future]
-                outcome = "cancelled" if now_cancelled else "timeout"
-                attempts.append(
-                    SpeculativeAttempt(
-                        capability_id, outcome, round(self._budget.total_timeout_seconds * 1000, 3)
-                    )
+        futures = {
+            self._executor.submit(
+                contextvars.copy_context().run, _run, capability_id
+            ): capability_id
+            for capability_id in eligible_ids
+        }
+        done, not_done = concurrent.futures.wait(
+            list(futures), timeout=self._budget.total_timeout_seconds
+        )
+        for future in done:
+            capability_id = futures[future]
+            tool_result, outcome, duration_ms = future.result()
+            if outcome == "completed" and tool_result is not None and tool_result.success:
+                results[capability_id] = SpeculativeResult(
+                    capability_id=capability_id,
+                    tool_result=tool_result,
+                    user_id=user_id,
+                    scope=scope,
                 )
-        finally:
-            # Abandoned candidates (timeout/cancelled) may still be running in the
-            # background; never block the caller waiting for them to finish.
-            pool.shutdown(wait=False)
+            attempts.append(SpeculativeAttempt(capability_id, outcome, round(duration_ms, 3)))
+        now_cancelled = cancellation is not None and cancellation.cancelled
+        for future in not_done:
+            # Abandoned candidates (timeout/cancelled) may still be running in
+            # the shared bounded pool; never block the caller waiting for them.
+            # `cancel()` is best-effort (it only drops futures that have not
+            # yet started), but the fixed-size pool still caps how many such
+            # candidates can ever run concurrently for this instance.
+            future.cancel()
+            capability_id = futures[future]
+            outcome = "cancelled" if now_cancelled else "timeout"
+            attempts.append(
+                SpeculativeAttempt(
+                    capability_id, outcome, round(self._budget.total_timeout_seconds * 1000, 3)
+                )
+            )
 
         return SpeculationOutcome(results=results, attempts=tuple(attempts))
+
+    def close(self) -> None:
+        """Release the bounded background executor (explicit teardown)."""
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     def consume(
         self,

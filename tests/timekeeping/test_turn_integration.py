@@ -96,7 +96,7 @@ class MobileMutationDispatcher:
     def select_tools(self, transcript):
         return [SimpleNamespace(name="timekeeping_manage", operation="mutation")]
 
-    def execute_tools(self, selected, transcript, *, user_id):
+    def execute_tools(self, selected, transcript, *, user_id, scope="user"):
         self.execute_calls += 1
         raise AssertionError("mobile mutation must be filtered until structured action binding")
 

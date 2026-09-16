@@ -1275,6 +1275,7 @@ class Assistant:
                 loop=loop,
                 latency_trace=latency_trace,
                 turn_events=turn_events,
+                scope=turn_context.scope.value,
             )
             check_cancelled()
             model_failure_reason = self._validate_model_response(

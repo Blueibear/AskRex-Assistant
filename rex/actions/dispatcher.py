@@ -316,6 +316,7 @@ class ActionDispatcher:
         loop: asyncio.AbstractEventLoop | None = None,
         latency_trace: LatencyTrace | None = None,
         turn_events: TurnEventStream | None = None,
+        scope: str = "user",
     ) -> ActionResult:
         """Dispatch *transcript* through all action layers and return an :class:`ActionResult`.
 
@@ -338,6 +339,10 @@ class ActionDispatcher:
                             *None*.
             turn_events:    Optional canonical turn event stream for truthful progress
                             observation. It never grants or widens execution authority.
+            scope:          Current turn's immutable data/authority scope value (e.g.
+                            ``TurnScope.USER``/``TurnScope.HOUSEHOLD``), forwarded to
+                            bounded speculative tool prefetch/consume revalidation
+                            (US-101). Defaults to the single-user scope in effect today.
 
         Returns:
             :class:`ActionResult` with ``success=True`` and the final response string.
@@ -575,6 +580,7 @@ class ActionDispatcher:
                                 _selected_tools,
                                 transcript,
                                 user_id=effective_user,
+                                scope=str(scope),
                             ),
                         )
                     finally:
