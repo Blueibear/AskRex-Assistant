@@ -492,12 +492,12 @@ Commit: `git add scripts/dev_orchestrator/cli.py CLAUDE.md docs/claude/DEVELOPME
 - Modify as needed only for verified fixes from the gates below.
 - Do not modify the live `lead/dev-orchestrator` worktree during implementation/verification on this branch.
 
-- [ ] **Step 1: Run the complete deterministic orchestrator suite**
+- [x] **Step 1: Run the complete deterministic orchestrator suite**
 
 Run: `py -3.11 -m pytest -q tests/scripts -k dev_orchestrator`
 Expected: all orchestrator tests PASS with no live API calls.
 
-- [ ] **Step 2: Run source quality/security gates**
+- [x] **Step 2: Run source quality/security gates**
 
 Run, in order:
 
@@ -512,11 +512,11 @@ git status --short
 
 Expected: all commands succeed; `git status --short` is clean after committed work; tests generated no tracked artifacts.
 
-- [ ] **Step 3: Verify the critical negative invariants directly**
+- [x] **Step 3: Verify the critical negative invariants directly**
 
 Run focused tests proving: API implementation is impossible; API worker disabled preserves existing behavior; API 429 never enters banked-reset logic; final verification never routes to API; budget cannot exceed $30; unknown pricing/usage fails closed; Astra never routes outside unresolved adjudication; the same escalation episode cannot make a second Astra call; and repository HEAD cannot change during an OpenAI invocation.
 
-- [ ] **Step 4: Commit/push verified implementation branch**
+- [x] **Step 4: Commit/push verified implementation branch**
 
 Use Conventional Commits. Push only `lead/openai-model-worker`; do not merge or mutate `master`/`lead/dev-orchestrator` from an agent session.
 
@@ -524,13 +524,19 @@ Use Conventional Commits. Push only `lead/openai-model-worker`; do not merge or 
 
 Use a synthetic, non-sensitive read-only payload and Terra, never Astra. The smoke must pass through the same local budget ledger and carry a very small request ceiling. Label it `live_provider` evidence. This smoke is optional and never a CI requirement.
 
-- [ ] **Step 6: Controlled integration into the live orchestrator**
+**Status:** intentionally not run. The provider-side project hard-limit confirmation remains false and `openai_worker_enabled=false`; no live OpenAI API call was made and local API spend remains $0.
+
+- [x] **Step 6: Controlled integration into the live orchestrator**
 
 Pause the live supervisor, confirm no active model child/postprocessing scratch, import the verified implementation commit into `lead/dev-orchestrator` at a clean boundary, rerun focused gates there, restart only the supervisor, verify heartbeat PID/FILETIME and persisted worker states, and leave `openai_worker_enabled=false` until the dedicated project limit + credential prerequisites are confirmed.
 
 - [ ] **Step 7: First live routing observation**
 
 After explicit operator enablement, observe one read-only routine review/planning cycle. Confirm actual provider/model provenance, ledger reservation/reconciliation, unchanged repository state, and no change to banked-reset accounting. Do not deliberately trigger Astra merely to test it; deterministic fake tests are sufficient for the emergency path.
+
+**Status:** deferred until explicit operator enablement after the dedicated OpenAI project limit and vault credential prerequisites are satisfied.
+
+**Verified Task 9 evidence:** 282/282 deterministic orchestrator tests passed; the explicit negative-invariant subset passed 17/17; Ruff, Black, compileall, `git diff --check`, and the release security audit passed; the security audit reports 0 actionable placeholder findings and no exposed secrets. `lead/openai-model-worker` and the fast-forwarded `lead/dev-orchestrator` were pushed at the verified implementation head. The live supervisor was restarted from the integrated code with a fresh PID/FILETIME-valid heartbeat, persisted worker states unchanged, `openai_worker_enabled=false`, provider hard-limit confirmation false, and $0 local API spend.
 
 ## Execution Handoff
 
