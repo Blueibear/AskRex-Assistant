@@ -125,6 +125,11 @@
 - [ ] Reuse deterministic validation, security/capability validation, provenance, approval, and rollback primitives across builders
 - [ ] Expose narrower Skill Builder, Plugin Builder, MCP Adapter Builder, and Automation Builder policies without granting ordinary runtime core-repository mutation authority
 - [ ] Keep Ralph/dev-orchestrator as a privileged consumer of shared builder primitives rather than the product-facing self-extension API itself
+- [ ] Ask for `local-only`, `hybrid`, or `cloud` per build unless the user explicitly saved a default; preserve an `ask every build` option
+- [ ] Treat `local-only` as a hard no-cloud boundary with no silent provider escalation
+- [ ] If a local-only build is blocked, explain the failure/local attempts, proposed frontier provider/model class, and bounded disclosure before requesting one-time cloud permission
+- [ ] Allow a per-user remembered build mode, but require separate explicit opt-in for remembered cloud fallback and keep it revocable/changeable in Settings
+- [ ] Persist build locality choice plus actual provider/model provenance in the audit/build record without private prompt content
 
 ### Verified Existing Foundations to Reuse
 - [x] Rex skill registry exists and persists registered skills

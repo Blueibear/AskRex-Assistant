@@ -989,6 +989,14 @@ Rex must not grow one bespoke development loop for core maintenance and a second
 
 Ralph/dev-orchestrator is one privileged consumer of those primitives for AskRex source maintenance. Product-facing Skill Builder, Plugin Builder, MCP Adapter Builder, and Automation Builder flows should consume the same primitives through narrower capability policies. Ordinary TurnEngine execution must never inherit Ralph core-repository mutation authority merely because the underlying build infrastructure is shared.
 
+#### Per-build model locality and cloud escalation
+
+When Rex proposes building a missing capability, the user must control where model reasoning for that build occurs. Unless the user has explicitly saved a default, Rex asks for one of three modes before generation begins: `local-only`, `hybrid`, or `cloud`. The proposal should include the capability being built, expected complexity/risk, requested permissions, likely model/provider classes, and a bounded disclosure summary so the choice is informed.
+
+`local-only` is a hard policy boundary, not a best-effort preference. Planning, implementation, review, and model-based evaluation stay on permitted local models; deterministic local tools/tests may still run normally. Rex must never silently escalate a local-only build to OpenAI, Claude, or another remote model. If the local route becomes blocked or cannot meet the required validation quality, Rex stops and explains the concrete failure, what local attempts were made, why a frontier/cloud model may help, which provider/model class is proposed, and what code/evidence/context would be disclosed. Rex may proceed to cloud only after explicit one-time approval for that escalation.
+
+`hybrid` permits bounded local/cloud routing under the declared build policy, while `cloud` permits approved cloud models for build phases; neither mode weakens permission, sandbox, provenance, budget, privacy, validation, or human-approval gates. The user may choose "remember this choice" to save a per-user default or keep "ask every build." Remembering `local-only` never authorizes a future cloud fallback. Remembering a cloud fallback or hybrid policy requires an explicit opt-in, is separately revocable, and must remain visible/changeable in Settings. Every build record must persist the selected locality mode and actual provider/model provenance without storing private prompt content.
+
 #### Required self-maintenance components
 
 | Component | Requirement |
