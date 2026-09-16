@@ -252,6 +252,22 @@ class TestCanonicalContractDocument:
             re.MULTILINE,
         ), ".gitattributes must pin tests/mobile_api/contract_vectors.json to eol=lf"
 
+    def test_fixture_bytes_on_disk_are_lf_with_one_trailing_newline(self) -> None:
+        """The materialized bytes — not just the attribute — must be LF.
+
+        ``test_fixture_file_is_canonical_json_text`` reads through ``read_text``,
+        which normalizes newlines, so it passes in a CRLF checkout. This checks
+        the raw bytes instead, which is what a cross-repository file digest
+        actually hashes. Divergent fixture digests reported from different
+        scratch trees are exactly this failure mode, so pin it executably.
+        """
+        raw = VECTORS_PATH.read_bytes()
+        assert b"\r" not in raw, "contract_vectors.json must materialize LF, not CRLF"
+        assert raw.endswith(b"\n"), "contract_vectors.json must end with one newline"
+        assert not raw.endswith(b"\n\n"), "contract_vectors.json must not end with a blank line"
+        canonical = json.dumps(json.loads(raw.decode("utf-8")), indent=2, ensure_ascii=False)
+        assert raw == (canonical + "\n").encode("utf-8")
+
     def test_document_states_upload_inline_tts_is_not_directly_playable(
         self, vectors, contract_doc
     ) -> None:
