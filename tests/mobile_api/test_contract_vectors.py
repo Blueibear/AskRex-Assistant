@@ -10,8 +10,11 @@ whichever side introduced them.
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 import re
+import wave
 from pathlib import Path
 
 import pytest
@@ -75,6 +78,28 @@ class TestVectorHygiene:
         assert codes["forbidden"] == ws.CLOSE_FORBIDDEN == 4403
         assert codes["auth_timeout"] == ws.CLOSE_AUTH_TIMEOUT == 4408
         assert codes["rate_limited"] == ws.CLOSE_RATE_LIMITED == 4429
+
+    def test_fixture_audio_vectors_are_valid_decodable_wav(self, vectors) -> None:
+        """The fixture audio fields must be real decodable audio, not the
+        literal placeholder text ``"<base64-audio>"``."""
+        for pointer, field in (
+            (vectors["http"]["voice_response"], "tts_base64"),
+            (vectors["http"]["tts_response"], "audio_base64"),
+        ):
+            raw_value = pointer[field]
+            assert raw_value != "<base64-audio>"
+            decoded = base64.b64decode(raw_value, validate=True)
+            assert decoded[:4] == b"RIFF"
+            assert decoded[8:12] == b"WAVE"
+            with wave.open(io.BytesIO(decoded), "rb") as wav_file:
+                assert wav_file.getnframes() > 0
+                assert wav_file.getnchannels() >= 1
+                assert wav_file.getframerate() > 0
+                assert wav_file.readframes(wav_file.getnframes())
+
+    def test_fixture_wav_mime_matches_embedded_audio(self, vectors) -> None:
+        assert vectors["http"]["voice_response"]["tts_mime_type"] == "audio/wav"
+        assert vectors["http"]["tts_response"]["mime_type"] == "audio/wav"
 
 
 class TestEventBuilderConformance:
