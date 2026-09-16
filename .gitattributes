@@ -5,6 +5,10 @@
 *.pth binary
 *.ckpt binary
 
+# The S35 mobile wire fixture is copied byte-for-byte into the mobile repo, so
+# its checkout bytes must not depend on the platform's end-of-line setting.
+tests/mobile_api/contract_vectors.json text eol=lf
+
 # Always favor this branch's deletion of legacy binary artifacts.
 assets/rex_wake_acknowledgment*.wav merge=ours
 test_audio.mp3 merge=ours

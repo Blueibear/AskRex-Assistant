@@ -101,6 +101,41 @@ class TestTtsPlayback:
         )
         assert response.status_code == 400
 
+    def test_playback_mime_is_the_provider_mime_inside_the_data_uri(
+        self, client, fake_tts
+    ) -> None:
+        """S35 canonical contract: playback MIME lives inside ``audio_url``.
+
+        The media type is whatever ``TextToSpeechAdapter.mime_type()`` reports
+        for the configured provider — an edge-tts server must emit
+        ``data:audio/mpeg;base64,...`` — and there is never a separate
+        ``mime_type`` or ``audio_base64`` field.
+        """
+        headers = _authed(client)
+        fake_tts.mime = "audio/mpeg"
+        response = client.post("/mobile/tts/playback", json={"text": "hello"}, headers=headers)
+        assert response.status_code == 200
+        body = response.get_json()
+        assert set(body.keys()) == {"request_id", "audio_url", "voice", "requested_voice"}
+        assert body["audio_url"] == (
+            "data:audio/mpeg;base64," + base64.b64encode(fake_tts.audio).decode("ascii")
+        )
+        for superseded in ("audio_base64", "mime_type", "tts_base64", "ttsBase64"):
+            assert superseded not in body
+
+    def test_adapter_mime_follows_the_provider_not_the_voice(self) -> None:
+        """S35: MIME is provider-derived; a voice ID must never decide it."""
+        from rex.mobile_api.voice import TextToSpeechAdapter
+
+        assert TextToSpeechAdapter(provider="edge-tts").mime_type() == "audio/mpeg"
+        assert TextToSpeechAdapter(provider="edge").mime_type() == "audio/mpeg"
+        assert TextToSpeechAdapter(provider="xtts").mime_type() == "audio/wav"
+        assert TextToSpeechAdapter(provider="pyttsx3").mime_type() == "audio/wav"
+        assert (
+            TextToSpeechAdapter(provider="xtts", default_voice="en-US-AriaNeural").mime_type()
+            == "audio/wav"
+        )
+
     def test_text_never_in_logs(self, client, caplog) -> None:
         """TTS-012 (and TTS-011 by construction: POST body, no query string)."""
         headers = _authed(client)

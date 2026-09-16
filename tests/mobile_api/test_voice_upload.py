@@ -78,6 +78,52 @@ class TestVoiceUpload:
         assert "tts_mime_type" not in body
         assert fake_chat_service.calls == [(fake_stt.transcript, user_id)]
 
+    def test_upload_body_is_exactly_the_canonical_s35_shape(
+        self, client, fake_stt, fake_tts
+    ) -> None:
+        """S35 canonical contract: camelCase ``toolUsed``/``ttsBase64`` only.
+
+        ``ttsBase64`` is bare base64 with no MIME label and no data-URI prefix,
+        so it is not directly playable from this response alone; the superseded
+        snake_case and MIME-bearing variants must not reappear.
+        """
+        _, headers = _authed(client)
+        body = _upload(client, headers, _wav_bytes()).get_json()
+        assert set(body.keys()) == {
+            "request_id",
+            "transcript",
+            "response",
+            "status",
+            "toolUsed",
+            "ttsBase64",
+        }
+        for superseded in (
+            "tool_used",
+            "tts_base64",
+            "tts_mime_type",
+            "mime_type",
+            "audio_url",
+            "audio_base64",
+        ):
+            assert superseded not in body
+        assert not body["ttsBase64"].startswith("data:")
+        assert base64.b64decode(body["ttsBase64"], validate=True) == fake_tts.audio
+
+    def test_upload_omits_tts_when_synthesis_is_unavailable(self, client, fake_tts) -> None:
+        """``ttsBase64`` is present only when configured TTS succeeds."""
+        _, headers = _authed(client)
+        fake_tts.available = False
+        response = _upload(client, headers, _wav_bytes())
+        assert response.status_code == 200
+        body = response.get_json()
+        assert set(body.keys()) == {
+            "request_id",
+            "transcript",
+            "response",
+            "status",
+            "toolUsed",
+        }
+
     def test_missing_audio_part(self, client) -> None:
         """VOI-003."""
         _, headers = _authed(client)

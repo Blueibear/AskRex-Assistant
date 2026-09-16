@@ -11,6 +11,7 @@ whichever side introduced them.
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import re
@@ -28,6 +29,8 @@ from tests.mobile_api.conftest import (
 )
 
 VECTORS_PATH = Path(__file__).parent / "contract_vectors.json"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+CONTRACT_DOC_PATH = _REPO_ROOT / "docs" / "voice" / "S35_MOBILE_GATEWAY_SPEECH_CONTRACT.md"
 _SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
 _CAMEL_CASE = re.compile(r"^[a-z][a-zA-Z0-9]*$")
 
@@ -35,6 +38,18 @@ _CAMEL_CASE = re.compile(r"^[a-z][a-zA-Z0-9]*$")
 @pytest.fixture(scope="module")
 def vectors() -> dict:
     return json.loads(VECTORS_PATH.read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="module")
+def contract_doc() -> str:
+    return CONTRACT_DOC_PATH.read_text(encoding="utf-8")
+
+
+def _doc_identity(doc_text: str, key: str) -> str:
+    """Read one value from the document's machine-readable identity block."""
+    match = re.search(rf"^{re.escape(key)}:[ \t]*(\S+)$", doc_text, re.MULTILINE)
+    assert match, f"{CONTRACT_DOC_PATH.name} is missing the '{key}' identity line"
+    return match.group(1)
 
 
 def _assert_snake_case_keys(value, path: str = "$") -> None:
@@ -112,6 +127,60 @@ class TestVectorHygiene:
         with wave.open(io.BytesIO(raw), "rb") as wav_file:
             assert wav_file.getnframes() > 0
             assert wav_file.readframes(wav_file.getnframes())
+
+
+class TestCanonicalContractDocument:
+    """``docs/voice/S35_MOBILE_GATEWAY_SPEECH_CONTRACT.md`` must stay equal to
+    the fixture and the route serializers, so the two repositories cannot be
+    pointed at two different wire contracts."""
+
+    def test_document_records_the_fixture_audio_sha256(self, vectors, contract_doc) -> None:
+        decoded = base64.b64decode(vectors["http"]["voice_response"]["ttsBase64"], validate=True)
+        actual = hashlib.sha256(decoded).hexdigest()
+        documented = _doc_identity(contract_doc, "audio_vector_sha256")
+        assert actual == documented, (
+            "The canonical contract document records the wrong fixture audio digest. "
+            f"Recorded {documented}; the decoded fixture bytes hash to {actual}."
+        )
+        assert len(decoded) == int(_doc_identity(contract_doc, "audio_vector_bytes"))
+
+    def test_document_records_the_fixture_audio_vector_verbatim(
+        self, vectors, contract_doc
+    ) -> None:
+        documented = _doc_identity(contract_doc, "audio_vector_base64")
+        assert vectors["http"]["voice_response"]["ttsBase64"] == documented
+
+    def test_upload_and_playback_share_one_audio_vector(self, vectors) -> None:
+        upload_audio = vectors["http"]["voice_response"]["ttsBase64"]
+        playback_audio = vectors["http"]["tts_response"]["audio_url"].split(",", 1)[1]
+        assert upload_audio == playback_audio
+
+    def test_document_declares_the_fixture_contract_version(self, vectors, contract_doc) -> None:
+        assert _doc_identity(contract_doc, "wire_contract_version") == vectors["contract_version"]
+
+    def test_fixture_file_is_canonical_json_text(self) -> None:
+        """A synchronized copy must be regenerable byte-for-byte.
+
+        ``read_text`` normalizes newlines, so this assertion holds in CRLF and
+        LF checkouts alike; ``.gitattributes`` pins the checked-out bytes to LF.
+        """
+        text = VECTORS_PATH.read_text(encoding="utf-8")
+        canonical = json.dumps(json.loads(text), indent=2, ensure_ascii=False) + "\n"
+        assert text == canonical
+
+    def test_document_supersedes_the_snake_case_speech_fields(self, vectors, contract_doc) -> None:
+        superseded_upload = ("tool_used", "tts_base64", "tts_mime_type")
+        superseded_playback = ("audio_base64", "mime_type")
+        for name in superseded_upload + superseded_playback:
+            assert name in contract_doc, f"{name} must be listed as superseded"
+            assert name not in vectors["http"]["voice_response"]
+            assert name not in vectors["http"]["tts_response"]
+
+    def test_fixture_upload_status_is_the_conversational_completed(self, vectors) -> None:
+        from rex.mobile_api.chat import STATUS_COMPLETED
+
+        assert vectors["http"]["voice_response"]["status"] == STATUS_COMPLETED == "completed"
+        assert STATUS_COMPLETED not in ("attempted", "verified", "failed")
 
 
 class TestEventBuilderConformance:

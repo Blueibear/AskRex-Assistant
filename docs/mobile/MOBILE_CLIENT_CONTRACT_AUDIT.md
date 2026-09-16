@@ -127,8 +127,8 @@ Draft PR #5 establishes useful requirements:
 Backend/client alignment:
 
 - Backend revalidates size, duration, signature/container, and decodability.
-- Initial TTS delivery is JSON base64 plus MIME type.
-- Response keys use `request_id`, `tts_base64`, `tts_mime_type`, and `tool_used`.
+- Playback TTS delivery is a JSON inline data URI: `audio_url` carries the MIME type and the audio together. Upload TTS delivery is bare base64 in `ttsBase64` with no MIME label.
+- Response keys are `request_id`, `transcript`, `response`, `status`, `toolUsed`, and optional `ttsBase64` on upload; `request_id`, `audio_url`, `voice`, and `requested_voice` on playback. The draft keys `tts_base64`, `tts_mime_type`, `tool_used`, `audio_base64`, and `mime_type` are superseded — see `docs/voice/S35_MOBILE_GATEWAY_SPEECH_CONTRACT.md`.
 - Client accepts a backend URL only when protected/short-lived and from an allowed origin.
 - Backend decides available voice IDs.
 - Missing real transcription returns `BACKEND_UNAVAILABLE`, not a mock transcript.

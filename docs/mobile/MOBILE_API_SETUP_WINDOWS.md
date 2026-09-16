@@ -225,17 +225,23 @@ returns `text/event-stream` frames (`token` events, then one terminal
 `{"type": "auth", "access_token": "<jwt>", "client": {...}}` — tokens never
 go in the URL.
 
-TTS (JSON base64 audio; text is never placed in a query string):
+TTS (JSON inline data URI; text is never placed in a query string):
 
 ```powershell
 $tts = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8765/mobile/tts/playback `
   -ContentType "application/json" -Body (@{ text = "Hello from Rex." } | ConvertTo-Json) `
   -Headers @{ Authorization = "Bearer $($login.access_token)" }
-[IO.File]::WriteAllBytes("rex-tts-sample.wav", [Convert]::FromBase64String($tts.audio_base64))
+# audio_url is "data:<mime>;base64,<audio>" — the media type comes from the
+# configured TTS provider, so split it off instead of assuming a container.
+$mime, $payload = $tts.audio_url -replace '^data:', '' -split ';base64,', 2
+$extension = if ($mime -eq 'audio/mpeg') { 'mp3' } else { 'wav' }
+[IO.File]::WriteAllBytes("rex-tts-sample.$extension", [Convert]::FromBase64String($payload))
 ```
 
 The response `voice` is the concrete provider voice that produced the audio;
 `requested_voice` preserves the caller's request (`default` when omitted).
+`docs/voice/S35_MOBILE_GATEWAY_SPEECH_CONTRACT.md` is the authoritative wire
+contract for `/mobile/voice/upload` and `/mobile/tts/playback`.
 
 Voice upload (multipart; the file's actual bytes are validated — M4A/MP4,
 AAC, MP3, or WAV — and must decode successfully; limits are 15 MiB and 60

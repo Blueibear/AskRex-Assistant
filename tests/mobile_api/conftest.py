@@ -228,6 +228,9 @@ class FakeTtsAdapter:
         self.known_voices = ["fake-default-voice", "fake-alt-voice"]
         self.audio = b"FAKE-TTS-AUDIO"
         self.synthesized: list[tuple[str, str]] = []
+        # Mirrors TextToSpeechAdapter.mime_type(), which follows the configured
+        # provider ("audio/mpeg" for edge-tts, "audio/wav" otherwise).
+        self.mime = "audio/wav"
 
     def availability(self) -> tuple[bool, str]:
         return (True, "ok") if self.available else (False, "fake TTS disabled")
@@ -245,7 +248,7 @@ class FakeTtsAdapter:
             )
 
     def mime_type(self) -> str:
-        return "audio/wav"
+        return self.mime
 
     def resolve_voice(self, requested: str | None) -> str:
         self.require_available()

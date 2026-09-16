@@ -366,19 +366,20 @@ Initial supported containers:
 
 Validation uses file signatures/container parsing plus successful decoding. Filename and declared MIME type are insufficient. Limits are 15 MiB and 60 seconds. Empty, malformed, unsupported, or undecodable audio fails without invoking Rex.
 
-Voice response:
+Voice response (canonical S35 shape — `docs/voice/S35_MOBILE_GATEWAY_SPEECH_CONTRACT.md` is authoritative for these two routes):
 
 ```json
 {
   "request_id": "<request-id>",
   "transcript": "Turn off the downstairs lights",
   "response": "The downstairs lights are off.",
-  "status": "verified",
-  "tool_used": "home_assistant",
-  "tts_base64": "<base64-audio>",
-  "tts_mime_type": "audio/mpeg"
+  "status": "completed",
+  "toolUsed": null,
+  "ttsBase64": "<base64-audio>"
 }
 ```
+
+`toolUsed` and `ttsBase64` are deliberately camelCase; the earlier draft fields `tool_used`, `tts_base64`, and `tts_mime_type` are superseded and are not emitted. `ttsBase64` appears only when configured TTS succeeds, carries no MIME label, and is therefore not directly playable from this response alone. `status` on this route is always the conversational `completed`; it is never `verified`.
 
 The first implementation uses authenticated JSON with base64 audio rather than placing text or bearer material in a URL. A short-lived protected artifact endpoint may replace it later without changing the security requirements.
 
@@ -396,11 +397,13 @@ TTS validates text length, resolves only an allowed/available voice, avoids logg
 ```json
 {
   "request_id": "<request-id>",
-  "audio_base64": "<base64-audio>",
-  "mime_type": "audio/mpeg",
-  "voice": "default"
+  "audio_url": "data:audio/wav;base64,<base64-audio>",
+  "voice": "<resolved-voice-id>",
+  "requested_voice": "default"
 }
 ```
+
+Playback audio is a directly playable inline data URI. The media type sits between `data:` and `;base64` and is chosen by `TextToSpeechAdapter.mime_type()` from the configured provider (`audio/mpeg` for edge-tts, otherwise `audio/wav`). The earlier draft fields `audio_base64` and `mime_type` are superseded.
 
 ### 6.5 Explicit scaffolds
 
