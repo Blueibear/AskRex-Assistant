@@ -464,3 +464,19 @@ class TestSecurityAuditReleaseGate:
             f"security_audit.py --strict-markdown-secrets exited {result.returncode}.\n"
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
+
+
+def test_legitimate_truncation_state_is_not_placeholder_code(tmp_path: Path):
+    source = tmp_path / "bounded.py"
+    source.write_text(
+        "truncated: bool\n"
+        "truncation_reasons: tuple[str, ...]\n"
+        "if evidence.truncated and result.outcome == 'pass':\n"
+        "marker = '\\n...[truncated coordination context]...\\n'\n"
+        "request = {'truncation': 'disabled'}\n",
+        encoding="utf-8",
+    )
+
+    _, placeholders, _ = security_audit.scan_file(source)
+
+    assert placeholders == []

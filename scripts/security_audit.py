@@ -96,7 +96,11 @@ INCLUDE_EXTENSIONS = {
 # optionally followed by a space and branch name)
 MERGE_MARKERS = re.compile(r"^(<{7}|={7}|>{7})( .*)?$")
 PLACEHOLDER_MARKERS = re.compile(
-    r"TRUNCAT|TBD|TODO|FIXME|PLACEHOLDER|INSERT HERE|REPLACE ME|\bWIP\b|COMING SOON|CUT HERE",
+    r"TBD|TODO|FIXME|PLACEHOLDER|INSERT HERE|REPLACE ME|\bWIP\b|COMING SOON|CUT HERE",
+    re.IGNORECASE,
+)
+EXPLICIT_TRUNCATION_MARKER = re.compile(
+    r"^\s*(?:#|//|/\*|\*|<!--)\s*TRUNCAT(?:ED|ION)?\b",
     re.IGNORECASE,
 )
 
@@ -331,7 +335,7 @@ def scan_file(
         # so their prose markers are not incomplete application code.
         placeholder_lines = [] if filepath.name == "package-lock.json" else lines
         for i, line in enumerate(placeholder_lines, 1):
-            if PLACEHOLDER_MARKERS.search(line):
+            if PLACEHOLDER_MARKERS.search(line) or EXPLICIT_TRUNCATION_MARKER.search(line):
                 lowered = line.lower()
 
                 # Skip: lines referencing the scanner's own patterns/scan logic
