@@ -131,10 +131,15 @@ non-empty, decodable audio, not placeholder text.
 
 ## Revision
 
-This document is authoritative as of backend HEAD commit
-`4988bf383068a9113d41d1b6e633e8efc906c395` (detached `HEAD`, base branch
-`lead/production-readiness-live-test` per the working tree at the time this
-file was written). `contract_vectors.json`'s `contract_version` field was
+This document is authoritative as of backend base commit
+`0d6420b656d6d1a40f3ecf552c03d03b93a2e285` (detached `HEAD`, cloned from
+`lead/production-readiness-live-test` per `.git/HEAD` and `.git/logs/HEAD` at
+the time this file was written; a prior draft of this section named a
+different, unverifiable commit id and has been corrected). This change itself
+is uncommitted in this working tree — the deterministic supervisor creates
+the actual Git checkpoint on top of this base commit, so the final committed
+revision will be a descendant of `0d6420b656d6d1a40f3ecf552c03d03b93a2e285`,
+not that hash itself. `contract_vectors.json`'s `contract_version` field was
 bumped to `"2026-09-16.323.5"` alongside this change; that version string,
 not any mailbox-quoted hash, is the way to confirm a copy is current.
 
