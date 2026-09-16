@@ -746,19 +746,37 @@ def test_dispatch_bounds_speculative_call_even_though_handler_and_dispatcher_tim
     assert result.success is False
 
 
-def test_speculative_prefetch_frees_persistent_pool_promptly_even_with_slow_handler() -> None:
-    """A timed-out speculative candidate must not occupy the bounded pool for
-    the dispatcher's ordinary (much longer) timeout; a subsequent prefetch
-    using the same single-worker pool must still get a chance to run."""
+def test_timed_out_prefetches_keep_actual_handlers_within_one_bounded_pool() -> None:
+    """Timed-out speculative handlers remain counted until they really return.
+
+    Python cannot forcibly stop arbitrary tool-handler threads.  The safe
+    boundary is therefore to retain the handler in the prefetcher's fixed
+    pool rather than letting ToolExecutionLifecycle time it out in a nested
+    executor and immediately release the outer slot.
+    """
+    started = threading.Event()
+    release = threading.Event()
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+    starts = 0
 
     def slow_handler(**_kwargs: object) -> dict[str, str]:
-        time.sleep(0.6)
-        return {"value": "slow"}
+        nonlocal active, max_active, starts
+        with lock:
+            active += 1
+            starts += 1
+            max_active = max(max_active, active)
+            if starts == 2:
+                started.set()
+        try:
+            assert release.wait(timeout=2.0)
+            return {"value": "slow"}
+        finally:
+            with lock:
+                active -= 1
 
-    def fast_handler(**_kwargs: object) -> dict[str, str]:
-        return {"value": "fast"}
-
-    slow_tool = Tool(
+    tool = Tool(
         name="slow_read",
         description="Slow read",
         capability_tags=["slow"],
@@ -768,51 +786,46 @@ def test_speculative_prefetch_frees_persistent_pool_promptly_even_with_slow_hand
         risk="safe",
         health="healthy",
     )
-    fast_tool = Tool(
-        name="fast_read",
-        description="Fast read",
-        capability_tags=["fast"],
-        requires_config=[],
-        handler=fast_handler,
-        operation="read",
-        risk="safe",
-        health="healthy",
-    )
     registry = ToolRegistry()
-    registry.register(slow_tool)
-    registry.register(fast_tool)
-    config = SimpleNamespace(tool_timeout_seconds=5.0)
-    dispatcher = ToolDispatcher(registry, config=config)
+    registry.register(tool)
+    dispatcher = ToolDispatcher(registry, config=SimpleNamespace(tool_timeout_seconds=5.0))
     dispatcher._prefetcher = SpeculativePrefetcher(
         registry.capability_registry,
         dispatcher,
-        budget=SpeculationBudget(max_candidates=1, max_concurrency=1, total_timeout_seconds=0.05),
+        budget=SpeculationBudget(max_candidates=1, max_concurrency=2, total_timeout_seconds=0.03),
     )
 
-    overall_started = time.monotonic()
-    dispatcher._prefetcher.prefetch(
-        ("slow_read",), user_id="james", scope="user", granted_permissions=frozenset()
-    )
-    # A small buffer past the speculation deadline: if the underlying
-    # dispatch were still bound by the dispatcher's ordinary 5s timeout
-    # instead of the 0.05s speculation budget, the single pool worker would
-    # still be occupied here (it only frees once the 0.6s handler sleep
-    # naturally finishes).
-    time.sleep(0.1)
+    for _ in range(4):
+        outcome = dispatcher._prefetcher.prefetch(
+            ("slow_read",), user_id="james", scope="user", granted_permissions=frozenset()
+        )
+        assert outcome.results == {}
+    assert started.wait(timeout=1.0)
+    with lock:
+        assert starts == 2
+        assert max_active == 2
 
-    outcome = dispatcher._prefetcher.prefetch(
-        ("fast_read",),
-        user_id="james",
-        scope="user",
-        granted_permissions=frozenset(),
-    )
-    overall_elapsed = time.monotonic() - overall_started
+    release.set()
+    dispatcher._prefetcher.close()
 
-    # Well under the slow handler's 0.6s sleep: the pool worker was already
-    # free again by the time this second candidate ran, not still occupied
-    # by the abandoned first one.
-    assert overall_elapsed < 0.5
-    assert outcome.results.get("fast_read") is not None
+
+def test_prefetch_discards_successful_result_larger_than_payload_budget() -> None:
+    registry = _registry()
+    dispatcher = _SpyDispatcher()
+    prefetcher = SpeculativePrefetcher(
+        registry,
+        dispatcher,
+        budget=SpeculationBudget(max_result_bytes=8),
+    )
+
+    outcome = prefetcher.prefetch(
+        ("safe_read",), user_id="james", scope="user", granted_permissions=frozenset()
+    )
+
+    assert outcome.results == {}
+    assert [(attempt.capability_id, attempt.outcome) for attempt in outcome.attempts] == [
+        ("safe_read", "discarded_result_budget")
+    ]
 
 
 # ---------------------------------------------------------------------------

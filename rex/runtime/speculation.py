@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextvars
+import json
 import logging
 import time
 from collections.abc import Sequence
@@ -41,6 +42,7 @@ class SpeculationBudget:
     max_candidates: int = 3
     total_timeout_seconds: float = 0.2
     max_age_seconds: float = 2.0
+    max_result_bytes: int = 65_536
 
     def __post_init__(self) -> None:
         if self.max_concurrency < 1:
@@ -51,6 +53,8 @@ class SpeculationBudget:
             raise ValueError("total_timeout_seconds must be positive")
         if self.max_age_seconds <= 0:
             raise ValueError("max_age_seconds must be positive")
+        if self.max_result_bytes < 1:
+            raise ValueError("max_result_bytes must be at least 1")
 
 
 @dataclass(frozen=True)
@@ -231,6 +235,14 @@ class SpeculativePrefetcher:
                         "speculative": True,
                         "user_id": user_id,
                         "_speculative_timeout_seconds": remaining,
+                        # ToolExecutionLifecycle normally uses a private
+                        # executor per call.  That permits an uncooperative
+                        # handler to outlive its lifecycle timeout while this
+                        # pool slot is reused.  Keep speculative handler work
+                        # on this fixed pool instead, so actual handler
+                        # concurrency cannot exceed max_concurrency.
+                        "_speculative_retain_worker": True,
+                        "_speculative_deadline_monotonic": deadline,
                     },
                 )
                 return result, "completed", (time.monotonic() - started) * 1000
@@ -282,12 +294,15 @@ class SpeculativePrefetcher:
             capability_id = handle.futures[future]
             tool_result, outcome, duration_ms = future.result()
             if outcome == "completed" and tool_result is not None and tool_result.success:
-                results[capability_id] = SpeculativeResult(
-                    capability_id=capability_id,
-                    tool_result=tool_result,
-                    user_id=handle.user_id,
-                    scope=handle.scope,
-                )
+                if self._result_size_bytes(tool_result) <= self._budget.max_result_bytes:
+                    results[capability_id] = SpeculativeResult(
+                        capability_id=capability_id,
+                        tool_result=tool_result,
+                        user_id=handle.user_id,
+                        scope=handle.scope,
+                    )
+                else:
+                    outcome = "discarded_result_budget"
             attempts.append(SpeculativeAttempt(capability_id, outcome, round(duration_ms, 3)))
         cancellation = current_turn_cancellation()
         now_cancelled = cancellation is not None and cancellation.cancelled
@@ -308,6 +323,15 @@ class SpeculativePrefetcher:
             )
 
         return SpeculationOutcome(results=results, attempts=tuple(attempts))
+
+    @staticmethod
+    def _result_size_bytes(result: ToolResult) -> int:
+        """Measure retained output without logging or preserving its content."""
+        try:
+            encoded = json.dumps(result.output, default=lambda _value: None).encode("utf-8")
+        except (TypeError, ValueError, OverflowError):
+            return 2**63 - 1
+        return len(encoded)
 
     def prefetch(
         self,
