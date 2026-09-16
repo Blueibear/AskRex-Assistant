@@ -132,15 +132,26 @@ non-empty, decodable audio, not placeholder text.
 ## Revision
 
 This document is authoritative as of backend base commit
-`60d67f2eb417b7eb5803f055ee794677989ca98c` (`detached HEAD`, verified
-directly from `.git/HEAD`, `.git/logs/HEAD`, and `.git/packed-refs`, where
-it is identical to `refs/remotes/origin/lead/production-readiness-live-test`
-at the time this revision was written). A prior draft of this section named
-`0d6420b656d6d1a40f3ecf552c03d03b93a2e285`, which does not match this HEAD
-and has been corrected. This change itself is uncommitted in this working
-tree — the deterministic supervisor creates the actual Git checkpoint on top
-of this base commit, so the final committed revision will be a descendant of
-`60d67f2eb417b7eb5803f055ee794677989ca98c`, not that hash itself.
+`6b35130ddd3f578dd6ce9a2df5dd000d71bc14ab` (`detached HEAD`, re-verified
+directly from `.git/HEAD`, `.git/logs/HEAD`, and `.git/packed-refs`; it is
+currently identical to `refs/remotes/origin/lead/production-readiness-live-test`).
+Two earlier drafts of this section named `0d6420b656d6d1a40f3ecf552c03d03b93a2e285`
+and, later, `60d67f2eb417b7eb5803f055ee794677989ca98c`; neither matches the
+current HEAD (the live branch tip advanced between those drafts and this
+one) and both are corrected here. Whoever next edits this file must
+re-read `.git/HEAD` rather than trust either superseded hash.
+
+This working tree's `.git/config` records `origin` as
+`C:\Users\james\rex-ai-test\rex-ai-production-readiness`, and this HEAD is
+the tip of `lead/production-readiness-live-test`, not `lead/us126-listening-privacy-tray`.
+Any coordination guidance that names `rex-ai-us126-final` as the worktree
+holding this contract is describing a different checkout than the one this
+document was verified against; the sole authoritative source for this
+contract is whichever worktree actually contains `rex/mobile_api/routes/voice.py`
+at this HEAD with the shapes below, and that must be re-confirmed by
+direct inspection in `rex-ai-us126-final` before this document is treated
+as binding there.
+
 `contract_vectors.json`'s `contract_version` field is `"2026-09-16.323.5"`;
 that version string, not any mailbox-quoted hash, is the way to confirm a
 copy is current absent a freshly computed SHA-256 (below).
