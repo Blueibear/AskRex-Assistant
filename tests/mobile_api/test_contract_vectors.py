@@ -10,6 +10,7 @@ whichever side introduced them.
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 from pathlib import Path
@@ -66,6 +67,19 @@ class TestVectorHygiene:
         assert vectors["statuses"]["normal_chat"] == "completed"
         assert vectors["http"]["chat_response"]["status"] == "completed"
         assert vectors["websocket"]["message_done"]["status"] == "completed"
+
+    def test_speech_audio_vectors_are_valid_wav_base64(self, vectors) -> None:
+        """The static examples must be decodable audio, not opaque text."""
+        for audio_key, mime_key, response_key in (
+            ("tts_base64", "tts_mime_type", "voice_response"),
+            ("audio_base64", "mime_type", "tts_response"),
+        ):
+            response = vectors["http"][response_key]
+            audio = base64.b64decode(response[audio_key], validate=True)
+            assert len(audio) == 48
+            assert audio[:4] == b"RIFF"
+            assert audio[8:12] == b"WAVE"
+            assert response[mime_key] == "audio/wav"
 
     def test_close_codes(self, vectors) -> None:
         from rex.mobile_api import websocket as ws

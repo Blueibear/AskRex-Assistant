@@ -1,5 +1,7 @@
 # STORY-S35 — Canonical mobile gateway speech (voice upload / TTS) wire contract
 
+Revision: `2026-09-17.s35.2`
+
 ## Status
 
 This document resolves the cross-instance mailbox conflict over the mobile
@@ -51,8 +53,8 @@ Response body (`200`), exact keys, no more and no fewer
   "response": "The downstairs lights are off.",
   "status": "completed",
   "tool_used": null,
-  "tts_base64": "<base64-audio>",
-  "tts_mime_type": "audio/mpeg"
+  "tts_base64": "UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAACAgICA",
+  "tts_mime_type": "audio/wav"
 }
 ```
 
@@ -104,8 +106,8 @@ Response body (`200`), exact keys
 ```json
 {
   "request_id": "9a2b1c3d-4444-4444-8444-444444444444",
-  "audio_base64": "<base64-audio>",
-  "mime_type": "audio/mpeg",
+  "audio_base64": "UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAACAgICA",
+  "mime_type": "audio/wav",
   "voice": "en-US-AriaNeural",
   "requested_voice": "default"
 }
@@ -125,28 +127,27 @@ Field notes:
 
 ## Audio vector encoding in fixtures
 
-`tests/mobile_api/contract_vectors.json` uses the placeholder token
-`"<base64-audio>"` for both `tts_base64` and `audio_base64`, consistent with
-this fixture's existing placeholder convention for other opaque values
-(`"<jwt>"`, `"<opaque-token>"`, `"<password>"`). Fixture consumers must treat
-angle-bracket tokens as non-literal placeholders, not as bytes to decode.
-Live conformance (that `tts_base64`/`audio_base64` decode to genuine
-provider audio bytes) is proven by the executable tests
-(`tests/mobile_api/test_voice_upload.py::test_valid_audio_transcribes_and_answers`,
-`tests/mobile_api/test_tts.py`), not by the static fixture value.
+`tests/mobile_api/contract_vectors.json` uses the same minimal valid WAV
+vector for both `tts_base64` and `audio_base64`:
+`UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAACAgICA`.
+It decodes to 48 bytes and has a RIFF/WAVE header, so the fixture pairs it
+with `audio/wav`. This fixture is a portable concrete example, not a claim
+that every configured provider produces WAV: `edge-tts` responses use
+`audio/mpeg`, while `xtts` and `pyttsx3` use `audio/wav`. Live conformance
+that routes base64-encode actual provider audio is proven by
+`tests/mobile_api/test_voice_upload.py::test_valid_audio_transcribes_and_answers`
+and `tests/mobile_api/test_tts.py`.
 
 ## Canonical fixture identity
 
 `tests/mobile_api/contract_vectors.json` in this backend worktree is the
 sole canonical copy for this contract. The `http.voice_response` and
-`http.tts_response` shapes in that file already match the route serializers
-and the tests above field-for-field; no fixture edit was required to reach
-this reconciliation. The mobile repository must synchronize its
+`http.tts_response` shapes in that file match the route serializers and the
+tests above field-for-field. The mobile repository must synchronize its
 `tests/contract/contract_vectors.json` (or equivalent) copy to be
-byte-identical to this file. Exact hash/object-ID computation requires
-executing a hashing tool; see the coordination response for this task for
-what could and could not be executed in this session, and treat only a
-supervisor/CI-executed hash as authoritative confirmation of byte-identity.
+byte-identical to this file. Use a byte-preserving copy, not a
+parsed/reformatted JSON write, then verify the SHA-256 published in the
+backend coordination response for this task.
 
 ## Non-goals of this document
 
