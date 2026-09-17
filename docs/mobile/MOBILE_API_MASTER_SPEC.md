@@ -373,12 +373,14 @@ Voice response:
   "request_id": "<request-id>",
   "transcript": "Turn off the downstairs lights",
   "response": "The downstairs lights are off.",
-  "status": "verified",
-  "tool_used": "home_assistant",
+  "status": "completed",
+  "tool_used": null,
   "tts_base64": "<base64-audio>",
   "tts_mime_type": "audio/mpeg"
 }
 ```
+
+`tool_used` is not currently wired to an identifier and stays `null`; `status` is currently always `completed` (never fabricated as `verified`) because this route only returns a conversational reply. `tts_base64`/`tts_mime_type` are present only when TTS succeeds and are otherwise absent from the body. See `docs/voice/S35_MOBILE_GATEWAY_SPEECH_CONTRACT.md` for the authoritative field-level contract.
 
 The first implementation uses authenticated JSON with base64 audio rather than placing text or bearer material in a URL. A short-lived protected artifact endpoint may replace it later without changing the security requirements.
 
@@ -398,9 +400,12 @@ TTS validates text length, resolves only an allowed/available voice, avoids logg
   "request_id": "<request-id>",
   "audio_base64": "<base64-audio>",
   "mime_type": "audio/mpeg",
-  "voice": "default"
+  "voice": "en-US-AriaNeural",
+  "requested_voice": "default"
 }
 ```
+
+`voice` is the concrete resolved provider voice ID that was used to synthesize; `requested_voice` echoes the client's request, normalized to `"default"` when absent/blank.
 
 ### 6.5 Explicit scaffolds
 
