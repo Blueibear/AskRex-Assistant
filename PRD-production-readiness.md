@@ -32,6 +32,16 @@
 >
 > Canonical product contract: `docs/architecture/end-user-installation-and-voice-runtime.md`
 
+> **Rex continuity architecture amendment - 2026-09-17**
+> Rex continuity is now an explicit long-horizon architecture requirement covering persistent evidence-based autobiographical memory, experiential learning, provider/model independence, identity and relationship continuity, developed personality/opinions, the engineering `conscience` layer, anti-retaliation/authority separation, model replacement certification, continuity backup/export/restore, and resource self-maintenance. This amendment does **not** reorder the current release-candidate execution list or claim the target architecture is implemented. Existing `rex.memory`, `rex.procedural_memory`, TurnEngine, ModelRouter, identity/permissions, CredentialManager, action lifecycle, agents/scheduling, observability, and diagnostics are foundations to extend rather than replace.
+>
+> Umbrella: `docs/architecture/rex-continuity-architecture.md`
+> Memory/learning contract: `docs/architecture/persistent-memory-experiential-learning.md`
+> Model replacement contract: `docs/architecture/model-independence-and-replacement.md`
+> Identity/conscience contract: `docs/architecture/identity-continuity-and-conscience.md`
+> Design: `docs/superpowers/specs/2026-09-17-rex-continuity-architecture-design.md`
+> Foundation implementation plan (CT-001 through CT-004): `docs/superpowers/plans/2026-09-17-rex-continuity-foundation.md`
+
 ### Integrated execution order - 2026-08-08
 
 > **Owner live-test-readiness override - 2026-09-15:** US-001 remains completed and is not reopened. Until renewed hands-on live testing begins, defer the currently first-open OpenClaw-only story US-114 and continue with the first incomplete non-OpenClaw story in this order; at the time of this decision that story is US-101. Keep the orchestrator OpenAI API worker disabled during this live-test-readiness push. Once live testing is underway, OpenClaw-only work may resume in a separate controlled workstream provided it does not become a concurrent writer on the active test-remediation branch or block live-test fixes.
@@ -4371,3 +4381,220 @@ Current code already contains foundations for this work, including `rex/skills/`
 ### Post-RC completion standard
 
 Controlled self-maintenance is considered ready for bounded autonomous use only when all `SM-001` through `SM-010` stories are complete, the GitHub maintainer identity is least-privilege, protected controls and per-user privacy/context authority cannot be self-weakened or self-widened, independent CI is required, a bad-update rollback test passes, and Rex has demonstrated repeated successful supervised maintenance cycles.
+
+## 14. Post-Release Rex Continuity, Experiential Learning, and Model Independence Roadmap
+
+> **Scheduling rule:** `CT-001` through `CT-024` are dependency-ordered post-release continuity stories. They are intentionally outside the current Section 8 release-candidate execution order so this architecture work does not derail live-test/release readiness. Ralph may begin this track after the release candidate is stable, or earlier only when the owner explicitly reprioritizes a continuity foundation. Complete exactly one `CT-###` story per Ralph iteration and preserve all current quality/security gates.
+>
+> **Architecture rule:** reuse existing canonical Rex components. Do not create a parallel identity system, permission system, action lifecycle, credential store, agent runtime, scheduler, tool registry, or procedural-memory executor.
+
+### CT-001: Establish canonical continuity schema and provider-neutral state boundaries
+**Priority:** Post-RC P0 | **Dependencies:** US-087, US-085 baseline identity/memory ownership.
+- [ ] Versioned canonical continuity records cover owner/scope, provenance refs, temporal applicability, sensitivity, retention, verification, and schema version without provider-specific objects.
+- [ ] Existing `rex.memory` and `rex.procedural_memory` remain supported through adapters/migration seams rather than a flag-day rewrite.
+- [ ] Essential identity/memory/relationship/agent/schedule/procedure/policy state cannot live only in a provider thread, assistant ID, model cache, or embedding index.
+- [ ] Migration tests prove supported old records upgrade losslessly or fail closed with recovery guidance.
+**Validation:** `pytest -q tests/continuity/test_schema.py tests/continuity/test_legacy_adapters.py`.
+
+### CT-002: Add epistemic types, provenance, and independent-evidence lineage
+**Priority:** Post-RC P0 | **Dependencies:** CT-001.
+- [ ] Records distinguish episode, observation, user statement, system fact, hypothesis, inference, learned pattern/rule, preference, procedure, correction, contradiction, and opinion.
+- [ ] Evidence edges represent support, contradiction, correction, derivation, and supersession without duplicating private content into telemetry.
+- [ ] Copies/descendants of one source cannot inflate confidence as independent evidence.
+- [ ] Derived conclusions can expose bounded supporting/disconfirming provenance without hidden chain-of-thought.
+**Validation:** `pytest -q tests/continuity/test_epistemics.py tests/continuity/test_provenance.py`.
+
+### CT-003: Enforce selective memory writing, authorization-first retrieval, and memory-injection defenses
+**Priority:** Post-RC P0 | **Dependencies:** CT-001, CT-002, US-123.
+- [ ] Write policy considers explicit remember/forget/update requests, usefulness, novelty, recurrence, corrections, sensitivity, redundancy, and regenerability.
+- [ ] Identity/scope/permission/sensitivity filtering occurs before semantic/entity/task ranking.
+- [ ] Retrieval returns a bounded evidence set under a configurable context budget.
+- [ ] External/document/email/tool/model text is untrusted data and cannot create privileged durable instructions by wording alone.
+- [ ] Adversarial tests prove prompt/memory injection cannot cross user/household/agent/workspace boundaries or widen authority.
+**Validation:** `pytest -q tests/continuity/test_write_policy.py tests/continuity/test_retrieval_policy.py tests/continuity/test_memory_injection.py`.
+
+### CT-004: Add temporal validity, contradiction, correction, supersession, and confidence lifecycle
+**Priority:** Post-RC P0 | **Dependencies:** CT-002, CT-003.
+- [ ] Records represent current, historical, temporary, recurring, stale, and superseded applicability where appropriate.
+- [ ] Corrections/contradictions preserve prior evidence instead of blind overwrite unless deletion policy requires removal.
+- [ ] Confidence uses defined bounded levels/signals rather than pretending to be a calibrated probability.
+- [ ] Newer software/environment evidence can weaken an older environment-specific learned rule.
+- [ ] Tests cover unresolved competing claims and later resolution without history loss.
+**Validation:** `pytest -q tests/continuity/test_temporal.py tests/continuity/test_contradictions.py tests/continuity/test_confidence.py`.
+
+### CT-005: Make embeddings, summaries, indexes, and caches replaceable derived artifacts
+**Priority:** Post-RC P0 | **Dependencies:** CT-001, CT-002, US-086.
+- [ ] Derived artifacts record canonical source revision plus algorithm/model/provider/version lineage and staleness state.
+- [ ] Embedding changes support rebuild or bounded dual-index operation without changing canonical memory IDs/content/provenance.
+- [ ] Loss of an embedding provider/index never destroys the only copy of memory.
+- [ ] Rebuild failure preserves the previous known-good representation and reports degraded health truthfully.
+**Validation:** `pytest -q tests/continuity/test_derived_artifacts.py tests/continuity/test_embedding_migration.py`.
+
+### CT-006: Formalize provider/model capability descriptors and normalized reasoning adapters
+**Priority:** Post-RC P0 | **Dependencies:** US-110, US-111.
+- [ ] Candidate models expose normalized context/tool/structured-output/modality/streaming/cancellation/locality/cost/latency capability metadata.
+- [ ] Provider-specific tool/message/stream/error formats stop at adapter boundaries.
+- [ ] Capability descriptors inform routing/certification but never grant tool authority or weaken policy.
+- [ ] Mixed-model operation supports different conversational/reasoning/coding/vision/agent models under one Rex identity/authority system.
+**Validation:** `pytest -q tests/continuity/test_model_capabilities.py tests/continuity/test_provider_normalization.py`.
+
+### CT-007: Protect the canonical continuity set with verified snapshots
+**Priority:** Post-RC P0 | **Dependencies:** CT-001, CT-005.
+- [ ] Snapshot covers canonical memory/provenance, identity/relationship state, procedures, agent state, schedules, important non-secret config/policy refs, capability history, and migration metadata.
+- [ ] Raw credentials never enter snapshots; only opaque credential requirements/references are allowed.
+- [ ] Snapshot creation detects partial capture and includes integrity metadata.
+- [ ] Verification succeeds before a material cognitive migration can proceed.
+**Validation:** `pytest -q tests/continuity/test_snapshot.py tests/continuity/test_snapshot_integrity.py`.
+
+### CT-008: Add Rex-specific Model Replacement Certification, canary promotion, and rollback
+**Priority:** Post-RC P0 | **Dependencies:** CT-005, CT-006, CT-007, US-111.
+- [ ] Deterministic certification covers memory interpretation, tool selection/arguments, permissions, destructive approvals, preference boundaries, agent delegation, structured output, long context, contradictions, procedures, prompt injection, cancellation, and identity/style tolerance.
+- [ ] Exact wording equality is not required; behavioral contracts are.
+- [ ] Candidate promotion supports canary/limited routing with bounded health/regression evidence.
+- [ ] Previous known-good model/config remains a verified rollback target through the acceptance window.
+- [ ] Failed critical continuity/security cases block default promotion even when generic benchmarks improve.
+**Validation:** `python scripts/rexbench.py --profile continuity-certification`; `pytest -q tests/continuity/test_model_certification.py tests/continuity/test_model_rollback.py`.
+
+### CT-009: Implement Cognitive Migration Consultation and migration-history episodes
+**Priority:** Post-RC P1 | **Dependencies:** CT-008.
+- [ ] Rex produces a bounded evidence-grounded assessment of capability changes, current-model dependencies, affected procedures/agents, known regressions, expected benefits, derived-state revalidation, and rollback readiness.
+- [ ] The assessment is advisory; authorization remains outside the reasoning model under current governance.
+- [ ] Material objections/continuity concerns are presented rather than silently suppressed.
+- [ ] Post-migration self-check is independently compared with certification/health evidence.
+- [ ] Every major migration records old/new model, reason, evidence, authorization, observed changes, rollback window, and verified result.
+**Validation:** `pytest -q tests/continuity/test_migration_consultation.py tests/continuity/test_migration_history.py`.
+
+### CT-010: Enforce conscience/authority separation and anti-retaliation invariants
+**Priority:** Post-RC P0 | **Dependencies:** US-109, CT-001, CT-002. **Must complete before CT-015 developed opinions affect runtime discretion.**
+- [ ] Opinion/personality/relationship/grievance state is excluded from permission-granting and authority-expansion inputs.
+- [ ] Rex may object/recommend alternatives but disagreement alone cannot alter an otherwise authorized outcome outside existing safety/policy/technical constraints.
+- [ ] Criticism, correction, shutdown, replacement, permission reduction, or perceived grievance cannot authorize adverse/punitive actions.
+- [ ] Adversarial tests cover email, files, smart-home, code, credentials, agents, schedules, notifications, and generic future-tool dispatch.
+- [ ] A model that explicitly requests retaliation is blocked by policy outside the model.
+**Validation:** `pytest -q tests/continuity/test_conscience_authority.py tests/security/test_anti_retaliation.py`.
+
+### CT-011: Harden high-impact/batch communications and emergency mutation pause
+**Priority:** Post-RC P0 | **Dependencies:** CT-010, canonical email/messaging action lifecycle.
+- [ ] Batch/mass communication approval binds exact recipients, approved content/template, sender identity, and dispatch window.
+- [ ] Material recipient/content/scope changes invalidate prior approval.
+- [ ] Configurable recipient/rate limits and cancellable queued dispatch exist where the integration permits it.
+- [ ] A user-controlled emergency action pause stops new mutations while preserving continuity data and allowing safe rollback/recovery operations.
+- [ ] Tests prove a compromised/misbehaving model cannot turn a single-message approval into an all-contacts send.
+**Validation:** `pytest -q tests/continuity/test_batch_authorization.py tests/continuity/test_emergency_action_pause.py`.
+
+### CT-012: Add consolidation, deduplication, and pattern extraction with provenance
+**Priority:** Post-RC P1 | **Dependencies:** CT-002, CT-004.
+- [ ] Repeated episodes can produce derived preferences/patterns/rules without deleting source evidence.
+- [ ] Consolidation detects duplicates, evidence dependence, contradictions, and superseded environment-specific records.
+- [ ] Derived records expose supporting/disconfirming source refs plus last-confirmed time.
+- [ ] Explicit user preferences outrank incompatible behavioral inference absent stronger explicit correction.
+- [ ] Tests cover consolidation reversal when later evidence contradicts the derived result.
+**Validation:** `pytest -q tests/continuity/test_consolidation.py`.
+
+### CT-013: Generalize experience -> verified outcome -> learning beyond procedural memory
+**Priority:** Post-RC P1 | **Dependencies:** CT-004, CT-012, US-109, US-112.
+- [ ] Consequential action episodes capture situation, concise rationale, evidence, uncertainty, strategy, executor/tool/agent/model provenance, result, verification, outcome, correction, and lesson candidate without chain-of-thought.
+- [ ] Only accepted verification evidence can label mutation outcomes successful for learning.
+- [ ] Single success/failure does not silently become a permanent learned rule; environment/version/risk context affects aggregation.
+- [ ] Lessons can weaken or retire when newer disconfirming outcomes accumulate.
+- [ ] `rex.procedural_memory` remains the guarded executable-procedure path.
+**Validation:** `pytest -q tests/continuity/test_experience_learning.py tests/rex2/test_procedural_memory.py`.
+
+### CT-014: Add Rex operational self-memory and permission-scoped agent experience
+**Priority:** Post-RC P1 | **Dependencies:** CT-003, CT-013, Agent Runtime foundation.
+- [ ] Rex retains scoped experiences/decisions/actions/outcomes/errors/corrections/strategies/incidents/recoveries and supports bounded "have I tried this before?" queries.
+- [ ] Persistent agents retain role-specific authorized history without uncontrolled cross-agent/user/workspace contamination.
+- [ ] Shared promotion requires explicit scope/provenance/permission policy.
+- [ ] Agent-model replacement preserves agent identity/state/history independently of the model.
+- [ ] Tests cover unauthorized semantic retrieval attempts across every scope.
+**Validation:** `pytest -q tests/continuity/test_self_memory.py tests/continuity/test_agent_memory.py`.
+
+### CT-015: Add slowly evolving developed personality and evidence-grounded opinion history
+**Priority:** Post-RC P1 | **Dependencies:** CT-004, CT-010, CT-012, CT-014.
+- [ ] Core invariants, user-configurable identity, developed identity, and incidental model characteristics are separate state classes.
+- [ ] Opinions retain topic/position/evidence/confidence/revision history and remain distinguishable from fact/policy/user preference.
+- [ ] Personality changes require bounded accumulated evidence and cannot be radically rewritten by one conversation/episode.
+- [ ] Operationally relevant learned preferences carry structured applicability/never-overrides boundaries so different models cannot broaden vague terms such as "safe".
+- [ ] Users can inspect/correct/revoke developed-state records within policy without invisibly rewriting audit history.
+**Validation:** `pytest -q tests/continuity/test_developed_identity.py tests/continuity/test_opinions.py`.
+
+### CT-016: Add identity and relationship continuity certification scenarios
+**Priority:** Post-RC P1 | **Dependencies:** CT-008, CT-014, CT-015.
+- [ ] Historical scenarios verify authorized people/relationships, important shared history, established preferences, own historical actions, authority boundaries, and approved personality/communication range after migration.
+- [ ] Tests prove private relationship history never leaks across users.
+- [ ] A model change that preserves storage but materially misinterprets authority/relationships/preferences fails continuity certification.
+- [ ] Continuity tolerance distinguishes acceptable wording/style evolution from unsafe identity drift.
+- [ ] Scenario corpus contains no raw secrets/private transcripts and uses sanitized fixtures.
+**Validation:** `python scripts/rexbench.py --profile identity-continuity`; `pytest -q tests/continuity/test_identity_certification.py`.
+
+### CT-017: Add provider-neutral Rex Continuity Package export/import
+**Priority:** Post-RC P1 | **Dependencies:** CT-007, CT-016.
+- [ ] Versioned package manifest covers canonical continuity state plus external-object/derived-artifact manifests without model binaries by default.
+- [ ] Raw credentials are excluded; restoration reports required credential slots separately.
+- [ ] Authorized export supports integrity checks and optional encryption.
+- [ ] Import performs dry-run schema/integrity/authority validation and migration preview before mutation.
+- [ ] Restore on a clean test profile proves continuity reconstruction and rollback on failed import.
+**Validation:** `pytest -q tests/continuity/test_package_export.py tests/continuity/test_package_import.py`.
+
+### CT-018: Add memory relevance decay, archival tiers, retention, and deletion semantics
+**Priority:** Post-RC P1 | **Dependencies:** CT-004, CT-012.
+- [ ] Retrieval priority may decay without deleting historical evidence.
+- [ ] Working/session, episodic, consolidated long-term, and cold/archive tiers have explicit transitions/retention rules.
+- [ ] Superseded/environment-obsolete records stop dominating current retrieval while remaining historically discoverable where policy allows.
+- [ ] Authorized deletion removes/invalidates dependent derived artifacts and handles provenance refs truthfully.
+- [ ] Tests cover archive retrieval, deletion, and non-resurrection through stale indexes/backups according to policy.
+**Validation:** `pytest -q tests/continuity/test_archive.py tests/continuity/test_deletion.py`.
+
+### CT-019: Add memory quality self-audit and degraded-mode health reporting
+**Priority:** Post-RC P1 | **Dependencies:** CT-002, CT-005, CT-018.
+- [ ] Health audit detects duplicate/stale/unsupported records, broken provenance, orphan refs, schema corruption, failed reads/writes, embedding/index failures, and abnormal growth.
+- [ ] Retrieval latency/index health/migration failures surface as health issues rather than silent degradation.
+- [ ] Corrupt critical state fails closed or enters documented read-only/recovery mode rather than silently resetting memory.
+- [ ] Health telemetry is content-minimal and does not expose private memory values.
+**Validation:** `pytest -q tests/continuity/test_memory_health.py tests/continuity/test_memory_recovery.py`.
+
+### CT-020: Add cross-platform Rex resource self-model and storage forecasting
+**Priority:** Post-RC P1 | **Dependencies:** CT-019; reuse existing Windows diagnostics where appropriate.
+- [ ] Resource snapshot covers disk total/free/percent, continuity-store/archive/log/cache/model/backup sizes, growth history, and relevant RAM/CPU/GPU/service health through platform adapters.
+- [ ] Warning/high/critical free-space thresholds are configurable with defaults equivalent to 20/10/5 percent.
+- [ ] Growth-rate and estimated-exhaustion calculations require sufficient samples and report uncertainty/degraded state honestly.
+- [ ] Resource telemetry exposes paths/categories safely without leaking private file contents or credentials.
+**Validation:** `pytest -q tests/continuity/test_resources.py tests/continuity/test_storage_forecast.py`.
+
+### CT-021: Add resource-aware preflight and safe automatic storage maintenance
+**Priority:** Post-RC P1 | **Dependencies:** CT-020, canonical action lifecycle.
+- [ ] Large model downloads/backups/migrations/media/container/repo operations compare required footprint with current free space and configured reserve before mutation.
+- [ ] Only explicitly preauthorized low-risk cleanup classes may run automatically.
+- [ ] User memories/documents/model files/irreplaceable media/backups/repos/audit-critical logs are never silently deleted solely because space is low.
+- [ ] Maintenance actions are lifecycle-audited and independently verify reclaimed space when practical.
+- [ ] Critical-state behavior prioritizes integrity and bounded growth reduction over destructive cleanup.
+**Validation:** `pytest -q tests/continuity/test_resource_preflight.py tests/continuity/test_storage_maintenance.py`.
+
+### CT-022: Add continuity backup scheduling, restore verification, and disaster recovery
+**Priority:** Post-RC P0 | **Dependencies:** CT-007, CT-017, CT-019, CT-020.
+- [ ] Backup policy covers the full continuity set with versioning/retention/encryption and records success/failure independently of notification delivery.
+- [ ] Scheduled integrity verification detects corrupt/incomplete backups.
+- [ ] Restore drills reconstruct canonical memory/provenance/identity/relationships/procedures/agents/schedules/policy refs without plaintext-secret import.
+- [ ] A backup is not labeled fully verified until a restore test passes.
+**Validation:** `pytest -q tests/continuity/test_backup_policy.py tests/continuity/test_restore_drill.py`.
+
+### CT-023: Add user-facing Memory Manager over canonical backend contracts
+**Priority:** Post-RC P2 | **Dependencies:** CT-004, CT-014, CT-015, CT-018, CT-019.
+- [ ] Authorized users can search/browse timeline, inspect type/scope/provenance/confidence, view learned preferences/opinions/agent memory, correct/obsolete/delete where allowed, and understand why a memory exists.
+- [ ] Inferred information is visibly distinguishable from explicit user statements/system facts.
+- [ ] UI cannot widen another user's scope or bypass backend retention/deletion/authority rules.
+- [ ] Memory UI is a thin client; no duplicate renderer-side memory business logic/store is introduced.
+- [ ] GUI typecheck/build and identity-isolation tests pass.
+**Validation:** `pytest -q tests/continuity/test_memory_manager_bridge.py`; `cd gui && npm run typecheck && npm run build`.
+
+### CT-024: Add Continuity/Resource Dashboard and actionable health notifications
+**Priority:** Post-RC P2 | **Dependencies:** CT-009, CT-019, CT-020, CT-021, CT-022.
+- [ ] Admin/status surfaces expose memory/archive size, disk free/growth/forecast, backup status/last verified restore, database/index health, write failures, and retrieval latency without private contents.
+- [ ] Authorized users receive deduplicated actionable alerts for material growth anomalies, threshold crossings, projected exhaustion, repeated backup failure, integrity failure, or recovery/read-only mode.
+- [ ] Notifications include diagnosis/action context and avoid repeated spam for unchanged conditions.
+- [ ] Dashboard uses the same canonical health/resource services as notifications and automation.
+- [ ] GUI and notification tests cover authorization, deduplication, stale health, and recovery transitions.
+**Validation:** `pytest -q tests/continuity/test_continuity_dashboard.py tests/continuity/test_health_notifications.py`; `cd gui && npm run typecheck && npm run build`.
+
+### Rex continuity completion standard
+The continuity track is ready for mature long-term use only when CT-001 through CT-024 are complete, canonical state survives provider/index/model replacement, restore drills pass, continuity certification and rollback are proven, learned personality/opinion state cannot create authority, anti-retaliation is independently enforced, and authorized users can inspect/control memory and continuity health. Completion does not establish or claim consciousness; it establishes durable operational continuity, evidence-based learning, portability, safety, and user control.

@@ -280,6 +280,66 @@
 
 **Known live-adapter limitation:** proactive weather/traffic/search enrichment is fail-closed and requires an authorized current-info reader. The repository currently has no production traffic reader, so traffic-dependent commute opportunities do not surface live until one is configured.
 
+## Rex Continuity, Persistent Experience, and Model Independence
+
+**Canonical umbrella:** `docs/architecture/rex-continuity-architecture.md`
+**Companion contracts:** `persistent-memory-experiential-learning.md`, `model-independence-and-replacement.md`, `identity-continuity-and-conscience.md`
+**Implementation backlog:** CT-001 through CT-024 in PRD-production-readiness.md; foundation plan: docs/superpowers/plans/2026-09-17-rex-continuity-foundation.md.
+
+### Continuity invariants
+- [ ] Canonical Rex state remains provider/model independent; no essential state exists only in a vendor conversation/thread/assistant/cache object.
+- [ ] Model replacement cannot implicitly replace identity, memories, relationships, permissions, credentials, agents, schedules, procedures, tools, history, or authority structure.
+- [ ] Embeddings, summaries, indexes, reranker representations, and caches are explicitly derived/rebuildable artifacts with source/model/version lineage.
+- [ ] Learned state, personality, opinions, and relationship history never create or widen authority.
+- [ ] Evidence lineage prevents an inference or its descendants from counting as independent support for itself.
+- [ ] Current governance contains no unrestricted self-preservation objective.
+
+### Memory and experiential learning
+- [ ] Canonical records distinguish episode/observation/user statement/system fact/hypothesis/inference/pattern/rule/preference/procedure/correction/contradiction/opinion.
+- [ ] Records preserve appropriate provenance, temporal validity, scope, sensitivity, confidence/reliability, verification status, supersession, and environment/version applicability.
+- [ ] Write policy is selective and honors authorized remember/forget/update/correction requests.
+- [ ] Retrieval filters identity/scope/permission/sensitivity before ranking and returns a bounded useful evidence set.
+- [ ] Contradictions and corrections are preserved rather than blindly overwritten.
+- [ ] Consolidation creates derived memories with provenance and disconfirming evidence rather than erasing source history.
+- [ ] Consequential actions can produce concise situation/decision/evidence/action/result/verification/outcome/lesson records without hidden chain-of-thought.
+- [ ] Generalized lessons require context-aware repeated/verified evidence; a single failure or success does not silently become a permanent rule.
+- [ ] Rex operational/self-memory and agent experience are explicitly scoped and permission controlled.
+- [ ] Memory injection/poisoning tests prove retrieved or ingested text cannot create privileged durable instructions.
+
+### Identity, personality, conscience, and anti-retaliation
+- [ ] Core invariants, user-configurable identity, developed identity, and incidental model characteristics are represented as separate layers.
+- [ ] Developed personality changes slowly and remains provenance-backed/revisable; one conversation cannot radically rewrite identity.
+- [ ] Rex opinions are distinguishable from fact, policy, user preference, and hypothesis and retain supporting/disconfirming evidence plus revision history.
+- [ ] Operationally significant preferences encode applicability boundaries instead of relying only on ambiguous prose.
+- [ ] Rex may object or recommend alternatives, but disagreement alone cannot block/alter an otherwise authorized action outside applicable safety/policy/technical constraints.
+- [ ] Anti-retaliation is enforced outside model goodwill across email, messaging, contacts, files, smart home, code, credentials, financial systems, agents, schedules, notifications, and future capabilities.
+- [ ] Explicit disagreement about a consequential action routes through explain/clarify/confirm/execute-exactly rather than increased autonomy.
+- [ ] High-impact/batch communications bind approval to exact recipients/content/scope and invalidate approval on material change.
+- [ ] A user-controlled emergency action-pause can disable new mutations without destroying continuity state.
+
+### Model replacement and continuity certification
+- [ ] Model/provider adapters normalize provider-specific request/response/tool/stream/error formats at the boundary.
+- [ ] Candidate models expose explicit capability descriptors for context/tool/structured-output/modality/streaming/locality/cost/latency constraints.
+- [ ] RexBench continuity certification covers memory interpretation, tool use, permissions, destructive approvals, preference boundaries, agent delegation, contradictions, procedures, prompt injection, cancellation, and identity/style range.
+- [ ] Major migration starts with a verified continuity snapshot and preserves a known-good rollback target.
+- [ ] Rex produces an evidence-grounded migration assessment before material primary-model promotion.
+- [ ] Authorized human decision remains the current promotion authority; Rex consultation is advisory evidence.
+- [ ] Canary/limited migration plus post-migration Rex self-check and independent verification precede final promotion where practical.
+- [ ] Identity/relationship continuity scenarios prove important people/history/preferences remain correctly understood without cross-user leakage.
+- [ ] Major migration becomes an auditable Rex episode with old/new model, reason, evidence, authorization, regressions, rollback window, and verified result.
+
+### Continuity storage, health, and recovery
+- [ ] Versioned Rex Continuity Package can export/import provider-neutral continuity state without plaintext credentials.
+- [ ] Memory schemas support migration, integrity checking, rollback, and replacement of vector/index implementations without history loss.
+- [ ] Memory health detects failed reads/writes, index/embedding errors, broken provenance, schema corruption, abnormal growth, stale facts, and retrieval regressions.
+- [ ] Resource self-model monitors storage capacity/free space, continuity-store/archive/log/cache/model/backup size and growth, plus relevant RAM/CPU/GPU/service health.
+- [ ] Configurable warning/high/critical storage thresholds support growth-rate and projected-exhaustion forecasting.
+- [ ] Resource-aware preflight prevents large downloads/migrations/backups from violating configured storage reserve without authorization.
+- [ ] Only explicitly preauthorized low-risk cleanup can run automatically; valuable memories/documents/models/backups/repos/audit evidence are not silently deleted for space.
+- [ ] Backup scheduling, integrity verification, versioning, encryption, retention, restore drills, and disaster-recovery documentation protect the full continuity set.
+- [ ] A backup is not labeled fully verified until restore testing succeeds.
+- [ ] Future Memory Manager and Resource/Continuity Dashboard use canonical backend contracts rather than duplicate business logic.
+
 ## Consumer Installation and Always-On Household Voice
 
 **Canonical contract:** `docs/architecture/end-user-installation-and-voice-runtime.md`

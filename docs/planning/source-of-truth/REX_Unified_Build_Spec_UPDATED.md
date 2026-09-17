@@ -449,19 +449,31 @@ Rex needs several kinds of memory, not one pile of saved facts.
 | Project memory | Status of Rex, n8n, ComfyUI, Home Assistant, and Nasteeshirts work |
 | Device memory | Home Assistant aliases and device behavior |
 | Business memory | Nasteeshirts policies, tone, products, workflows, SEO patterns |
+| Agent memory | Role-scoped operational history for persistent agents |
+| Rex operational/self-memory | Consequential actions, outcomes, errors, corrections, incidents, recoveries, and capability/environment changes |
+| Relationship memory | Authorized shared history, relationship facts, routines, and meaningful milestones |
+| Developed opinion/personality state | Evidence-grounded, slowly changing opinions and interaction tendencies; never policy or authority |
 
-### Memory rules
+### Rex continuity contract
+
+Long-term memory is governed by the canonical [Rex Continuity Architecture](../../architecture/rex-continuity-architecture.md) and its companion contracts for [persistent memory and experiential learning](../../architecture/persistent-memory-experiential-learning.md), [model independence and replacement](../../architecture/model-independence-and-replacement.md), and [identity/continuity/conscience](../../architecture/identity-continuity-and-conscience.md).
 
 Rex should:
 
-1. Save only useful information.
-2. Separate James and Cole's memory.
-3. Ask before saving sensitive details.
-4. Store timestamps and source context.
-5. Allow memory search.
-6. Allow memory editing and deletion.
-7. Use memory only when relevant.
-8. Avoid treating old memory as automatically current.
+1. Save only useful information; memory is not an unlimited transcript dump.
+2. Separate users, households, workspaces, projects, and agent scopes before retrieval/ranking.
+3. Keep credentials in CredentialManager/vault infrastructure rather than general memory.
+4. Preserve provenance, temporal validity, corrections, contradictions, and confidence where they materially affect reliability.
+5. Distinguish episodes, observations, user statements, system facts, hypotheses, inferences, learned patterns/rules, preferences, procedures, corrections, contradictions, and Rex opinions.
+6. Treat embeddings, summaries, indexes, and caches as rebuildable derived artifacts rather than canonical memory.
+7. Retrieve the smallest useful authorized evidence set, not everything semantically similar.
+8. Allow authorized inspection, search, correction, obsolescence, retention control, and deletion.
+9. Avoid treating old memory as automatically current; support supersession and environment/version applicability.
+10. Never let stored inference count as independent evidence for itself or let learned state widen permissions.
+11. Learn reusable behavior only from appropriately verified outcomes and preserve disconfirming evidence.
+12. Preserve Rex continuity across model/provider/index/machine migrations and verify continuity before promotion.
+13. Allow developed personality/opinions to shape advice and bounded discretion, while keeping authorization and constitutional policy external and authoritative.
+14. Enforce anti-retaliation: disagreement, criticism, shutdown, replacement, or permission reduction never justify adverse or punitive action.
 
 ### Why it matters
 
@@ -1203,6 +1215,24 @@ If Rex cannot pass its most common real-world requests, then "smart" is just a c
 8. Backup and restore
 9. Plugin manager
 10. Guided setup flow
+
+### Phase 5: Make Rex Continuous and Experiential
+
+1. Canonical provider-neutral continuity state and schema versioning
+2. Evidence/provenance graph, epistemic types, contradiction and temporal handling
+3. Authorization-first selective memory writing/retrieval with injection/poisoning defenses
+4. Replaceable embedding/index lineage and migration/rebuild support
+5. Experience -> verified outcome -> learning and consolidation
+6. Rex operational/self-memory and permission-scoped agent experience
+7. Developed personality/opinions with revision history and structured applicability boundaries
+8. Conscience/authority separation, anti-retaliation, conflict-safe execution, and high-impact action gates
+9. Model capability negotiation, replacement certification, canary migration, Rex consultation, and rollback
+10. Identity/relationship continuity certification across model/runtime migrations
+11. Provider-neutral Rex Continuity Package for authorized backup/export/import/disaster recovery
+12. Memory decay/archive, health self-audit, resource forecasting, safe storage maintenance, and verified restore drills
+13. Memory Manager plus continuity/resource health UI and actionable notifications
+
+Phase 5 is dependency-ordered post-release maturity work unless the owner explicitly reprioritizes a continuity foundation. Its architecture is fixed early so earlier features do not create provider lock-in or unsafe learned-authority assumptions.
 
 ---
 

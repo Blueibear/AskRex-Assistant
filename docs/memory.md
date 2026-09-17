@@ -1,5 +1,7 @@
 # Memory System
 
+> **Current implementation vs. continuity target:** This document describes the currently implemented `rex.memory` working/long-term stores and their user-isolation behavior. The long-term target architecture is defined by the [Rex Continuity Architecture](architecture/rex-continuity-architecture.md) and [Persistent Memory, Experiential Learning, and Resource Self-Maintenance](architecture/persistent-memory-experiential-learning.md). Do not interpret today's two-store implementation as the final memory taxonomy or create a competing memory subsystem.
+
 Rex includes a comprehensive memory system with two types of memory:
 
 1. **Working Memory** - Short-term buffer for recent interactions and context

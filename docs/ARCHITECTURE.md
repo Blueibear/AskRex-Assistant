@@ -148,6 +148,14 @@ and do not advance on `unverified`, `failed`, `cancelled`, or other non-success 
 Home Assistant preserves expected/actual postcondition evidence, and OpenClaw results
 carry the same lifecycle into their audit/workflow paths.
 
+### Rex continuity architecture
+
+`docs/architecture/rex-continuity-architecture.md` is the canonical umbrella for long-lived Rex continuity. Models/providers are replaceable reasoning resources; canonical identity, memory, authority, relationship state, procedures, agents, schedules, and history live above them. The companion contracts define persistent memory/experiential learning/resource self-maintenance, model independence/replacement, and identity/continuity/conscience.
+
+Embeddings, summaries, indexes, provider conversation objects, and caches are derived artifacts and must remain rebuildable from provider-neutral canonical state. Major cognitive migrations require a verified continuity snapshot, capability comparison, evidence-grounded Rex consultation, independent compatibility/security/continuity tests, explicit authorized promotion, canary/rollback where practical, post-migration self-check, and independent verification.
+
+Developed personality/opinions may influence advice and choices inside already delegated discretion but may never widen authority. Rex may disagree, but disagreement, criticism, correction, shutdown, model replacement, permission reduction, or perceived grievance can never justify retaliation, covert outcome substitution, or unrelated mutation. Authorization and the canonical action lifecycle remain external constraints.
+
 ### Guarded procedural experience memory
 
 `rex/procedural_memory.py` is deliberately separate from normal semantic/episodic/preference
