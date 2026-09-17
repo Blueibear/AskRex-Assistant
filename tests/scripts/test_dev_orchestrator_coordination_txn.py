@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 
@@ -61,6 +61,29 @@ def test_coordination_context_strips_utf8_bom_from_external_markdown(tmp_path: P
 
     assert "\ufeff" not in context
     assert "# Message" in context
+
+
+def test_coordination_context_omits_deferred_issue_and_shows_owner_constraints(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "coord"
+    (root / "mailbox" / "backend").mkdir(parents=True)
+    (root / "PROTOCOL.md").write_text("# Protocol\n", encoding="utf-8")
+    (root / "AGENT_BACKEND.md").write_text("Role: backend\n", encoding="utf-8")
+    _issue(root, "STORY-S35-SPEECH-ROUTER", owner="backend")
+    _issue(root, "TEST-005", owner="backend")
+
+    context = build_coordination_context(
+        root,
+        "backend",
+        deferred_issue_ids=("STORY-S35-SPEECH-ROUTER",),
+        deferred_task_prefixes=("S35-",),
+    )
+
+    assert "issues/TEST-005.md" in context
+    assert "issues/STORY-S35-SPEECH-ROUTER.md" not in context
+    assert "Deferred issues: STORY-S35-SPEECH-ROUTER" in context
+    assert "Deferred task prefixes: S35-" in context
 
 
 def test_issue_update_must_match_reviewed_task_and_prevalidate_all_effects(tmp_path: Path) -> None:
