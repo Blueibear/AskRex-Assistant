@@ -145,9 +145,10 @@ sole canonical copy for this contract. The `http.voice_response` and
 `http.tts_response` shapes in that file match the route serializers and the
 tests above field-for-field. The mobile repository must synchronize its
 `tests/contract/contract_vectors.json` (or equivalent) copy to be
-byte-identical to this file. Use a byte-preserving copy, not a
-parsed/reformatted JSON write, then verify the SHA-256 published in the
-backend coordination response for this task.
+byte-identical to this file. Its canonical SHA-256 is
+`c819eacd06451cf3c45ab00b20885f3f4eab64a721c5927131569f6ce70ea7cb`.
+Use a byte-preserving copy, not a parsed/reformatted JSON write; the focused
+backend vector test locks this exact byte hash.
 
 ## Non-goals of this document
 

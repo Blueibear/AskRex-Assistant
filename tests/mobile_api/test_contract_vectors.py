@@ -11,6 +11,7 @@ whichever side introduced them.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -27,6 +28,7 @@ from tests.mobile_api.conftest import (
 
 VECTORS_PATH = Path(__file__).parent / "contract_vectors.json"
 _SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
+_CANONICAL_VECTORS_SHA256 = "c819eacd06451cf3c45ab00b20885f3f4eab64a721c5927131569f6ce70ea7cb"
 
 
 @pytest.fixture(scope="module")
@@ -45,6 +47,10 @@ def _assert_snake_case_keys(value, path: str = "$") -> None:
 
 
 class TestVectorHygiene:
+    def test_canonical_fixture_bytes_are_stable(self) -> None:
+        """Mobile synchronizes this file byte-for-byte, never by reformatting JSON."""
+        assert hashlib.sha256(VECTORS_PATH.read_bytes()).hexdigest() == _CANONICAL_VECTORS_SHA256
+
     def test_every_wire_key_is_snake_case(self, vectors) -> None:
         """camelCase drift anywhere in the contract fails here."""
         _assert_snake_case_keys(vectors["http"])
