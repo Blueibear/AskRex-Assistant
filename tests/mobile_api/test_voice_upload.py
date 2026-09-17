@@ -76,7 +76,32 @@ class TestVoiceUpload:
         assert body["request_id"]
         assert base64.b64decode(body["tts_base64"]) == fake_tts.audio
         assert body["tts_mime_type"] == "audio/wav"
+        assert set(body) == {
+            "request_id",
+            "transcript",
+            "response",
+            "status",
+            "tool_used",
+            "tts_base64",
+            "tts_mime_type",
+        }
         assert fake_chat_service.calls == [(fake_stt.transcript, user_id)]
+
+    def test_tts_unavailable_omits_both_optional_tts_fields(self, client, fake_tts) -> None:
+        """The text response remains canonical when reply TTS is unavailable."""
+        _, headers = _authed(client)
+        fake_tts.available = False
+
+        response = _upload(client, headers, _wav_bytes())
+
+        assert response.status_code == 200
+        assert set(response.get_json()) == {
+            "request_id",
+            "transcript",
+            "response",
+            "status",
+            "tool_used",
+        }
 
     def test_missing_audio_part(self, client) -> None:
         """VOI-003."""
