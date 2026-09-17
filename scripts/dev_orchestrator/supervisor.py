@@ -109,15 +109,30 @@ class Supervisor:
             queue.append(task.to_dict())
             store.write(queue)
 
+    def _task_is_deferred(self, task_id: str) -> bool:
+        normalized = task_id.strip().lower()
+        if not normalized:
+            return False
+        if normalized in {value.lower() for value in self.config.deferred_issue_ids}:
+            return True
+        return any(
+            normalized.startswith(prefix.strip().lower())
+            for prefix in self.config.deferred_task_prefixes
+            if prefix.strip()
+        )
+
     def _dequeue(self, role: str) -> TaskItem | None:
         with ControlPlaneLock(self.root / "control-plane.lock"):
             store = self._queue_store(role)
             queue = list(store.read(default=[]))
-            if not queue:
-                return None
-            task = TaskItem(**queue.pop(0))
-            store.write(queue)
-            return task
+            for index, payload in enumerate(queue):
+                task = TaskItem(**payload)
+                if self._task_is_deferred(task.task_id):
+                    continue
+                queue.pop(index)
+                store.write(queue)
+                return task
+            return None
 
     def _set_result_context(self, role: str, result: AgentResult) -> None:
         if not result.invocation_id:
@@ -268,20 +283,33 @@ class Supervisor:
             self.save_state(state)
         if state.status is WorkerStatus.BLOCKED_USER and state.blocker_kind == "retest":
             if state.task is not None:
-                issue = self.root / "issues" / f"{state.task.task_id}.md"
-                if (
-                    issue.is_file()
-                    and _issue_status(issue.read_text(encoding="utf-8", errors="replace"))
-                    == "verified"
-                ):
-                    state = WorkerState(role=role, status=WorkerStatus.IDLE)
+                if state.task.task_id.lower() in {
+                    issue_id.lower() for issue_id in self.config.deferred_issue_ids
+                }:
+                    state = WorkerState(
+                        role=role,
+                        status=WorkerStatus.IDLE,
+                        claude_session_id=state.claude_session_id,
+                        codex_session_id=state.codex_session_id,
+                    )
                     self.save_state(state)
                 else:
-                    return
+                    issue = self.root / "issues" / f"{state.task.task_id}.md"
+                    if (
+                        issue.is_file()
+                        and _issue_status(issue.read_text(encoding="utf-8", errors="replace"))
+                        == "verified"
+                    ):
+                        state = WorkerState(role=role, status=WorkerStatus.IDLE)
+                        self.save_state(state)
+                    else:
+                        return
             else:
                 pending_retests = [
                     issue
-                    for issue in active_owned_issues(self.root, role)
+                    for issue in active_owned_issues(
+                        self.root, role, deferred_issue_ids=self.config.deferred_issue_ids
+                    )
                     if _issue_status(issue.read_text(encoding="utf-8", errors="replace"))
                     == "fixed-needs-retest"
                 ]
@@ -299,7 +327,12 @@ class Supervisor:
         if self.config.observe_only:
             return
 
-        context = build_coordination_context(self.root, role)
+        context = build_coordination_context(
+            self.root,
+            role,
+            deferred_issue_ids=self.config.deferred_issue_ids,
+            deferred_task_prefixes=self.config.deferred_task_prefixes,
+        )
         if state.task is None:
             queued = self._dequeue(role)
             if queued is not None:
@@ -367,7 +400,9 @@ class Supervisor:
         return True
 
     def _done_claim(self, role: str, state: WorkerState, context: str) -> None:
-        issues = active_owned_issues(self.root, role)
+        issues = active_owned_issues(
+            self.root, role, deferred_issue_ids=self.config.deferred_issue_ids
+        )
         if issues:
             first = issues[0]
             text = first.read_text(encoding="utf-8", errors="replace")
@@ -506,6 +541,20 @@ class Supervisor:
         if result.outcome == "assign":
             if not result.task_id or not result.task_prompt:
                 raise ValueError("lead assign result requires task_id and task_prompt")
+            if self._task_is_deferred(result.task_id):
+                self.save_state(
+                    replace(
+                        state,
+                        status=WorkerStatus.BLOCKED_SYSTEM,
+                        task=None,
+                        blocked_reason=(
+                            f"planner assigned deferred task prefix/id: {result.task_id}"
+                        ),
+                        blocker_kind="system",
+                        resume_status=WorkerStatus.PLANNING,
+                    )
+                )
+                return
             self.save_state(
                 replace(
                     state,

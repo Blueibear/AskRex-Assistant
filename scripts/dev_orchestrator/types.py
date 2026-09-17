@@ -90,6 +90,8 @@ class OrchestratorConfig:
     observe_only: bool = True
     banked_resets_remaining: int = 3
     reserve_last_reset: bool = True
+    deferred_issue_ids: tuple[str, ...] = ()
+    deferred_task_prefixes: tuple[str, ...] = ()
     poll_seconds: int = 60
     implementation_escalation_after: int = 2
     review_escalation_after: int = 2

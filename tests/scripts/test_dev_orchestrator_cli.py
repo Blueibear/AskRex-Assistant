@@ -98,6 +98,134 @@ def test_init_persists_observe_only_config_and_loads_it(tmp_path: Path) -> None:
     assert config.frozen_worktree == frozen
 
 
+def test_deferred_task_prefixes_round_trip_in_config(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from scripts.dev_orchestrator.cli import save_config
+
+    root = tmp_path / "coordination"
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "rex-ai-pc-test"
+    for candidate in (root, backend, mobile, frozen):
+        candidate.mkdir()
+
+    config = initialize_runtime(root, backend, mobile, frozen)
+    save_config(replace(config, deferred_task_prefixes=("S35-",)))
+
+    loaded = load_config(root)
+
+    assert loaded.deferred_task_prefixes == ("S35-",)
+
+
+def test_deferred_issue_ids_round_trip_in_config(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from scripts.dev_orchestrator.cli import save_config
+
+    root = tmp_path / "coordination"
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "rex-ai-pc-test"
+    for candidate in (root, backend, mobile, frozen):
+        candidate.mkdir()
+
+    config = initialize_runtime(root, backend, mobile, frozen)
+    save_config(replace(config, deferred_issue_ids=("STORY-S35-SPEECH-ROUTER",)))
+
+    loaded = load_config(root)
+
+    assert loaded.deferred_issue_ids == ("STORY-S35-SPEECH-ROUTER",)
+
+
+def test_defer_issue_cli_requires_pause_and_releases_matching_blocked_task(
+    tmp_path: Path, capsys
+) -> None:
+    from dataclasses import replace
+
+    from scripts.dev_orchestrator.cli import main, save_config
+    from scripts.dev_orchestrator.storage import AtomicJsonStore
+    from scripts.dev_orchestrator.types import TaskItem, WorkerState, WorkerStatus
+
+    root = tmp_path / "coordination"
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "rex-ai-pc-test"
+    for candidate in (root, backend, mobile, frozen):
+        candidate.mkdir()
+    initialize_runtime(root, backend, mobile, frozen)
+    (root / "issues").mkdir()
+    issue = root / "issues" / "STORY-S35-SPEECH-ROUTER.md"
+    issue.write_text(
+        "# STORY-S35-SPEECH-ROUTER\n\nStatus: open\nOwner: both\n",
+        encoding="utf-8",
+    )
+    AtomicJsonStore(root / "state" / "backend.json").write(
+        WorkerState(
+            role="backend",
+            status=WorkerStatus.BLOCKED_USER,
+            task=TaskItem("STORY-S35-SPEECH-ROUTER", "deferred work"),
+            blocked_reason="auth required",
+            blocker_kind="auth",
+            resume_status=WorkerStatus.IMPLEMENTING,
+            claude_session_id="keep-claude",
+        ).to_dict()
+    )
+
+    assert (
+        main(
+            [
+                "defer-issue",
+                "--coordination-root",
+                str(root),
+                "--issue-id",
+                "STORY-S35-SPEECH-ROUTER",
+                "--clear-task-id",
+                "STORY-S35-SPEECH-ROUTER",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    config = load_config(root)
+    state = AtomicJsonStore(root / "state" / "backend.json").read()
+    assert config.deferred_issue_ids == ("STORY-S35-SPEECH-ROUTER",)
+    assert state["status"] == "idle"
+    assert state["task"] is None
+    assert state["blocked_reason"] == ""
+    assert state["claude_session_id"] == "keep-claude"
+    original = issue.read_text(encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "resume-issue",
+                "--coordination-root",
+                str(root),
+                "--issue-id",
+                "STORY-S35-SPEECH-ROUTER",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert load_config(root).deferred_issue_ids == ()
+    assert issue.read_text(encoding="utf-8") == original
+
+    save_config(replace(load_config(root), observe_only=False))
+    with pytest.raises(ValueError, match="pause"):
+        main(
+            [
+                "defer-issue",
+                "--coordination-root",
+                str(root),
+                "--issue-id",
+                "STORY-S35-SPEECH-ROUTER",
+            ]
+        )
+
+
 def test_openai_policy_defaults_are_fail_closed_and_secret_free(tmp_path: Path) -> None:
     import json
     from decimal import Decimal

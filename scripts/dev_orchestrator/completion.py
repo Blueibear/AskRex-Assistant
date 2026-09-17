@@ -260,7 +260,9 @@ def evaluate_completion(config: OrchestratorConfig, role: str) -> CompletionGate
     repo = _repo(config, role)
     manifest = COMPLETION_MANIFESTS[role]
     reasons: list[str] = []
-    issues = active_owned_issues(config.coordination_root, role)
+    issues = active_owned_issues(
+        config.coordination_root, role, deferred_issue_ids=config.deferred_issue_ids
+    )
     if issues:
         reasons.append(
             "owned live-test/retest issues remain: " + ", ".join(path.stem for path in issues)

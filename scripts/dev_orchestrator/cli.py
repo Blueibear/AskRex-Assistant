@@ -52,6 +52,8 @@ def _config_payload(config: OrchestratorConfig) -> dict:
         "observe_only": config.observe_only,
         "banked_resets_remaining": config.banked_resets_remaining,
         "reserve_last_reset": config.reserve_last_reset,
+        "deferred_issue_ids": list(config.deferred_issue_ids),
+        "deferred_task_prefixes": list(config.deferred_task_prefixes),
         "poll_seconds": config.poll_seconds,
         "implementation_escalation_after": config.implementation_escalation_after,
         "review_escalation_after": config.review_escalation_after,
@@ -108,6 +110,10 @@ def load_config(root: Path) -> OrchestratorConfig:
         observe_only=bool(payload.get("observe_only", True)),
         banked_resets_remaining=int(payload.get("banked_resets_remaining", 3)),
         reserve_last_reset=bool(payload.get("reserve_last_reset", True)),
+        deferred_issue_ids=tuple(str(value) for value in payload.get("deferred_issue_ids", ())),
+        deferred_task_prefixes=tuple(
+            str(value) for value in payload.get("deferred_task_prefixes", ())
+        ),
         poll_seconds=int(payload.get("poll_seconds", 60)),
         implementation_escalation_after=int(payload.get("implementation_escalation_after", 2)),
         review_escalation_after=int(payload.get("review_escalation_after", 2)),
@@ -239,6 +245,89 @@ def set_observe_only(root: Path, observe_only: bool) -> OrchestratorConfig:
         config = replace(load_config(root), observe_only=observe_only)
         save_config(config)
         return config
+
+
+def _validate_issue_id(root: Path, issue_id: str) -> str:
+    normalized = issue_id.strip()
+    if (
+        not normalized
+        or Path(normalized).name != normalized
+        or any(separator in normalized for separator in ("/", "\\"))
+    ):
+        raise ValueError("issue id must be a single coordination issue stem")
+    if not (root / "issues" / f"{normalized}.md").is_file():
+        raise ValueError(f"unknown coordination issue: {normalized}")
+    return normalized
+
+
+def set_issue_deferred(
+    root: Path,
+    issue_id: str,
+    *,
+    deferred: bool,
+    clear_task_ids: tuple[str, ...] = (),
+    task_prefixes: tuple[str, ...] = (),
+) -> OrchestratorConfig:
+    with ControlPlaneLock(root / "control-plane.lock"):
+        config = load_config(root)
+        if not config.observe_only:
+            raise ValueError("pause the supervisor before changing owner issue scheduling")
+        normalized = _validate_issue_id(root, issue_id)
+        current = {value.lower(): value for value in config.deferred_issue_ids}
+        current_prefixes = {value.lower(): value for value in config.deferred_task_prefixes}
+        if deferred:
+            current[normalized.lower()] = normalized
+        else:
+            current.pop(normalized.lower(), None)
+
+        normalized_prefixes = tuple(value.strip() for value in task_prefixes if value.strip())
+        if deferred:
+            for prefix in normalized_prefixes:
+                current_prefixes[prefix.lower()] = prefix
+        else:
+            for prefix in normalized_prefixes:
+                current_prefixes.pop(prefix.lower(), None)
+
+        state_updates: dict[str, dict] = {}
+        requested = {
+            value.strip().lower(): value.strip() for value in clear_task_ids if value.strip()
+        }
+        if requested and not deferred:
+            raise ValueError("clear-task-id is supported only while deferring an issue")
+        matched: set[str] = set()
+        if requested:
+            for role in ("backend", "mobile"):
+                store = AtomicJsonStore(root / "state" / f"{role}.json")
+                payload = store.read(default={})
+                task = payload.get("task") or {}
+                task_id = str(task.get("task_id", ""))
+                key = task_id.lower()
+                if key not in requested:
+                    continue
+                matched.add(key)
+                payload["status"] = "idle"
+                payload["task"] = None
+                payload["task_base_head"] = ""
+                payload["iteration"] = 0
+                payload["implementation_failures"] = 0
+                payload["review_failures"] = 0
+                payload["blocked_reason"] = ""
+                payload["blocker_kind"] = ""
+                payload["resume_status"] = None
+                state_updates[role] = payload
+            missing = sorted(requested[key] for key in set(requested) - matched)
+            if missing:
+                raise ValueError("clear-task-id is not currently assigned: " + ", ".join(missing))
+
+        updated = replace(
+            config,
+            deferred_issue_ids=tuple(sorted(current.values(), key=str.lower)),
+            deferred_task_prefixes=tuple(sorted(current_prefixes.values(), key=str.lower)),
+        )
+        save_config(updated)
+        for role, payload in state_updates.items():
+            AtomicJsonStore(root / "state" / f"{role}.json").write(payload)
+        return updated
 
 
 def set_reset_policy(root: Path, reserve_last_reset: bool) -> OrchestratorConfig:
@@ -378,6 +467,8 @@ def render_status(config: OrchestratorConfig) -> str:
         "observe_only": config.observe_only,
         "banked_resets_remaining": config.banked_resets_remaining,
         "reserve_last_reset": config.reserve_last_reset,
+        "deferred_issue_ids": list(config.deferred_issue_ids),
+        "deferred_task_prefixes": list(config.deferred_task_prefixes),
         "openai_worker_enabled": config.openai_worker_enabled,
         "openai_project_hard_limit_confirmed": config.openai_project_hard_limit_confirmed,
         "openai_api_budget": {key: str(value) for key, value in openai_budget.items()},
@@ -480,6 +571,14 @@ def build_parser() -> argparse.ArgumentParser:
     worker_ack.add_argument("--nonce", required=True)
     worker_ack.add_argument("--worker-session", required=True)
 
+    for name in ("defer-issue", "resume-issue"):
+        issue_command = sub.add_parser(name)
+        issue_command.add_argument("--coordination-root", type=Path, required=True)
+        issue_command.add_argument("--issue-id", required=True)
+        issue_command.add_argument("--task-prefix", action="append", default=[])
+        if name == "defer-issue":
+            issue_command.add_argument("--clear-task-id", action="append", default=[])
+
     openai_limit = sub.add_parser("confirm-openai-project-limit")
     openai_limit.add_argument("--coordination-root", type=Path, required=True)
     openai_limit.add_argument("--project-id", required=True)
@@ -546,6 +645,31 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "pause":
         print(render_status(set_observe_only(root, True)))
+        return 0
+    if args.command == "defer-issue":
+        print(
+            render_status(
+                set_issue_deferred(
+                    root,
+                    args.issue_id,
+                    deferred=True,
+                    clear_task_ids=tuple(args.clear_task_id),
+                    task_prefixes=tuple(args.task_prefix),
+                )
+            )
+        )
+        return 0
+    if args.command == "resume-issue":
+        print(
+            render_status(
+                set_issue_deferred(
+                    root,
+                    args.issue_id,
+                    deferred=False,
+                    task_prefixes=tuple(args.task_prefix),
+                )
+            )
+        )
         return 0
     if args.command == "confirm-openai-project-limit":
         print(

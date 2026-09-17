@@ -727,6 +727,110 @@ def test_completion_retest_block_reconciles_after_testing_verifies(tmp_path: Pat
     assert resumed.task is not None and resumed.task.task_id == "B-NEXT"
 
 
+def test_owner_defer_releases_existing_retest_block(tmp_path: Path) -> None:
+    invoker = FakeInvoker()
+    invoker.add(
+        "backend", "lead", result("assign", task_id="US-101", task_prompt="Continue campaign")
+    )
+    config = replace(
+        make_config(tmp_path, observe_only=False),
+        deferred_issue_ids=("STORY-S35-SPEECH-ROUTER",),
+    )
+    issue = config.coordination_root / "issues" / "STORY-S35-SPEECH-ROUTER.md"
+    issue.write_text(
+        "# STORY-S35-SPEECH-ROUTER\n\nStatus: fixed-needs-retest\nOwner: backend\n",
+        encoding="utf-8",
+    )
+    supervisor = Supervisor(config, invoker)
+    supervisor.save_state(
+        WorkerState(
+            role="backend",
+            status=WorkerStatus.BLOCKED_USER,
+            task=TaskItem("STORY-S35-SPEECH-ROUTER", "Await canonical testing verification"),
+            blocker_kind="retest",
+            resume_status=WorkerStatus.PLANNING,
+        )
+    )
+
+    supervisor._run_role("backend")
+
+    state = supervisor.load_state("backend")
+    assert state.status is WorkerStatus.IMPLEMENTING
+    assert state.task is not None
+    assert state.task.task_id == "US-101"
+
+
+def test_dequeue_skips_owner_deferred_task_prefix(tmp_path: Path) -> None:
+    invoker = FakeInvoker()
+    config = replace(
+        make_config(tmp_path, observe_only=False),
+        deferred_task_prefixes=("S35-",),
+    )
+    supervisor = Supervisor(config, invoker)
+    supervisor.enqueue("backend", TaskItem("S35-BACKEND", "deferred"))
+    supervisor.enqueue("backend", TaskItem("US-101", "production readiness"))
+
+    task = supervisor._dequeue("backend")
+
+    assert task == TaskItem("US-101", "production readiness")
+    remaining = supervisor._queue_store("backend").read(default=[])
+    assert [item["task_id"] for item in remaining] == ["S35-BACKEND"]
+
+
+def test_planner_assignment_rejects_owner_deferred_task_prefix(tmp_path: Path) -> None:
+    invoker = FakeInvoker()
+    invoker.add(
+        "backend",
+        "lead",
+        result(
+            "assign",
+            task_id="S35-BACKEND-CANONICAL-CONTRACT-002",
+            task_prompt="old speech work",
+        ),
+    )
+    config = replace(
+        make_config(tmp_path, observe_only=False),
+        deferred_task_prefixes=("S35-",),
+    )
+    supervisor = Supervisor(config, invoker)
+
+    supervisor._run_role("backend")
+
+    state = supervisor.load_state("backend")
+    assert state.status is WorkerStatus.BLOCKED_SYSTEM
+    assert state.task is None
+    assert "deferred task prefix" in state.blocked_reason.lower()
+
+
+def test_done_claim_does_not_promote_owner_deferred_issue(tmp_path: Path, monkeypatch) -> None:
+    from scripts.dev_orchestrator import supervisor as supervisor_module
+    from scripts.dev_orchestrator.completion import CompletionGate
+
+    invoker = FakeInvoker()
+    config = replace(
+        make_config(tmp_path, observe_only=False),
+        deferred_issue_ids=("STORY-S35-SPEECH-ROUTER",),
+    )
+    issue = config.coordination_root / "issues" / "STORY-S35-SPEECH-ROUTER.md"
+    issue.write_text(
+        "# STORY-S35-SPEECH-ROUTER\n\nStatus: open\nOwner: backend\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        supervisor_module,
+        "evaluate_completion",
+        lambda *_args: CompletionGate(False, ("release campaign remains active",), False),
+    )
+
+    supervisor = Supervisor(config, invoker)
+    supervisor._done_claim("backend", WorkerState("backend"), "ctx")
+
+    state = supervisor.load_state("backend")
+    assert state.status is WorkerStatus.IMPLEMENTING
+    assert state.task is not None
+    assert state.task.task_id == "FINAL-backend"
+
+
 def test_final_done_transition_holds_role_lease_lock(tmp_path: Path, monkeypatch) -> None:
     from scripts.dev_orchestrator import supervisor as supervisor_module
     from scripts.dev_orchestrator.completion import CompletionGate

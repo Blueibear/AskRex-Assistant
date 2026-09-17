@@ -1,7 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 from scripts.dev_orchestrator import completion
@@ -123,6 +124,25 @@ def test_complete_manifest_can_pass_only_when_all_evidence_is_green(
     assert gate.ready is True
     assert gate.needs_user is False
     assert gate.reasons == ()
+
+
+def test_completion_ignores_owner_deferred_issue(tmp_path: Path, monkeypatch) -> None:
+    config = replace(
+        _config(tmp_path),
+        deferred_issue_ids=("STORY-S35-SPEECH-ROUTER",),
+    )
+    issue = config.coordination_root / "issues" / "STORY-S35-SPEECH-ROUTER.md"
+    issue.write_text(
+        "# STORY-S35-SPEECH-ROUTER\n\nStatus: open\nOwner: backend\n",
+        encoding="utf-8",
+    )
+    _accept(config, "backend")
+    _mock_pr(monkeypatch, config, "backend")
+
+    gate = evaluate_completion(config, "backend")
+
+    assert gate.ready is True
+    assert not any("STORY-S35-SPEECH-ROUTER" in reason for reason in gate.reasons)
 
 
 def test_acceptance_is_invalidated_when_local_or_peer_revision_changes(

@@ -22,7 +22,13 @@ def _bounded_read(path: Path, max_chars: int = 12000) -> str:
     return text[:max_chars] + "\n[truncated by supervisor]\n"
 
 
-def build_coordination_context(root: Path, role: str) -> str:
+def build_coordination_context(
+    root: Path,
+    role: str,
+    *,
+    deferred_issue_ids: tuple[str, ...] = (),
+    deferred_task_prefixes: tuple[str, ...] = (),
+) -> str:
     if role not in _ROLE_FILES:
         raise ValueError(f"unsupported coordination role: {role}")
     sections = [
@@ -32,14 +38,27 @@ def build_coordination_context(root: Path, role: str) -> str:
         f"## {_ROLE_FILES[role]}",
         _bounded_read(root / _ROLE_FILES[role]),
     ]
+    if deferred_issue_ids or deferred_task_prefixes:
+        constraints = [
+            "## Owner scheduling constraints",
+            "The following work is explicitly deferred for the current campaign. Do not assign or execute it.",
+        ]
+        if deferred_issue_ids:
+            constraints.append("Deferred issues: " + ", ".join(deferred_issue_ids))
+        if deferred_task_prefixes:
+            constraints.append("Deferred task prefixes: " + ", ".join(deferred_task_prefixes))
+        sections.append("\n".join(constraints))
     mailbox = root / "mailbox" / role
     if mailbox.is_dir():
         for path in sorted(mailbox.glob("*.md"))[-20:]:
             sections.extend((f"## mailbox/{role}/{path.name}", _bounded_read(path, 6000)))
 
+    deferred = {value.strip().lower() for value in deferred_issue_ids if value.strip()}
     issues = root / "issues"
     if issues.is_dir():
         for path in sorted(issues.glob("*.md")):
+            if path.stem.lower() in deferred:
+                continue
             text = _bounded_read(path, 6000)
             owner = _issue_owner(text)
             active = _issue_status(text) in {"open", "fixed-needs-retest"}
@@ -201,12 +220,17 @@ def apply_agent_updates(
     _publish_coordination_transaction(root, pending)
 
 
-def active_owned_issues(root: Path, role: str) -> list[Path]:
+def active_owned_issues(
+    root: Path, role: str, *, deferred_issue_ids: tuple[str, ...] = ()
+) -> list[Path]:
     active: list[Path] = []
+    deferred = {issue_id.strip().lower() for issue_id in deferred_issue_ids if issue_id.strip()}
     issues = root / "issues"
     if not issues.is_dir():
         return active
     for path in sorted(issues.glob("*.md")):
+        if path.stem.lower() in deferred:
+            continue
         text = path.read_text(encoding="utf-8", errors="replace")
         owner = _issue_owner(text)
         status_active = _issue_status(text) in {"open", "fixed-needs-retest"}
