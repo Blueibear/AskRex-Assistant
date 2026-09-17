@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -304,15 +304,10 @@ class OpenAIModelWorker:
                 allow_issue_updates=True,
             )
             if evidence.truncated and result.outcome == "pass":
-                result = replace(
-                    result,
-                    outcome="changes_required",
-                    summary="Review evidence was truncated; an unqualified pass is unsafe.",
-                    next_action="Route review to a fallback reviewer with complete evidence.",
-                    needs_user=False,
-                    blocker_reason="",
-                    coordination_messages=(),
-                    issue_updates=(),
+                raise AgentInvocationError(
+                    "openai",
+                    "incomplete_evidence",
+                    "review evidence was truncated; route to a fallback reviewer with complete evidence",
                 )
             return self._persist(
                 role=role,

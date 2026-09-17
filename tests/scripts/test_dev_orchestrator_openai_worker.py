@@ -282,26 +282,27 @@ def test_review_rejects_repository_change_during_read_only_send(tmp_path: Path) 
     assert read_pending_result(config, "backend") is None
 
 
-def test_truncated_review_evidence_cannot_return_unqualified_pass(tmp_path: Path) -> None:
+def test_truncated_review_evidence_requests_complete_fallback_review(tmp_path: Path) -> None:
     config, _repo, state, task = _leased_review(tmp_path)
     events: list[str] = []
     budget = _FakeBudget(events)
     transport = _FakeTransport(events, _agent_output("inv-truncated"))
     worker = _worker(config, transport, budget, "inv-truncated")
 
-    result = worker.review(
-        "backend",
-        state,
-        task,
-        "x" * 13_500,
-        "gpt-5.6-terra",
-    )
+    with pytest.raises(AgentInvocationError) as caught:
+        worker.review(
+            "backend",
+            state,
+            task,
+            "x" * 13_500,
+            "gpt-5.6-terra",
+        )
 
-    assert result.outcome == "changes_required"
-    assert "truncated" in result.summary.lower()
-    pending = read_pending_result(config, "backend")
-    assert pending is not None
-    assert pending["result"]["outcome"] == "changes_required"
+    assert caught.value.provider == "openai"
+    assert caught.value.kind == "incomplete_evidence"
+    assert "truncated" in caught.value.detail.lower()
+    assert events == ["prepare", "reserve", "send", "reconcile"]
+    assert read_pending_result(config, "backend") is None
 
 
 def test_lead_plan_uses_bounded_context_without_review_receipt(tmp_path: Path) -> None:
