@@ -12,7 +12,7 @@ from rex.actions.dispatcher import ActionDispatcher
 from rex.audit import AuditLogger
 from rex.capabilities.registry import Capability, CapabilityRegistry
 from rex.intent.router import IntentResult
-from rex.runtime.cancellation import TurnCancelledError, TurnCancellation, turn_cancellation_scope
+from rex.runtime.cancellation import TurnCancellation, TurnCancelledError, turn_cancellation_scope
 from rex.runtime.speculation import (
     SpeculationBudget,
     SpeculativePrefetcher,
@@ -303,9 +303,7 @@ def test_prefetch_respects_max_concurrency_budget() -> None:
     prefetcher = SpeculativePrefetcher(
         registry,
         dispatcher,
-        budget=SpeculationBudget(
-            max_candidates=4, max_concurrency=2, total_timeout_seconds=2.0
-        ),
+        budget=SpeculationBudget(max_candidates=4, max_concurrency=2, total_timeout_seconds=2.0),
     )
 
     outcome = prefetcher.prefetch(
@@ -325,9 +323,7 @@ def test_prefetch_wall_clock_bounded_by_total_timeout_even_with_slow_candidate()
     prefetcher = SpeculativePrefetcher(
         registry,
         dispatcher,
-        budget=SpeculationBudget(
-            max_candidates=1, max_concurrency=1, total_timeout_seconds=0.05
-        ),
+        budget=SpeculationBudget(max_candidates=1, max_concurrency=1, total_timeout_seconds=0.05),
     )
 
     started = time.monotonic()
@@ -537,9 +533,7 @@ def test_consume_discards_result_for_mismatched_user() -> None:
     )
 
     assert (
-        prefetcher.consume(
-            result, user_id="cole", scope="user", granted_permissions=frozenset()
-        )
+        prefetcher.consume(result, user_id="cole", scope="user", granted_permissions=frozenset())
         is None
     )
 
@@ -577,9 +571,7 @@ def test_consume_discards_stale_result_past_max_age_budget() -> None:
     time.sleep(0.05)
 
     assert (
-        prefetcher.consume(
-            result, user_id="james", scope="user", granted_permissions=frozenset()
-        )
+        prefetcher.consume(result, user_id="james", scope="user", granted_permissions=frozenset())
         is None
     )
 
@@ -597,9 +589,7 @@ def test_consume_discards_result_when_capability_becomes_ineligible_before_use()
     registry.update_runtime_state("safe_read", enabled=False)
 
     assert (
-        prefetcher.consume(
-            result, user_id="james", scope="user", granted_permissions=frozenset()
-        )
+        prefetcher.consume(result, user_id="james", scope="user", granted_permissions=frozenset())
         is None
     )
 
@@ -850,15 +840,11 @@ def test_queued_prefetch_never_dispatches_after_its_original_deadline() -> None:
             health="healthy",
         )
     )
-    dispatcher = ToolDispatcher(
-        registry, config=SimpleNamespace(tool_timeout_seconds=5.0)
-    )
+    dispatcher = ToolDispatcher(registry, config=SimpleNamespace(tool_timeout_seconds=5.0))
     prefetcher = SpeculativePrefetcher(
         registry.capability_registry,
         dispatcher,
-        budget=SpeculationBudget(
-            max_candidates=1, max_concurrency=1, total_timeout_seconds=0.03
-        ),
+        budget=SpeculationBudget(max_candidates=1, max_concurrency=1, total_timeout_seconds=0.03),
     )
 
     _first = prefetcher.begin(
@@ -924,10 +910,7 @@ def test_prefetch_result_budget_caps_total_retained_payload_across_candidates() 
     )
 
     assert len(outcome.results) == 1
-    assert (
-        [attempt.outcome for attempt in outcome.attempts].count("discarded_result_budget")
-        == 1
-    )
+    assert [attempt.outcome for attempt in outcome.attempts].count("discarded_result_budget") == 1
     prefetcher.close()
 
 

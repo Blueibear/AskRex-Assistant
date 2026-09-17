@@ -310,10 +310,7 @@ class SpeculativePrefetcher:
                 # not independently to each candidate. Otherwise several
                 # individually-valid results could collectively exceed the
                 # resource bound for one speculative prefetch.
-                if (
-                    retained_result_bytes + result_size_bytes
-                    <= self._budget.max_result_bytes
-                ):
+                if retained_result_bytes + result_size_bytes <= self._budget.max_result_bytes:
                     results[capability_id] = SpeculativeResult(
                         capability_id=capability_id,
                         tool_result=tool_result,
