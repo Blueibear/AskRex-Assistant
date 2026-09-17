@@ -173,6 +173,49 @@ class CapabilityRetriever:
         matches.sort(key=lambda match: (-match.score, match.capability.id))
         return matches[:limit]
 
+    def retrieve_lexical_only(
+        self,
+        query: str,
+        *,
+        user_id: str | None = None,
+        granted_permissions: set[str] | frozenset[str] | None = None,
+        limit: int = 5,
+    ) -> list[CapabilityMatch]:
+        """Fast, semantic-free ranking usable before full hybrid retrieval resolves.
+
+        Applies the identical authority/health filtering as :meth:`retrieve`
+        but skips local semantic scoring, so it is cheap enough to run first
+        and drive speculative candidate selection while the authoritative
+        :meth:`retrieve` ranking is still computing. The final tool selection
+        must always use :meth:`retrieve`; this method never determines which
+        capability is actually used, only which ones may be spoken for
+        speculatively in the meantime.
+        """
+        if limit <= 0:
+            return []
+        permissions = self._resolve_permissions(user_id, granted_permissions)
+        candidates = [
+            card
+            for card in self._registry.list(include_disabled=True)
+            if self._candidate_allowed(card, user_id=user_id, permissions=permissions)
+        ]
+        matches: list[CapabilityMatch] = []
+        for card in candidates:
+            lexical = _lexical_score(query, card)
+            if lexical <= 0.0:
+                continue
+            matches.append(
+                CapabilityMatch(
+                    capability=card,
+                    score=_round_score(lexical),
+                    lexical_score=_round_score(lexical),
+                    semantic_score=0.0,
+                    reasons=("lexical",),
+                )
+            )
+        matches.sort(key=lambda match: (-match.score, match.capability.id))
+        return matches[:limit]
+
     def _resolve_permissions(
         self,
         user_id: str | None,

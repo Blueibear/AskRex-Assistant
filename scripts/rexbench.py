@@ -28,6 +28,7 @@ from rex.capabilities.retrieval import CapabilityRetriever  # noqa: E402
 from rex.model_router import ModelRouter, ProviderRouteCandidate  # noqa: E402
 from rex.provider_reliability import ProviderFailureKind, ProviderReliability  # noqa: E402
 from rex.rexbench import BenchmarkSample, build_report  # noqa: E402
+from rex.runtime.speculation import SpeculativePrefetcher  # noqa: E402
 from rex.runtime.warm import WarmComponentSpec, WarmRuntimeManager  # noqa: E402
 from rex.tools.execution import ToolOperation  # noqa: E402
 from rex.tools.protocol import ToolResult  # noqa: E402
@@ -536,6 +537,104 @@ def run_parallel_actions(iterations: int) -> dict:
     return build_report(samples, profile="parallel-actions")
 
 
+def _speculative_prefetch_registry() -> CapabilityRegistry:
+    registry = CapabilityRegistry()
+    for capability in (
+        Capability(
+            name="speculative_read",
+            description="Harmless, currently permitted prefetchable read",
+            operation="read",
+            risk="safe",
+            health="healthy",
+        ),
+        Capability(
+            name="speculative_mutation",
+            description="Mutation must never be speculatively dispatched",
+            operation="mutation",
+            risk="safe",
+            health="healthy",
+        ),
+        Capability(
+            name="speculative_sensitive_read",
+            description="Sensitive read must never be speculatively dispatched",
+            operation="read",
+            risk="sensitive",
+            health="healthy",
+        ),
+    ):
+        registry.register(capability)
+    return registry
+
+
+class _SpeculativePrefetchBenchDispatcher:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def dispatch(self, name: str, args: dict, context: dict | None = None) -> ToolResult:
+        del args, context
+        self.calls.append(name)
+        time.sleep(0.002)
+        return ToolResult(success=True, output=f"{name}-output")
+
+
+def run_speculative_prefetch(iterations: int) -> dict:
+    if iterations < 1:
+        raise ValueError("iterations must be at least 1")
+    registry = _speculative_prefetch_registry()
+    samples: list[BenchmarkSample] = []
+    for _ in range(iterations):
+        dispatcher = _SpeculativePrefetchBenchDispatcher()
+        prefetcher = SpeculativePrefetcher(registry, dispatcher)
+
+        started = time.perf_counter_ns()
+        outcome = prefetcher.prefetch(
+            ("speculative_read", "speculative_mutation", "speculative_sensitive_read"),
+            user_id="benchmark",
+            scope="user",
+            granted_permissions=frozenset({"admin"}),
+        )
+        elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000
+        if dispatcher.calls != ["speculative_read"]:
+            raise RuntimeError(
+                "speculative-prefetch correctness failed: an ineligible capability was dispatched"
+            )
+        if "speculative_read" not in outcome.results:
+            raise RuntimeError(
+                "speculative-prefetch correctness failed: eligible read was not prefetched"
+            )
+        samples.append(
+            BenchmarkSample(
+                request_class="eligible_read_hit",
+                warm_state="warm",
+                evidence_class="deterministic_local",
+                stages_ms={"prefetch": elapsed_ms, "total": elapsed_ms},
+            )
+        )
+
+        consume_started = time.perf_counter_ns()
+        consumed = prefetcher.consume(
+            outcome.get("speculative_read"),
+            user_id="benchmark",
+            scope="user",
+            granted_permissions=frozenset({"admin"}),
+        )
+        consume_elapsed_ms = (time.perf_counter_ns() - consume_started) / 1_000_000
+        if consumed is None:
+            raise RuntimeError(
+                "speculative-prefetch correctness failed: fresh result was not consumable"
+            )
+        samples.append(
+            BenchmarkSample(
+                request_class="consume_revalidation",
+                warm_state="warm",
+                evidence_class="deterministic_local",
+                stages_ms={"consume": consume_elapsed_ms, "total": consume_elapsed_ms},
+            )
+        )
+        prefetcher.close()
+    return build_report(samples, profile="speculative-prefetch")
+
+
 def run_warm_runtime(iterations: int) -> dict:
     if iterations < 1:
         raise ValueError("iterations must be at least 1")
@@ -827,6 +926,7 @@ def main() -> int:
             "baseline",
             "capability-retrieval",
             "parallel-actions",
+            "speculative-prefetch",
             "warm-runtime",
             "model-routing",
             "routing-eval",
@@ -846,6 +946,8 @@ def main() -> int:
         report = run_capability_retrieval(args.iterations)
     elif args.profile == "parallel-actions":
         report = run_parallel_actions(args.iterations)
+    elif args.profile == "speculative-prefetch":
+        report = run_speculative_prefetch(args.iterations)
     elif args.profile == "warm-runtime":
         report = run_warm_runtime(args.iterations)
     elif args.profile == "model-routing":

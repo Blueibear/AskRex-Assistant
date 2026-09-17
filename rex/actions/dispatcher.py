@@ -316,6 +316,7 @@ class ActionDispatcher:
         loop: asyncio.AbstractEventLoop | None = None,
         latency_trace: LatencyTrace | None = None,
         turn_events: TurnEventStream | None = None,
+        scope: str = "user",
     ) -> ActionResult:
         """Dispatch *transcript* through all action layers and return an :class:`ActionResult`.
 
@@ -338,6 +339,10 @@ class ActionDispatcher:
                             *None*.
             turn_events:    Optional canonical turn event stream for truthful progress
                             observation. It never grants or widens execution authority.
+            scope:          Current turn's immutable data/authority scope value (e.g.
+                            ``TurnScope.USER``/``TurnScope.HOUSEHOLD``), forwarded to
+                            bounded speculative tool prefetch/consume revalidation
+                            (US-101). Defaults to the single-user scope in effect today.
 
         Returns:
             :class:`ActionResult` with ``success=True`` and the final response string.
@@ -536,6 +541,25 @@ class ActionDispatcher:
                     )
 
             if not _timekeeping_handled and not _media_handled:
+                # Kick off bounded speculative prefetch (US-101) from a fast,
+                # semantic-free candidate signal *before* the authoritative
+                # hybrid-ranked selection below is even called, so eligible
+                # background dispatch is already in flight while that routing
+                # decision is still resolving rather than only starting once
+                # it has already finished.
+                _routing_prefetch = None
+                begin_prefetch_fn = inspect.getattr_static(
+                    self._tool_dispatcher, "begin_speculative_prefetch", None
+                )
+                if begin_prefetch_fn is not None:
+                    _routing_prefetch = await run_blocking(
+                        functools.partial(
+                            self._tool_dispatcher.begin_speculative_prefetch,
+                            selection_text,
+                            user_id=effective_user,
+                            scope=str(scope),
+                        )
+                    )
                 defined_select_for_user = inspect.getattr_static(
                     self._tool_dispatcher, "select_tools_for_user", None
                 )
@@ -568,13 +592,25 @@ class ActionDispatcher:
                     )
                     if latency_trace is not None:
                         latency_trace.start("tool")
+                    _execute_tools_kwargs: dict[str, Any] = {
+                        "user_id": effective_user,
+                        "scope": str(scope),
+                    }
+                    _execute_tools_signature = inspect.signature(
+                        self._tool_dispatcher.execute_tools
+                    )
+                    if "routing_prefetch" in _execute_tools_signature.parameters or any(
+                        parameter.kind == inspect.Parameter.VAR_KEYWORD
+                        for parameter in _execute_tools_signature.parameters.values()
+                    ):
+                        _execute_tools_kwargs["routing_prefetch"] = _routing_prefetch
                     try:
                         _tool_results = await run_blocking(
                             functools.partial(
                                 self._tool_dispatcher.execute_tools,
                                 _selected_tools,
                                 transcript,
-                                user_id=effective_user,
+                                **_execute_tools_kwargs,
                             ),
                         )
                     finally:

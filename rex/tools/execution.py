@@ -136,6 +136,11 @@ class ToolExecutionLifecycle:
         stages: list[str] = ["capability_availability"]
         operation = ToolOperation(tool.operation)
         risk = ToolRisk(tool.risk)
+        # Speculative candidates (US-101) may only retain content-free
+        # metadata/timing; a failing read's raw exception text can embed
+        # private request/result payload content and must never reach logs
+        # or the persisted audit trail for this call.
+        is_speculative = bool(ambient.get("speculative"))
         cancellation = current_turn_cancellation()
         if cancellation is not None:
             cancellation.raise_if_cancelled()
@@ -300,6 +305,18 @@ class ToolExecutionLifecycle:
         stages.append("execution")
         handler_args = dict(args)
         handler_context = {**ambient, "request_id": request_id}
+        retain_speculative_worker = is_speculative and bool(
+            ambient.get("_speculative_retain_worker")
+        )
+        speculative_deadline = ambient.get("_speculative_deadline_monotonic")
+        if retain_speculative_worker and isinstance(speculative_deadline, int | float):
+            # Cooperative handlers can observe the same deadline/cancellation
+            # that bounds their owning speculative worker.  Uncooperative
+            # handlers cannot be force-killed safely in Python, so they stay
+            # counted in that fixed-size worker pool until they return.
+            handler_context["deadline_monotonic"] = float(speculative_deadline)
+            if cancellation is not None:
+                handler_context["cancellation"] = cancellation
         if user_id:
             handler_context["user_id"] = user_id
         signature = inspect.signature(tool.handler)
@@ -319,31 +336,47 @@ class ToolExecutionLifecycle:
         for attempt in range(attempts):
             if cancellation is not None:
                 cancellation.raise_if_cancelled()
-            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-            future = executor.submit(tool.handler, **handler_args)
+            executor: concurrent.futures.ThreadPoolExecutor | None = None
+            # A speculative task may have waited in its bounded outer pool
+            # before reaching this lifecycle.  Preserve the original handle
+            # deadline when supplied instead of granting a fresh timeout here.
             deadline = time.monotonic() + timeout_seconds
+            if retain_speculative_worker and isinstance(speculative_deadline, int | float):
+                deadline = min(deadline, float(speculative_deadline))
             try:
-                while True:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise concurrent.futures.TimeoutError
-                    try:
-                        output = future.result(timeout=min(0.05, remaining))
-                    except concurrent.futures.TimeoutError:
-                        if cancellation is not None and cancellation.cancelled:
-                            future.cancel()
-                            if operation == ToolOperation.MUTATION:
-                                return cancelled_mutation_result()
-                            cancellation.raise_if_cancelled()
-                        continue
+                if retain_speculative_worker:
+                    output = tool.handler(**handler_args)
                     if cancellation is not None and cancellation.cancelled:
                         if operation == ToolOperation.MUTATION:
                             return cancelled_mutation_result()
                         cancellation.raise_if_cancelled()
-                    break
+                    if time.monotonic() > deadline:
+                        raise concurrent.futures.TimeoutError
+                else:
+                    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                    future = executor.submit(tool.handler, **handler_args)
+                    while True:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise concurrent.futures.TimeoutError
+                        try:
+                            output = future.result(timeout=min(0.05, remaining))
+                        except concurrent.futures.TimeoutError:
+                            if cancellation is not None and cancellation.cancelled:
+                                future.cancel()
+                                if operation == ToolOperation.MUTATION:
+                                    return cancelled_mutation_result()
+                                cancellation.raise_if_cancelled()
+                            continue
+                        if cancellation is not None and cancellation.cancelled:
+                            if operation == ToolOperation.MUTATION:
+                                return cancelled_mutation_result()
+                            cancellation.raise_if_cancelled()
+                        break
                 break
             except concurrent.futures.TimeoutError:
-                future.cancel()
+                if executor is not None:
+                    future.cancel()
                 outcome = (
                     ToolOutcome.ATTEMPTED_UNVERIFIED
                     if operation == ToolOperation.MUTATION
@@ -366,13 +399,15 @@ class ToolExecutionLifecycle:
                         _dedupe_results[dedupe_key] = (args_fingerprint, result)
                 return result
             except TurnCancelledError:
-                future.cancel()
+                if executor is not None:
+                    future.cancel()
                 if operation == ToolOperation.MUTATION:
                     return cancelled_mutation_result()
                 raise
             except Exception as exc:
                 if cancellation is not None and cancellation.cancelled:
-                    future.cancel()
+                    if executor is not None:
+                        future.cancel()
                     if operation == ToolOperation.MUTATION:
                         return cancelled_mutation_result()
                     cancellation.raise_if_cancelled()
@@ -412,17 +447,35 @@ class ToolExecutionLifecycle:
                     and _is_transient_error(exc)
                     and not _is_auth_error(exc)
                 ):
-                    logger.debug(
-                        "tool_execution: %r transient read failure; retrying once: %s",
-                        tool.name,
-                        exc,
-                    )
+                    if is_speculative:
+                        logger.debug(
+                            "tool_execution: speculative %r transient read failure "
+                            "(%s); retrying once",
+                            tool.name,
+                            type(exc).__name__,
+                        )
+                    else:
+                        logger.debug(
+                            "tool_execution: %r transient read failure; retrying once: %s",
+                            tool.name,
+                            exc,
+                        )
                     continue
                 return self._finish(
-                    request, ToolOutcome.FAILED, risk, stages, started, error=str(exc)
+                    request,
+                    ToolOutcome.FAILED,
+                    risk,
+                    stages,
+                    started,
+                    error=(
+                        f"Speculative read failed: {type(exc).__name__}"
+                        if is_speculative
+                        else str(exc)
+                    ),
                 )
             finally:
-                executor.shutdown(wait=False, cancel_futures=True)
+                if executor is not None:
+                    executor.shutdown(wait=False, cancel_futures=True)
 
         stages.append("normalized_result")
         normalized = self._normalize_handler_result(output)

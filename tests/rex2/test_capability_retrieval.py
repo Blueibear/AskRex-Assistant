@@ -49,6 +49,46 @@ def test_filters_security_health_and_identity_before_ranking() -> None:
     assert [match.capability.id for match in matches] == ["safe_read"]
 
 
+def test_retrieve_lexical_only_applies_same_security_health_filtering_without_semantic_scoring() -> (
+    None
+):
+    """Used only to drive routing-time speculation (US-101): must never
+    surface an unhealthy/disabled/denied/prohibited/identity-gated candidate
+    even though it skips the (slower) local semantic scoring pass."""
+    from rex.capabilities.retrieval import CapabilityRetriever
+
+    registry = _registry(
+        _card("safe_read", "Search local notes", triggers=["find notes"]),
+        _card(
+            "denied",
+            "Search private mail",
+            triggers=["find mail"],
+            required_permissions=("email_send",),
+        ),
+        _card("unhealthy", "Search remote source", triggers=["find remote"], health="unhealthy"),
+        _card("disabled", "Search disabled source", triggers=["find disabled"], enabled=False),
+        _card(
+            "identity_only",
+            "Search identity-bound data",
+            triggers=["find identity"],
+            requires_identity=True,
+        ),
+        _card(
+            "prohibited",
+            "Search prohibited source",
+            triggers=["find prohibited"],
+            risk="prohibited",
+        ),
+    )
+    retriever = CapabilityRetriever(registry)
+
+    matches = retriever.retrieve_lexical_only("find search", granted_permissions=frozenset())
+
+    assert [match.capability.id for match in matches] == ["safe_read"]
+    assert matches[0].semantic_score == 0.0
+    assert matches[0].reasons == ("lexical",)
+
+
 def test_current_permission_snapshot_changes_results_without_reindexing() -> None:
     from rex.capabilities.retrieval import CapabilityRetriever
 
