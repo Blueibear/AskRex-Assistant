@@ -183,6 +183,118 @@ def test_review_evidence_rejects_dirty_or_unvalidated_revision(tmp_path: Path) -
         build_review_evidence(config, "backend", state, state.task, "coordination", "inv-2")
 
 
+def test_review_evidence_includes_task_relevant_outgoing_coordination(tmp_path: Path) -> None:
+    repo = tmp_path / "backend"
+    base = _git_repo(repo)
+    head = _commit(repo, "base\nchanged\n")
+    config = _config(tmp_path, repo, [sys.executable, "-c", "print('OK')"])
+    assert run_iteration_validation(config, "backend", "B-COORD", base_head=base, head=head).passed
+    mailbox = config.coordination_root / "mailbox" / "testing"
+    mailbox.mkdir(parents=True)
+    message = mailbox / "MSG-task-retest-00-backend.md"
+    message.write_text(
+        "# AskRex Coordination Message\n\n"
+        "From: backend\n"
+        "To: testing\n"
+        "Priority: high\n"
+        "Related: B-COORD\n"
+        "Needs response: no\n\n"
+        "## Message\n"
+        "Please retest the bounded B-COORD behavior after supervisor validation.\n",
+        encoding="utf-8",
+    )
+    state = WorkerState(
+        role="backend",
+        task=TaskItem("B-COORD", "review"),
+        task_base_head=base,
+    )
+
+    bundle = build_review_evidence(
+        config,
+        "backend",
+        state,
+        state.task,
+        "coordination snapshot",
+        "inv-coord",
+    )
+
+    assert "## outgoing_coordination" in bundle.text
+    assert "MSG-task-retest-00-backend.md" in bundle.text
+    assert "Please retest the bounded B-COORD behavior" in bundle.text
+    assert bundle.truncated is False
+
+
+def test_review_evidence_keeps_complete_task_diff_with_bounded_context(tmp_path: Path) -> None:
+    repo = tmp_path / "backend"
+    base = _git_repo(repo)
+    payload = "START-LARGE-DIFF\n" + ("D" * 20_000) + "\nEND-LARGE-DIFF\n"
+    (repo / "large.txt").write_text(payload, encoding="utf-8")
+    subprocess.run(["git", "add", "large.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "large diff"], cwd=repo, check=True)
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    config = _config(tmp_path, repo, [sys.executable, "-c", "print('OK')"])
+    assert run_iteration_validation(
+        config, "backend", "B-COMPLETE-DIFF", base_head=base, head=head
+    ).passed
+    state = WorkerState(
+        role="backend",
+        task=TaskItem("B-COMPLETE-DIFF", "review"),
+        task_base_head=base,
+    )
+    coordination = "COORD-START\n" + ("C" * 20_000) + "\nCOORD-END\n"
+
+    bundle = build_review_evidence(
+        config,
+        "backend",
+        state,
+        state.task,
+        coordination,
+        "inv-complete",
+    )
+
+    assert "START-LARGE-DIFF" in bundle.text
+    assert "END-LARGE-DIFF" in bundle.text
+    assert "[truncated task_diff]" not in bundle.text
+    assert "[truncated coordination]" in bundle.text
+    assert bundle.truncated is False
+    assert len(bundle.text) <= config.openai_max_input_chars
+
+
+def test_truncated_diff_stat_is_noncritical_when_task_diff_is_complete(tmp_path: Path) -> None:
+    repo = tmp_path / "backend"
+    base = _git_repo(repo)
+    for index in range(180):
+        path = repo / f"generated-file-with-a-long-name-{index:03d}.txt"
+        path.write_text(f"value-{index}\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "many files"], cwd=repo, check=True)
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    config = _config(tmp_path, repo, [sys.executable, "-c", "print('OK')"])
+    assert run_iteration_validation(
+        config, "backend", "B-DIFF-STAT", base_head=base, head=head
+    ).passed
+    state = WorkerState(
+        role="backend",
+        task=TaskItem("B-DIFF-STAT", "review"),
+        task_base_head=base,
+    )
+
+    bundle = build_review_evidence(
+        config,
+        "backend",
+        state,
+        state.task,
+        "coordination",
+        "inv-diff-stat",
+    )
+
+    assert "[truncated diff_stat]" in bundle.text
+    assert "[truncated task_diff]" not in bundle.text
+    assert "generated-file-with-a-long-name-179.txt" in bundle.text
+    assert bundle.truncated is False
+    assert "diff_stat" not in bundle.truncation_reasons
+
+
 def test_review_evidence_marks_truncated_sections_explicitly(tmp_path: Path) -> None:
     repo = tmp_path / "backend"
     base = _git_repo(repo)

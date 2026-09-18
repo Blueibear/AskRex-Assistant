@@ -27,6 +27,19 @@ _SECRET_PATTERNS = (
     re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b"),
 )
 
+_DEFAULT_SECTION_LIMITS = {
+    "identity": 2_000,
+    "task": 8_000,
+    "coordination": 6_000,
+    "outgoing_coordination": 12_000,
+    "diff_stat": 4_000,
+    "task_diff": 70_000,
+    "validation": 12_000,
+}
+_REVIEW_CRITICAL_SECTIONS = frozenset(
+    {"identity", "task", "outgoing_coordination", "task_diff", "validation"}
+)
+
 
 def _repo_root(config: OrchestratorConfig, role: str) -> Path:
     root = config.backend_root if role == "backend" else config.mobile_root
@@ -71,6 +84,57 @@ def _bound(name: str, text: str, max_chars: int) -> tuple[str, bool]:
     return text[:head_chars] + marker + text[-tail_chars:], True
 
 
+def _message_field(text: str, field: str) -> str:
+    prefix = field.casefold() + ":"
+    for line in text.splitlines():
+        if line.casefold().startswith(prefix):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def _task_coordination_anchors(task: TaskItem) -> tuple[str, ...]:
+    anchors = {task.task_id.casefold()}
+    for match in re.finditer(r"(?i)\bS\d+\b", task.task_id):
+        anchors.add(match.group(0).casefold())
+    task_text = f"{task.prompt}\n{task.feedback}"
+    for match in re.finditer(r"(?i)\bMSG-[A-Za-z0-9-]+", task_text):
+        anchors.add(match.group(0).casefold())
+    return tuple(sorted(anchor for anchor in anchors if anchor))
+
+
+def _outgoing_coordination(config: OrchestratorConfig, role: str, task: TaskItem) -> str:
+    mailbox_root = config.coordination_root / "mailbox"
+    if not mailbox_root.is_dir():
+        return "No task-relevant outgoing coordination messages were recorded."
+
+    anchors = _task_coordination_anchors(task)
+    messages: list[tuple[int, Path, str]] = []
+    try:
+        recipients = [path for path in mailbox_root.iterdir() if path.is_dir()]
+        for recipient in recipients:
+            for path in recipient.glob("*.md"):
+                text = path.read_text(encoding="utf-8-sig", errors="replace")
+                if _message_field(text, "From").casefold() != role.casefold():
+                    continue
+                related = _message_field(text, "Related").casefold()
+                searchable = f"{related}\n{text.casefold()}"
+                if not any(anchor in searchable for anchor in anchors):
+                    continue
+                messages.append((path.stat().st_mtime_ns, path, text))
+    except OSError as exc:
+        raise EvidenceError("cannot read task-relevant coordination evidence") from exc
+
+    if not messages:
+        return "No task-relevant outgoing coordination messages were recorded."
+
+    messages.sort(key=lambda item: item[0], reverse=True)
+    rendered: list[str] = []
+    for _mtime_ns, path, text in messages[:8]:
+        relative = path.relative_to(config.coordination_root).as_posix()
+        rendered.append(f"### {relative}\n{text}")
+    return "\n\n".join(rendered)
+
+
 def _receipt_text(receipt: ValidationReceipt) -> str:
     lines = [
         f"role: {receipt.role}",
@@ -101,7 +165,7 @@ def build_review_evidence(
     coordination_context: str,
     invocation_id: str,
     *,
-    max_section_chars: int = 12_000,
+    max_section_chars: int | None = None,
 ) -> ReviewEvidenceBundle:
     repo = _repo_root(config, role)
     base_head = state.task_base_head.strip()
@@ -139,6 +203,7 @@ def build_review_evidence(
         ),
         ("task", f"prompt:\n{task.prompt}\n\nfeedback:\n{task.feedback}"),
         ("coordination", coordination_context),
+        ("outgoing_coordination", _outgoing_coordination(config, role, task)),
         ("diff_stat", _git(repo, "diff", "--stat", f"{base_head}..{head}", "--")),
         ("task_diff", _git(repo, "diff", f"{base_head}..{head}", "--")),
         ("validation", _receipt_text(receipt)),
@@ -147,8 +212,11 @@ def build_review_evidence(
     reasons: list[str] = []
     for name, raw in sections:
         safe = _redact(raw, config)
-        bounded, truncated = _bound(name, safe, max_section_chars)
-        if truncated:
+        limit = (
+            max_section_chars if max_section_chars is not None else _DEFAULT_SECTION_LIMITS[name]
+        )
+        bounded, truncated = _bound(name, safe, limit)
+        if truncated and (max_section_chars is not None or name in _REVIEW_CRITICAL_SECTIONS):
             reasons.append(name)
         rendered.append(f"## {name}\n{bounded}")
     return ReviewEvidenceBundle(
