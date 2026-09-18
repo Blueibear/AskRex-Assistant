@@ -172,6 +172,7 @@ def build_codex_command(kind: str, repo: Path, prompt: str, model: str) -> list[
         "-a",
         "never",
         "exec",
+        "--ignore-user-config",
         "-m",
         model,
         "-s",
