@@ -77,6 +77,8 @@ def validate_voicestudio_base_url(url: str) -> str:
         raise ValueError("VoiceStudio base URL must use http or https")
     if not parsed.hostname:
         raise ValueError("VoiceStudio base URL must include a hostname")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("VoiceStudio base URL must not include credentials")
     if parsed.scheme == "http" and not is_loopback_url(value):
         raise ValueError("VoiceStudio remote base URLs must use https")
     return value.rstrip("/")

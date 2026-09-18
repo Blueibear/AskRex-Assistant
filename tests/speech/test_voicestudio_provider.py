@@ -201,7 +201,16 @@ class TestVoiceStudioConfigUrlSecurity:
         config = VoiceStudioConfig(base_url=base_url)
         assert config.base_url == base_url
 
-    @pytest.mark.parametrize("base_url", ["ftp://127.0.0.1", "not-a-url", "https://"])
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "ftp://127.0.0.1",
+            "not-a-url",
+            "https://",
+            "http://user:password@127.0.0.1:3900",
+            "https://user:password@speech.example.test",
+        ],
+    )
     def test_invalid_scheme_or_hostname_is_rejected(self, base_url: str) -> None:
         with pytest.raises(ValueError):
             VoiceStudioConfig(base_url=base_url)
@@ -360,21 +369,23 @@ class TestUrllibVoiceStudioTransportUrlSecurity:
             with pytest.raises(SpeechProviderResponseError, match="TLS policy"):
                 if operation == "health":
                     transport.get_json(
-                        "http://speech.example.test/health", headers={}, timeout=1
+                        "http://speech.example.test/health",
+                        headers={"Authorization": "Bearer secret"},
+                        timeout=1,
                     )
                 elif operation == "transcription":
                     transport.post_multipart_for_json(
                         "http://speech.example.test/v1/audio/transcriptions",
                         {},
                         ("file", "audio.wav", b"audio", "audio/wav"),
-                        headers={},
+                        headers={"Authorization": "Bearer secret"},
                         timeout=1,
                     )
                 else:
                     transport.post_json_for_bytes(
                         "http://speech.example.test/v1/audio/speech",
                         {"input": "private text"},
-                        headers={},
+                        headers={"Authorization": "Bearer secret"},
                         timeout=1,
                     )
 
