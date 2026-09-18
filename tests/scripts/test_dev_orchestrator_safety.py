@@ -900,6 +900,84 @@ def test_watchdog_removes_stale_scratch_clone(tmp_path: Path) -> None:
     assert "Removed stale scratch clone" in result.stdout
 
 
+def test_watchdog_removes_stale_dedicated_codex_scratch_clone(tmp_path: Path) -> None:
+    import json
+    import os
+    import shutil
+    import subprocess as sp
+    import sys
+    from datetime import UTC, datetime
+
+    from scripts.dev_orchestrator import runner
+
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    if pwsh is None:
+        pytest.skip("PowerShell is unavailable")
+    coord = tmp_path / "coord"
+    active = coord / "active-agents"
+    active.mkdir(parents=True)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    scratch_root = coord.parent / ".askrex-agent-scratch" / "askrex-backend-codex-watchdog"
+    scratch = scratch_root / "repo"
+    scratch.mkdir(parents=True)
+    sp.run(["git", "init", "-q"], cwd=scratch, check=True)
+    sp.run(["git", "config", "user.email", "test@example.com"], cwd=scratch, check=True)
+    sp.run(["git", "config", "user.name", "Test"], cwd=scratch, check=True)
+    (scratch / "leftover.txt").write_text("x\n", encoding="utf-8")
+    sp.run(["git", "add", "leftover.txt"], cwd=scratch, check=True)
+    sp.run(["git", "commit", "-qm", "scratch"], cwd=scratch, check=True)
+    pre_head = sp.check_output(["git", "rev-parse", "HEAD"], cwd=scratch, text=True).strip()
+    scratch_nonce = runner._write_scratch_owner(
+        scratch, role="backend", invocation_id="dead-codex-scratch", pre_head=pre_head
+    )
+    write_heartbeat(
+        coord / "supervisor-heartbeat.json",
+        now=datetime.now(UTC),
+        pid=os.getpid(),
+    )
+    marker = active / "backend.json"
+    marker.write_text(
+        json.dumps(
+            {
+                "status": "active",
+                "pid": 2147483000,
+                "invocation_id": "dead-codex-scratch",
+                "role": "backend",
+                "pre_head": pre_head,
+                "scratch_nonce": scratch_nonce,
+                "process_started_at": datetime.now(UTC).isoformat(),
+                "scratch_path": str(scratch.resolve()),
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = Path("scripts/dev_orchestrator/windows_watchdog.ps1").resolve()
+    result = sp.run(
+        [
+            pwsh,
+            "-NoProfile",
+            "-File",
+            str(script),
+            "-CoordinationRoot",
+            str(coord),
+            "-PythonExe",
+            sys.executable,
+            "-RepoRoot",
+            str(repo),
+            "-MaxAgeSeconds",
+            "0",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert not marker.exists()
+    assert not scratch_root.exists()
+    assert "Removed stale scratch clone" in result.stdout
+
+
 def test_watchdog_refuses_unowned_scratch_clone(tmp_path: Path) -> None:
     import json
     import os
@@ -1418,6 +1496,14 @@ def test_watchdog_binds_quarantine_to_same_filesystem_identity() -> None:
     assert quarantine_identity > rename
     assert compare > quarantine_identity
     assert delete > compare
+
+
+def test_watchdog_dedicated_codex_boundary_is_role_scoped() -> None:
+    script = Path("scripts/dev_orchestrator/windows_watchdog.ps1").read_text(encoding="utf-8")
+
+    assert ".askrex-agent-scratch" in script
+    assert 'StartsWith("askrex-$Role-codex-"' in script
+    assert "Dedicated scratch boundary is a reparse point." in script
 
 
 def test_watchdog_quarantines_scratch_before_destructive_delete() -> None:

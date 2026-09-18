@@ -670,6 +670,7 @@ def test_production_codex_fallback_publishes_only_scratch_patch(
             return runner.ProcessResult(1, "", "You've hit your session limit")
         assert cwd.resolve() != backend.resolve()
         assert cwd.name == "repo"
+        assert cwd.parent.parent.resolve() == (coord.parent / ".askrex-agent-scratch").resolve()
         assert command[command.index("-s") + 1] == "workspace-write"
         assert "--skip-git-repo-check" in command
         assert not (cwd / ".git").exists()

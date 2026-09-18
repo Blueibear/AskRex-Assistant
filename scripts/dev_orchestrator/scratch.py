@@ -25,8 +25,11 @@ def _remove_scratch_tree(path: Path, *, attempts: int = 60, delay_seconds: float
 
 
 @contextmanager
-def _temporary_scratch_root(prefix: str):
-    root = Path(tempfile.mkdtemp(prefix=prefix))
+def _temporary_scratch_root(prefix: str, *, parent: Path | None = None):
+    if parent is not None:
+        parent = parent.resolve()
+        parent.mkdir(parents=True, exist_ok=True)
+    root = Path(tempfile.mkdtemp(prefix=prefix, dir=parent))
     cleanup = {"remove": True}
     try:
         yield root, cleanup

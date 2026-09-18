@@ -799,6 +799,9 @@ class CliAgentInvoker:
     ) -> ProcessResult:
         with ControlPlaneLock(role_lease_lock_path(self.config, role)):
             validate_handoff(self.config, role)
+            scratch_parent = None
+            if self._production_executor and provider == "codex":
+                scratch_parent = self.config.coordination_root.parent / ".askrex-agent-scratch"
             command = [
                 *command[:-1],
                 command[-1] + f"\nAskRex-Orchestrator-Invocation-ID: {invocation_id}",
@@ -814,7 +817,10 @@ class CliAgentInvoker:
                 "pre_head": pre_head,
             }
             parsed: AgentResult | None = None
-            with _temporary_scratch_root(prefix=f"askrex-{role}-{provider}-") as scratch_scope:
+            with _temporary_scratch_root(
+                prefix=f"askrex-{role}-{provider}-",
+                parent=scratch_parent,
+            ) as scratch_scope:
                 temp_dir, scratch_cleanup = scratch_scope
                 scratch = Path(temp_dir) / "repo"
                 _clone_scratch_repo(repo, pre_head, scratch)

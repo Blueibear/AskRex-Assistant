@@ -148,10 +148,29 @@ function Remove-StaleScratchClone {
     }
     $full = [System.IO.Path]::GetFullPath($ScratchPath)
     $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+    $tempPrefix = $tempRoot.TrimEnd([char[]]@([char]92, [char]47)) + [System.IO.Path]::DirectorySeparatorChar
+    $coordParent = Split-Path -Parent ([System.IO.Path]::GetFullPath($CoordinationRoot))
+    $dedicatedScratchRoot = [System.IO.Path]::GetFullPath(
+        (Join-Path $coordParent '.askrex-agent-scratch')
+    )
     $parent = Split-Path -Parent $full
+    $parentParent = Split-Path -Parent $parent
+    $parentLeaf = Split-Path -Leaf $parent
     $leaf = Split-Path -Leaf $full
-    if (-not $full.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase) -or $leaf -ne 'repo') {
-        throw "Scratch path is outside the AskRex temporary clone boundary: $ScratchPath"
+    $withinTemp = $full.StartsWith($tempPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+    $withinDedicatedCodex = (
+        $parentParent.Equals($dedicatedScratchRoot, [System.StringComparison]::OrdinalIgnoreCase) -and
+        $parentLeaf.StartsWith("askrex-$Role-codex-", [System.StringComparison]::OrdinalIgnoreCase)
+    )
+    if ((-not $withinTemp -and -not $withinDedicatedCodex) -or $leaf -ne 'repo') {
+        throw "Scratch path is outside an AskRex managed clone boundary: $ScratchPath"
+    }
+    if ($withinDedicatedCodex) {
+        $dedicatedItem = Get-Item -LiteralPath $dedicatedScratchRoot -Force -ErrorAction Stop
+        $reparse = [System.IO.FileAttributes]::ReparsePoint
+        if (($dedicatedItem.Attributes -band $reparse) -ne 0) {
+            throw "Dedicated scratch boundary is a reparse point."
+        }
     }
     $parentItem = Get-Item -LiteralPath $parent -Force -ErrorAction Stop
     $scratchItem = Get-Item -LiteralPath $full -Force -ErrorAction Stop
