@@ -174,6 +174,8 @@ def build_codex_command(kind: str, repo: Path, prompt: str, model: str) -> list[
         "exec",
         "--ignore-user-config",
         "--ignore-rules",
+        "-c",
+        'windows.sandbox="unelevated"',
         "-m",
         model,
         "-s",

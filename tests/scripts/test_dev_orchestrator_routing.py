@@ -414,6 +414,13 @@ def test_codex_orchestrator_command_ignores_user_exec_rules(tmp_path: Path) -> N
     assert command.index("--ignore-rules") > command.index("exec")
 
 
+def test_codex_orchestrator_uses_unelevated_windows_sandbox(tmp_path: Path) -> None:
+    command = build_codex_command("implement", tmp_path / "repo", "Implement.", TERRA_MODEL)
+
+    index = command.index("-c")
+    assert command[index + 1] == 'windows.sandbox="unelevated"'
+
+
 def test_codex_windows_launcher_uses_executable_cmd_shim(tmp_path: Path) -> None:
     command = build_codex_command("review", tmp_path / "repo", "Review.", TERRA_MODEL)
 
