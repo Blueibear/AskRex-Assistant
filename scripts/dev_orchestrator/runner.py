@@ -452,10 +452,14 @@ def _codex_task_prompt(
     role: str, task, coordination_root: Path, context: str, invocation_id: str
 ) -> str:
     prompt = _task_prompt(role, task, coordination_root, context, invocation_id)
-    return prompt.replace(
+    prompt = prompt.replace(
         "Shell/Bash/Web/MCP tools are intentionally unavailable; do not attempt to run tests or create commits because the deterministic supervisor owns validation and Git checkpointing. ",
         "Use only Codex workspace-local repository and terminal tools inside the disposable scratch clone to inspect and edit files. Git metadata is intentionally hidden during your run, so do not rely on Git commands. Do not use web/network/MCP access or create commits; the deterministic supervisor owns authoritative validation and Git checkpointing. ",
         1,
+    )
+    return (
+        prompt
+        + "\n\nCodex scratch-boundary rule: reviewer feedback may request supervisor-owned artifacts such as a Git diff, shared coordination mailbox/check output, or authoritative validation command output. Do not attempt to access or produce those artifacts from the disposable scratch clone; the supervisor supplies them after you return. If implementation/source inspection is complete, return ready_for_review so deterministic supervisor validation can decide whether the task passes. If an authoritative validation command cannot run only because untracked dependencies (for example node_modules) or shared coordination state are intentionally absent from the scratch clone, do not report blocked_system solely for that reason."
     )
 
 

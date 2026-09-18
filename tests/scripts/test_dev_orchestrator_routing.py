@@ -13,6 +13,7 @@ from scripts.dev_orchestrator.routing import (
     select_reviewer_model,
 )
 from scripts.dev_orchestrator.runner import (
+    _codex_task_prompt,
     _lead_prompt,
     _review_prompt,
     build_claude_command,
@@ -39,6 +40,30 @@ def _safe_config(tmp_path: Path):
     acknowledge_handoff(config, "backend", source="test")
     acknowledge_handoff(config, "mobile", source="test")
     return config, backend, mobile
+
+
+def test_codex_task_prompt_defers_supervisor_owned_evidence() -> None:
+    task = TaskItem(
+        "MOBILE-1",
+        "Finish mobile contract sync",
+        feedback=(
+            "Supply complete git diff, shared coordination check output, and validation command output."
+        ),
+    )
+    prompt = _codex_task_prompt(
+        "mobile",
+        task,
+        Path(r"C:\coordination"),
+        "bounded coordination context",
+        "inv-1",
+    )
+
+    assert "supervisor-owned artifacts" in prompt
+    assert "Git diff" in prompt
+    assert "shared coordination" in prompt
+    assert "untracked dependencies" in prompt
+    assert "return ready_for_review" in prompt
+    assert "do not report blocked_system" in prompt
 
 
 def test_routine_and_escalated_models_are_explicit() -> None:
