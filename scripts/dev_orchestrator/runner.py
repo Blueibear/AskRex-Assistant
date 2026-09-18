@@ -996,7 +996,7 @@ class CliAgentInvoker:
                 ),
             )
         except AgentInvocationError as exc:
-            if exc.kind != "usage_limit":
+            if exc.kind not in {"usage_limit", "auth"}:
                 raise
 
         fallback_invocation_id = str(uuid.uuid4())

@@ -323,6 +323,52 @@ def test_implementation_falls_back_to_codex_when_claude_is_usage_limited(tmp_pat
     assert "workspace-local" in calls[1][-1]
 
 
+def test_implementation_falls_back_to_codex_when_claude_auth_is_revoked(tmp_path: Path) -> None:
+    import json
+
+    from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
+    from scripts.dev_orchestrator.types import TaskItem, WorkerState
+
+    config, _backend, _mobile = _safe_config(tmp_path)
+    calls: list[list[str]] = []
+
+    def execute(command, cwd, timeout_seconds=1800):
+        calls.append(command)
+        if len(calls) == 1:
+            return ProcessResult(
+                1,
+                "",
+                "Failed to authenticate. API Error: 401 OAuth access token has been revoked.",
+            )
+        return ProcessResult(
+            0,
+            json.dumps(
+                {
+                    "outcome": "continue",
+                    "summary": "codex continued implementation",
+                    "next_action": "continue",
+                    "needs_user": False,
+                    "blocker_reason": "",
+                }
+            ),
+            "",
+        )
+
+    invoker = CliAgentInvoker(config, execute=execute, allow_test_executor=True)
+    result = invoker.implement(
+        "backend",
+        WorkerState("backend"),
+        TaskItem("B-AUTH", "Continue backend"),
+        "ctx",
+        "sonnet",
+    )
+
+    assert result.outcome == "continue"
+    assert len(calls) == 2
+    assert calls[1][0].lower().startswith("codex")
+    assert calls[1][calls[1].index("-s") + 1] == "workspace-write"
+
+
 def test_implementation_pauses_when_claude_and_codex_are_both_usage_limited(tmp_path: Path) -> None:
     from scripts.dev_orchestrator.runner import AgentInvocationError, CliAgentInvoker, ProcessResult
     from scripts.dev_orchestrator.types import TaskItem, WorkerState
