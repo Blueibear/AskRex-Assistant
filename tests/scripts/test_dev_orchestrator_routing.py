@@ -423,6 +423,7 @@ def test_codex_orchestrator_uses_unelevated_windows_sandbox(tmp_path: Path) -> N
     assert 'windows.sandbox="unelevated"' in config_values
     assert "sandbox_workspace_write.exclude_tmpdir_env_var=true" in config_values
     assert "sandbox_workspace_write.exclude_slash_tmp=true" in config_values
+    assert "allow_login_shell=false" in config_values
 
 
 def test_codex_windows_launcher_uses_executable_cmd_shim(tmp_path: Path) -> None:
@@ -956,61 +957,6 @@ def test_custom_codex_executor_uses_scratch_clone(tmp_path: Path) -> None:
     assert observed["cwd"] != backend.resolve()
     assert not (backend / "test-executor.txt").exists()
     assert str(backend.resolve()) not in observed["command"]
-
-
-def test_windows_creationflags_avoid_codex_process_group() -> None:
-    from scripts.dev_orchestrator import runner
-
-    if os.name == "nt":
-        assert runner._windows_creationflags(["codex.cmd", "exec"]) == 0
-        assert runner._windows_creationflags(["codex.exe", "exec"]) == 0
-        assert (
-            runner._windows_creationflags(["docker", "run"])
-            == runner.subprocess.CREATE_NEW_PROCESS_GROUP
-        )
-    else:
-        assert runner._windows_creationflags(["codex", "exec"]) == 0
-        assert runner._windows_creationflags(["docker", "run"]) == 0
-
-
-@pytest.mark.skipif(os.name != "nt", reason="Windows Codex sandbox regression")
-def test_windows_codex_process_scope_serializes_threads() -> None:
-    import threading
-    import time
-
-    from scripts.dev_orchestrator import runner
-
-    entered: list[str] = []
-    first_inside = threading.Event()
-    release_first = threading.Event()
-    second_started = threading.Event()
-
-    def first() -> None:
-        with runner._codex_process_scope():
-            entered.append("first")
-            first_inside.set()
-            assert release_first.wait(2)
-
-    def second() -> None:
-        assert first_inside.wait(2)
-        second_started.set()
-        with runner._codex_process_scope():
-            entered.append("second")
-
-    t1 = threading.Thread(target=first)
-    t2 = threading.Thread(target=second)
-    t1.start()
-    assert first_inside.wait(2)
-    t2.start()
-    assert second_started.wait(2)
-    time.sleep(0.05)
-    assert entered == ["first"]
-    release_first.set()
-    t1.join(2)
-    t2.join(2)
-    assert not t1.is_alive()
-    assert not t2.is_alive()
-    assert entered == ["first", "second"]
 
 
 def test_run_command_uses_utf8_for_unicode_stdin(tmp_path: Path) -> None:

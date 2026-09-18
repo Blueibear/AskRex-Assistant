@@ -182,6 +182,8 @@ def build_codex_command(kind: str, repo: Path, prompt: str, model: str) -> list[
         "sandbox_workspace_write.exclude_tmpdir_env_var=true",
         "-c",
         "sandbox_workspace_write.exclude_slash_tmp=true",
+        "-c",
+        "allow_login_shell=false",
         "-m",
         model,
         "-s",
@@ -255,15 +257,6 @@ def _remove_docker_container(name: str) -> bool:
     return _docker_container_state(name) == "absent"
 
 
-def _windows_creationflags(command: list[str]) -> int:
-    if os.name != "nt":
-        return 0
-    launcher = Path(command[0]).name.casefold() if command else ""
-    if launcher in {"codex", "codex.cmd", "codex.exe"}:
-        return 0
-    return subprocess.CREATE_NEW_PROCESS_GROUP
-
-
 def run_command(
     command: list[str],
     cwd: Path,
@@ -273,7 +266,7 @@ def run_command(
     activity_metadata: dict[str, Any] | None = None,
     stdin_text: str | None = None,
 ) -> ProcessResult:
-    creationflags = _windows_creationflags(command)
+    creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     activity_store = None
     payload = dict(activity_metadata or {})
     preserve_activity_on_success = bool(payload.pop("_preserve_activity_on_success", False))
@@ -603,16 +596,6 @@ def _publish_scratch_commit(
 
 
 _CUSTOM_EXECUTOR_PROCESS_LOCK = threading.RLock()
-_CODEX_WINDOWS_PROCESS_LOCK = threading.RLock()
-
-
-@contextmanager
-def _codex_process_scope():
-    if os.name == "nt":
-        with _CODEX_WINDOWS_PROCESS_LOCK:
-            yield
-        return
-    yield
 
 
 @contextmanager
@@ -933,20 +916,19 @@ class CliAgentInvoker:
                             },
                             "stdin_text": stdin_text,
                         }
-                        with _codex_process_scope():
-                            if codex_is_implementation:
-                                with _hide_scratch_git_metadata(scratch):
-                                    result = self.execute(
-                                        scratch_command,
-                                        scratch,
-                                        **execute_kwargs,
-                                    )
-                            else:
+                        if codex_is_implementation:
+                            with _hide_scratch_git_metadata(scratch):
                                 result = self.execute(
                                     scratch_command,
                                     scratch,
                                     **execute_kwargs,
                                 )
+                        else:
+                            result = self.execute(
+                                scratch_command,
+                                scratch,
+                                **execute_kwargs,
+                            )
                     else:
                         result = invoke_custom_executor(scratch_command)
                     if result.returncode == 0:
