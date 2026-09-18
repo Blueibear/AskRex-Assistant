@@ -407,6 +407,13 @@ def test_codex_orchestrator_command_ignores_user_config(tmp_path: Path) -> None:
     assert command.index("--ignore-user-config") > command.index("exec")
 
 
+def test_codex_orchestrator_command_ignores_user_exec_rules(tmp_path: Path) -> None:
+    command = build_codex_command("implement", tmp_path / "repo", "Implement.", TERRA_MODEL)
+
+    assert "--ignore-rules" in command
+    assert command.index("--ignore-rules") > command.index("exec")
+
+
 def test_codex_windows_launcher_uses_executable_cmd_shim(tmp_path: Path) -> None:
     command = build_codex_command("review", tmp_path / "repo", "Review.", TERRA_MODEL)
 
