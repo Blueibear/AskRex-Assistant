@@ -603,6 +603,16 @@ def _publish_scratch_commit(
 
 
 _CUSTOM_EXECUTOR_PROCESS_LOCK = threading.RLock()
+_CODEX_WINDOWS_PROCESS_LOCK = threading.RLock()
+
+
+@contextmanager
+def _codex_process_scope():
+    if os.name == "nt":
+        with _CODEX_WINDOWS_PROCESS_LOCK:
+            yield
+        return
+    yield
 
 
 @contextmanager
@@ -923,19 +933,20 @@ class CliAgentInvoker:
                             },
                             "stdin_text": stdin_text,
                         }
-                        if codex_is_implementation:
-                            with _hide_scratch_git_metadata(scratch):
+                        with _codex_process_scope():
+                            if codex_is_implementation:
+                                with _hide_scratch_git_metadata(scratch):
+                                    result = self.execute(
+                                        scratch_command,
+                                        scratch,
+                                        **execute_kwargs,
+                                    )
+                            else:
                                 result = self.execute(
                                     scratch_command,
                                     scratch,
                                     **execute_kwargs,
                                 )
-                        else:
-                            result = self.execute(
-                                scratch_command,
-                                scratch,
-                                **execute_kwargs,
-                            )
                     else:
                         result = invoke_custom_executor(scratch_command)
                     if result.returncode == 0:

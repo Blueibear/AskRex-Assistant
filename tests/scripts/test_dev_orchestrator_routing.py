@@ -973,6 +973,46 @@ def test_windows_creationflags_avoid_codex_process_group() -> None:
         assert runner._windows_creationflags(["docker", "run"]) == 0
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows Codex sandbox regression")
+def test_windows_codex_process_scope_serializes_threads() -> None:
+    import threading
+    import time
+
+    from scripts.dev_orchestrator import runner
+
+    entered: list[str] = []
+    first_inside = threading.Event()
+    release_first = threading.Event()
+    second_started = threading.Event()
+
+    def first() -> None:
+        with runner._codex_process_scope():
+            entered.append("first")
+            first_inside.set()
+            assert release_first.wait(2)
+
+    def second() -> None:
+        assert first_inside.wait(2)
+        second_started.set()
+        with runner._codex_process_scope():
+            entered.append("second")
+
+    t1 = threading.Thread(target=first)
+    t2 = threading.Thread(target=second)
+    t1.start()
+    assert first_inside.wait(2)
+    t2.start()
+    assert second_started.wait(2)
+    time.sleep(0.05)
+    assert entered == ["first"]
+    release_first.set()
+    t1.join(2)
+    t2.join(2)
+    assert not t1.is_alive()
+    assert not t2.is_alive()
+    assert entered == ["first", "second"]
+
+
 def test_run_command_uses_utf8_for_unicode_stdin(tmp_path: Path) -> None:
     import sys
 
