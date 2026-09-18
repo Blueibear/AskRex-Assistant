@@ -282,11 +282,14 @@ def test_review_rejects_repository_change_during_read_only_send(tmp_path: Path) 
     assert read_pending_result(config, "backend") is None
 
 
-def test_truncated_review_evidence_requests_complete_fallback_review(tmp_path: Path) -> None:
+@pytest.mark.parametrize("outcome", ["pass", "changes_required"])
+def test_truncated_review_evidence_requests_complete_fallback_review(
+    tmp_path: Path, outcome: str
+) -> None:
     config, _repo, state, task = _leased_review(tmp_path)
     events: list[str] = []
     budget = _FakeBudget(events)
-    transport = _FakeTransport(events, _agent_output("inv-truncated"))
+    transport = _FakeTransport(events, _agent_output("inv-truncated", outcome=outcome))
     worker = _worker(config, transport, budget, "inv-truncated")
 
     with pytest.raises(AgentInvocationError) as caught:

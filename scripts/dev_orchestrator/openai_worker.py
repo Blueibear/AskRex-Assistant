@@ -303,7 +303,7 @@ class OpenAIModelWorker:
                 invocation_id=invocation_id,
                 allow_issue_updates=True,
             )
-            if evidence.truncated and result.outcome == "pass":
+            if evidence.truncated:
                 raise AgentInvocationError(
                     "openai",
                     "incomplete_evidence",
