@@ -177,7 +177,7 @@ def build_codex_command(kind: str, repo: Path, prompt: str, model: str) -> list[
         "--ignore-rules",
         *git_check,
         "-c",
-        'windows.sandbox="unelevated"',
+        'windows.sandbox="elevated"',
         "-c",
         "sandbox_workspace_write.exclude_tmpdir_env_var=true",
         "-c",

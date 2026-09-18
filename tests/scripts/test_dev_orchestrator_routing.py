@@ -439,13 +439,13 @@ def test_codex_orchestrator_command_ignores_user_exec_rules(tmp_path: Path) -> N
     assert command.index("--ignore-rules") > command.index("exec")
 
 
-def test_codex_orchestrator_uses_unelevated_windows_sandbox(tmp_path: Path) -> None:
+def test_codex_orchestrator_uses_elevated_windows_sandbox(tmp_path: Path) -> None:
     command = build_codex_command("implement", tmp_path / "repo", "Implement.", TERRA_MODEL)
 
     config_values = [
         command[index + 1] for index, value in enumerate(command[:-1]) if value == "-c"
     ]
-    assert 'windows.sandbox="unelevated"' in config_values
+    assert 'windows.sandbox="elevated"' in config_values
     assert "sandbox_workspace_write.exclude_tmpdir_env_var=true" in config_values
     assert "sandbox_workspace_write.exclude_slash_tmp=true" in config_values
     assert "allow_login_shell=false" in config_values
