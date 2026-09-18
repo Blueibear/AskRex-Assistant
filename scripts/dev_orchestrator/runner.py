@@ -167,6 +167,7 @@ def build_codex_command(kind: str, repo: Path, prompt: str, model: str) -> list[
     if kind not in {"implement", "review", "lead"}:
         raise ValueError(f"unsupported Codex role: {kind}")
     sandbox = "workspace-write" if kind == "implement" else "read-only"
+    git_check = ["--skip-git-repo-check"] if kind == "implement" else []
     return [
         "codex.cmd" if os.name == "nt" else "codex",
         "-a",
@@ -174,6 +175,7 @@ def build_codex_command(kind: str, repo: Path, prompt: str, model: str) -> list[
         "exec",
         "--ignore-user-config",
         "--ignore-rules",
+        *git_check,
         "-c",
         'windows.sandbox="unelevated"',
         "-c",
@@ -441,7 +443,7 @@ def _codex_task_prompt(
     prompt = _task_prompt(role, task, coordination_root, context, invocation_id)
     return prompt.replace(
         "Shell/Bash/Web/MCP tools are intentionally unavailable; do not attempt to run tests or create commits because the deterministic supervisor owns validation and Git checkpointing. ",
-        "Use only Codex workspace-local repository and terminal tools inside the disposable scratch clone to inspect and edit files. Do not use web/network/MCP access and do not create commits; the deterministic supervisor owns authoritative validation and Git checkpointing. ",
+        "Use only Codex workspace-local repository and terminal tools inside the disposable scratch clone to inspect and edit files. Git metadata is intentionally hidden during your run, so do not rely on Git commands. Do not use web/network/MCP access or create commits; the deterministic supervisor owns authoritative validation and Git checkpointing. ",
         1,
     )
 
@@ -496,6 +498,28 @@ def _write_scratch_owner(scratch: Path, *, role: str, invocation_id: str, pre_he
     owner = scratch.parent / _SCRATCH_OWNER_FILENAME
     owner.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     return nonce
+
+
+@contextmanager
+def _hide_scratch_git_metadata(scratch: Path):
+    git_dir = scratch / ".git"
+    if not git_dir.is_dir():
+        raise HandoffRequired("Codex scratch clone is missing Git metadata")
+    hidden_git = scratch.parent / f".git-orchestrator-{uuid.uuid4().hex}"
+    os.replace(git_dir, hidden_git)
+    conflict = False
+    try:
+        yield hidden_git
+    finally:
+        if git_dir.exists():
+            conflict = True
+            quarantine = scratch.parent / f".git-codex-conflict-{uuid.uuid4().hex}"
+            os.replace(git_dir, quarantine)
+        if not hidden_git.exists():
+            raise HandoffRequired("Codex scratch Git metadata was lost while hidden")
+        os.replace(hidden_git, git_dir)
+        if conflict:
+            raise HandoffRequired("Codex recreated hidden Git metadata")
 
 
 def _create_scratch_commit(scratch: Path, pre_head: str, invocation_id: str) -> str | None:
@@ -876,16 +900,27 @@ class CliAgentInvoker:
                     if self._production_executor:
                         stdin_text = scratch_command[-1]
                         scratch_command = [*scratch_command[:-1], "-"]
-                        result = self.execute(
-                            scratch_command,
-                            scratch,
-                            activity_file=activity_file,
-                            activity_metadata={
+                        execute_kwargs = {
+                            "activity_file": activity_file,
+                            "activity_metadata": {
                                 **scratch_metadata,
                                 "_preserve_activity_on_success": codex_is_implementation,
                             },
-                            stdin_text=stdin_text,
-                        )
+                            "stdin_text": stdin_text,
+                        }
+                        if codex_is_implementation:
+                            with _hide_scratch_git_metadata(scratch):
+                                result = self.execute(
+                                    scratch_command,
+                                    scratch,
+                                    **execute_kwargs,
+                                )
+                        else:
+                            result = self.execute(
+                                scratch_command,
+                                scratch,
+                                **execute_kwargs,
+                            )
                     else:
                         result = invoke_custom_executor(scratch_command)
                     if result.returncode == 0:

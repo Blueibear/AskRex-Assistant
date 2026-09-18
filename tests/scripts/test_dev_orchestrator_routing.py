@@ -671,6 +671,11 @@ def test_production_codex_fallback_publishes_only_scratch_patch(
         assert cwd.resolve() != backend.resolve()
         assert cwd.name == "repo"
         assert command[command.index("-s") + 1] == "workspace-write"
+        assert "--skip-git-repo-check" in command
+        assert not (cwd / ".git").exists()
+        hidden_git = list(cwd.parent.glob(".git-orchestrator-*"))
+        assert len(hidden_git) == 1
+        assert hidden_git[0].is_dir()
         (cwd / "codex-only.txt").write_text("from codex scratch\n", encoding="utf-8")
         payload = json.dumps(
             {
