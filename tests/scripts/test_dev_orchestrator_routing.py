@@ -958,6 +958,21 @@ def test_custom_codex_executor_uses_scratch_clone(tmp_path: Path) -> None:
     assert str(backend.resolve()) not in observed["command"]
 
 
+def test_windows_creationflags_avoid_codex_process_group() -> None:
+    from scripts.dev_orchestrator import runner
+
+    if os.name == "nt":
+        assert runner._windows_creationflags(["codex.cmd", "exec"]) == 0
+        assert runner._windows_creationflags(["codex.exe", "exec"]) == 0
+        assert (
+            runner._windows_creationflags(["docker", "run"])
+            == runner.subprocess.CREATE_NEW_PROCESS_GROUP
+        )
+    else:
+        assert runner._windows_creationflags(["codex", "exec"]) == 0
+        assert runner._windows_creationflags(["docker", "run"]) == 0
+
+
 def test_run_command_uses_utf8_for_unicode_stdin(tmp_path: Path) -> None:
     import sys
 
