@@ -61,6 +61,7 @@ _CREDENTIAL_CONTEXTS: dict[str, tuple[str, str | None, str]] = {
     "TWILIO_TRANSFER_NUMBER": ("twilio", "phone", "transfer_number"),
     "TELEGRAM_BOT_TOKEN": ("telegram", None, "token"),
     "OPENCLAW_GATEWAY_TOKEN": ("openclaw_gateway", None, "token"),
+    "CLAUDE_CODE_OAUTH_TOKEN": ("claude_code", None, "oauth_token"),
     "PUSH_TOKEN": ("push", None, "token"),
 }
 

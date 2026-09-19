@@ -158,14 +158,14 @@ function Remove-StaleScratchClone {
     $parentLeaf = Split-Path -Leaf $parent
     $leaf = Split-Path -Leaf $full
     $withinTemp = $full.StartsWith($tempPrefix, [System.StringComparison]::OrdinalIgnoreCase)
-    $withinDedicatedCodex = (
+    $withinDedicatedScratch = (
         $parentParent.Equals($dedicatedScratchRoot, [System.StringComparison]::OrdinalIgnoreCase) -and
-        $parentLeaf.StartsWith("askrex-$Role-codex-", [System.StringComparison]::OrdinalIgnoreCase)
+        $parentLeaf.StartsWith("askrex-$Role-", [System.StringComparison]::OrdinalIgnoreCase)
     )
-    if ((-not $withinTemp -and -not $withinDedicatedCodex) -or $leaf -ne 'repo') {
+    if ((-not $withinTemp -and -not $withinDedicatedScratch) -or $leaf -ne 'repo') {
         throw "Scratch path is outside an AskRex managed clone boundary: $ScratchPath"
     }
-    if ($withinDedicatedCodex) {
+    if ($withinDedicatedScratch) {
         $dedicatedItem = Get-Item -LiteralPath $dedicatedScratchRoot -Force -ErrorAction Stop
         $reparse = [System.IO.FileAttributes]::ReparsePoint
         if (($dedicatedItem.Attributes -band $reparse) -ne 0) {

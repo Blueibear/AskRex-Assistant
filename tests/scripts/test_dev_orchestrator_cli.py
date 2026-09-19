@@ -1132,3 +1132,87 @@ def test_active_cycle_uses_default_invoker_builder(tmp_path: Path, monkeypatch) 
     cli_module.run_cycle(config)
 
     assert calls == [config]
+
+
+def test_configure_claude_oauth_token_persists_only_opaque_ref(tmp_path: Path) -> None:
+    from rex.credential_vault import InMemoryCredentialVault
+    from rex.credentials import CredentialManager
+    from scripts.dev_orchestrator.cli import configure_claude_oauth_token, initialize_runtime
+
+    root = tmp_path / "coordination"
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "frozen"
+    for path in (root, backend, mobile, frozen):
+        path.mkdir()
+    initialize_runtime(root, backend, mobile, frozen)
+    vault = InMemoryCredentialVault()
+    manager = CredentialManager(
+        credential_mapping={"claude_code_oauth": "CLAUDE_CODE_OAUTH_TOKEN"},
+        vault=vault,
+    )
+    secret = "synthetic-claude-oauth-value"
+
+    config = configure_claude_oauth_token(root, secret, credential_manager=manager)
+
+    assert config.claude_oauth_credential_ref
+    text = (root / "orchestrator-config.json").read_text(encoding="utf-8")
+    assert secret not in text
+    assert (
+        vault.get_secret(
+            config.claude_oauth_credential_ref,
+            integration="claude_code",
+            account=None,
+            slot="oauth_token",
+        )
+        == secret
+    )
+
+
+def test_configure_claude_oauth_cli_reads_secret_via_getpass(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from rex.credential_vault import InMemoryCredentialVault
+    from rex.credentials import CredentialManager
+    from scripts.dev_orchestrator import cli as cli_module
+
+    root = tmp_path / "coordination"
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "frozen"
+    for path in (root, backend, mobile, frozen):
+        path.mkdir()
+    cli_module.initialize_runtime(root, backend, mobile, frozen)
+    vault = InMemoryCredentialVault()
+    manager = CredentialManager(
+        credential_mapping={"claude_code_oauth": "CLAUDE_CODE_OAUTH_TOKEN"},
+        vault=vault,
+    )
+    monkeypatch.setattr(cli_module, "CredentialManager", lambda *args, **kwargs: manager)
+    monkeypatch.setattr("getpass.getpass", lambda _prompt: "interactive-secret-token")
+
+    assert cli_module.main(["configure-claude-oauth", "--coordination-root", str(root)]) == 0
+    output = capsys.readouterr().out
+    assert "interactive-secret-token" not in output
+    assert cli_module.load_config(root).claude_oauth_credential_ref
+
+
+def test_active_invoker_wires_vault_claude_oauth_resolver(tmp_path: Path, monkeypatch) -> None:
+    from dataclasses import replace
+
+    from scripts.dev_orchestrator import cli as cli_module
+
+    root = tmp_path / "coordination"
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "frozen"
+    for path in (root, backend, mobile, frozen):
+        path.mkdir()
+    config = cli_module.initialize_runtime(root, backend, mobile, frozen)
+    config = replace(config, claude_oauth_credential_ref="credref_abcdefghijklmnop")
+    monkeypatch.setattr(cli_module, "_vault_claude_oauth_token", lambda _config: "vault-token")
+
+    invoker = cli_module._build_active_invoker(config)
+
+    assert invoker._claude_oauth_resolver is not None
+    assert invoker._claude_oauth_resolver() == "vault-token"

@@ -287,6 +287,7 @@ def test_truncated_review_evidence_requests_complete_fallback_review(
     tmp_path: Path, outcome: str
 ) -> None:
     config, _repo, state, task = _leased_review(tmp_path)
+    task = TaskItem(task.task_id, "Review " + ("x" * 9_000))
     events: list[str] = []
     budget = _FakeBudget(events)
     transport = _FakeTransport(events, _agent_output("inv-truncated", outcome=outcome))
@@ -297,7 +298,7 @@ def test_truncated_review_evidence_requests_complete_fallback_review(
             "backend",
             state,
             task,
-            "x" * 13_500,
+            "coordination",
             "gpt-5.6-terra",
         )
 

@@ -1498,11 +1498,11 @@ def test_watchdog_binds_quarantine_to_same_filesystem_identity() -> None:
     assert delete > compare
 
 
-def test_watchdog_dedicated_codex_boundary_is_role_scoped() -> None:
+def test_watchdog_dedicated_scratch_boundary_is_role_scoped() -> None:
     script = Path("scripts/dev_orchestrator/windows_watchdog.ps1").read_text(encoding="utf-8")
 
     assert ".askrex-agent-scratch" in script
-    assert 'StartsWith("askrex-$Role-codex-"' in script
+    assert 'StartsWith("askrex-$Role-"' in script
     assert "Dedicated scratch boundary is a reparse point." in script
 
 

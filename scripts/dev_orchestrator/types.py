@@ -92,6 +92,7 @@ class OrchestratorConfig:
     reserve_last_reset: bool = True
     deferred_issue_ids: tuple[str, ...] = ()
     deferred_task_prefixes: tuple[str, ...] = ()
+    claude_oauth_credential_ref: str = ""
     poll_seconds: int = 60
     implementation_escalation_after: int = 2
     review_escalation_after: int = 2

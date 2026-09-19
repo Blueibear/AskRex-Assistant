@@ -1539,3 +1539,40 @@ def test_cli_lead_prompt_is_provider_neutral_not_astra(tmp_path: Path) -> None:
 
     assert "lead engineer" in prompt.lower()
     assert "astra" not in prompt.lower()
+
+
+def test_claude_sandbox_oauth_uses_inherited_env_without_secret_in_argv(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.runner import build_claude_sandbox_command
+
+    repo = tmp_path / "backend"
+    repo.mkdir()
+    secret = "synthetic-claude-oauth-value"
+    command = build_claude_sandbox_command(
+        repo,
+        "Do work",
+        "sonnet",
+        container_name="askrex-test",
+        use_oauth_token_env=True,
+    )
+
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in command
+    assert secret not in " ".join(command)
+    assert ".credentials.json" not in " ".join(command)
+
+
+def test_run_command_environment_override_is_child_local(tmp_path: Path, monkeypatch) -> None:
+    import os
+    import sys
+
+    from scripts.dev_orchestrator.runner import run_command
+
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    result = run_command(
+        [sys.executable, "-c", "import os; print(os.getenv('CLAUDE_CODE_OAUTH_TOKEN', 'missing'))"],
+        tmp_path,
+        env_overrides={"CLAUDE_CODE_OAUTH_TOKEN": "child-only-token"},
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "child-only-token"
+    assert os.getenv("CLAUDE_CODE_OAUTH_TOKEN") is None

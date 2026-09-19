@@ -1,4 +1,5 @@
 import argparse
+import getpass
 import json
 import time
 from dataclasses import replace
@@ -54,6 +55,7 @@ def _config_payload(config: OrchestratorConfig) -> dict:
         "reserve_last_reset": config.reserve_last_reset,
         "deferred_issue_ids": list(config.deferred_issue_ids),
         "deferred_task_prefixes": list(config.deferred_task_prefixes),
+        "claude_oauth_credential_ref": config.claude_oauth_credential_ref,
         "poll_seconds": config.poll_seconds,
         "implementation_escalation_after": config.implementation_escalation_after,
         "review_escalation_after": config.review_escalation_after,
@@ -114,6 +116,7 @@ def load_config(root: Path) -> OrchestratorConfig:
         deferred_task_prefixes=tuple(
             str(value) for value in payload.get("deferred_task_prefixes", ())
         ),
+        claude_oauth_credential_ref=str(payload.get("claude_oauth_credential_ref", "")),
         poll_seconds=int(payload.get("poll_seconds", 60)),
         implementation_escalation_after=int(payload.get("implementation_escalation_after", 2)),
         review_escalation_after=int(payload.get("review_escalation_after", 2)),
@@ -175,6 +178,74 @@ def record_openai_project_limit_confirmation(
         return updated
 
 
+_CLAUDE_OAUTH_SERVICE = "claude_code_oauth"
+_CLAUDE_OAUTH_LOGICAL_NAME = "CLAUDE_CODE_OAUTH_TOKEN"
+_CLAUDE_OAUTH_INTEGRATION = "claude_code"
+_CLAUDE_OAUTH_SLOT = "oauth_token"
+
+
+def _claude_oauth_manager(config: OrchestratorConfig):
+    if not config.claude_oauth_credential_ref:
+        return None
+    return CredentialManager(
+        credential_mapping={_CLAUDE_OAUTH_SERVICE: _CLAUDE_OAUTH_LOGICAL_NAME},
+        vault_refs={
+            _CLAUDE_OAUTH_LOGICAL_NAME: {
+                "ref": config.claude_oauth_credential_ref,
+                "integration": _CLAUDE_OAUTH_INTEGRATION,
+                "account": None,
+                "slot": _CLAUDE_OAUTH_SLOT,
+            }
+        },
+    )
+
+
+def _vault_claude_oauth_token(config: OrchestratorConfig) -> str | None:
+    manager = _claude_oauth_manager(config)
+    if manager is None:
+        return None
+    credential = manager.get_credential(_CLAUDE_OAUTH_SERVICE)
+    if credential is None or getattr(credential, "source", "") != "vault":
+        return None
+    is_expired = getattr(credential, "is_expired", None)
+    if callable(is_expired) and is_expired():
+        return None
+    token = getattr(credential, "token", None)
+    return token if isinstance(token, str) and token else None
+
+
+def configure_claude_oauth_token(
+    root: Path,
+    token: str,
+    *,
+    credential_manager=None,
+) -> OrchestratorConfig:
+    normalized = token.strip()
+    if not normalized:
+        raise ValueError("Claude Code OAuth token is required")
+    with ControlPlaneLock(root / "control-plane.lock"):
+        config = load_config(root)
+        if not config.observe_only:
+            raise ValueError("pause the supervisor before changing Claude authentication")
+        manager = credential_manager or CredentialManager(
+            credential_mapping={_CLAUDE_OAUTH_SERVICE: _CLAUDE_OAUTH_LOGICAL_NAME}
+        )
+        ref = manager.set_token(
+            _CLAUDE_OAUTH_SERVICE,
+            normalized,
+            persist=True,
+            integration=_CLAUDE_OAUTH_INTEGRATION,
+            account=None,
+            slot=_CLAUDE_OAUTH_SLOT,
+            credential_ref=config.claude_oauth_credential_ref or None,
+        )
+        if not ref:
+            raise ValueError("Claude Code OAuth token could not be persisted")
+        updated = replace(config, claude_oauth_credential_ref=ref)
+        save_config(updated)
+        return updated
+
+
 def _vault_openai_token(credential_manager) -> str | None:
     credential = credential_manager.get_credential("openai")
     if credential is None:
@@ -215,7 +286,10 @@ def set_openai_worker_enabled(
 
 
 def _build_active_invoker(config: OrchestratorConfig, *, credential_manager=None):
-    cli_invoker = CliAgentInvoker(config)
+    claude_resolver = (
+        (lambda: _vault_claude_oauth_token(config)) if config.claude_oauth_credential_ref else None
+    )
+    cli_invoker = CliAgentInvoker(config, claude_oauth_resolver=claude_resolver)
     if not config.openai_worker_enabled:
         return cli_invoker
     validate_openai_policy(config)
@@ -469,6 +543,7 @@ def render_status(config: OrchestratorConfig) -> str:
         "reserve_last_reset": config.reserve_last_reset,
         "deferred_issue_ids": list(config.deferred_issue_ids),
         "deferred_task_prefixes": list(config.deferred_task_prefixes),
+        "claude_subscription_token_configured": bool(config.claude_oauth_credential_ref),
         "openai_worker_enabled": config.openai_worker_enabled,
         "openai_project_hard_limit_confirmed": config.openai_project_hard_limit_confirmed,
         "openai_api_budget": {key: str(value) for key, value in openai_budget.items()},
@@ -579,6 +654,9 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "defer-issue":
             issue_command.add_argument("--clear-task-id", action="append", default=[])
 
+    claude_oauth = sub.add_parser("configure-claude-oauth")
+    claude_oauth.add_argument("--coordination-root", type=Path, required=True)
+
     openai_limit = sub.add_parser("confirm-openai-project-limit")
     openai_limit.add_argument("--coordination-root", type=Path, required=True)
     openai_limit.add_argument("--project-id", required=True)
@@ -670,6 +748,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         )
+        return 0
+    if args.command == "configure-claude-oauth":
+        token = getpass.getpass("Claude Code setup token: ")
+        print(render_status(configure_claude_oauth_token(root, token)))
         return 0
     if args.command == "confirm-openai-project-limit":
         print(

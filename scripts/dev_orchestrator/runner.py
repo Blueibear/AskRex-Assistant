@@ -77,12 +77,20 @@ def build_claude_command(repo: Path, prompt: str, model: str) -> list[str]:
 
 
 def build_claude_sandbox_command(
-    repo: Path, prompt: str, model: str, *, container_name: str
+    repo: Path, prompt: str, model: str, *, container_name: str, use_oauth_token_env: bool = False
 ) -> list[str]:
     credentials = Path.home() / ".claude" / ".credentials.json"
-    if not credentials.is_file():
+    if not use_oauth_token_env and not credentials.is_file():
         raise RuntimeError("Claude sandbox credentials are unavailable")
     inner = build_claude_command(Path("/workspace"), prompt, model)
+    auth_args = (
+        ["--env", "CLAUDE_CODE_OAUTH_TOKEN"]
+        if use_oauth_token_env
+        else [
+            "--mount",
+            f"type=bind,src={credentials.resolve()},dst=/home/node/.claude/.credentials.json,readonly",
+        ]
+    )
     return [
         "docker",
         "run",
@@ -100,8 +108,7 @@ def build_claude_sandbox_command(
         f"type=bind,src={repo.resolve()},dst=/workspace",
         "--mount",
         f"type=bind,src={(repo / '.git').resolve()},dst=/workspace/.git,readonly",
-        "--mount",
-        f"type=bind,src={credentials.resolve()},dst=/home/node/.claude/.credentials.json,readonly",
+        *auth_args,
         "--workdir",
         "/workspace",
         CLAUDE_SANDBOX_IMAGE_ID,
@@ -298,6 +305,7 @@ def run_command(
     activity_file: Path | None = None,
     activity_metadata: dict[str, Any] | None = None,
     stdin_text: str | None = None,
+    env_overrides: dict[str, str] | None = None,
 ) -> ProcessResult:
     creationflags = _windows_creationflags(command)
     activity_store = None
@@ -318,6 +326,10 @@ def run_command(
             }
         )
         activity_store.write(payload)
+    child_env = None
+    if env_overrides:
+        child_env = os.environ.copy()
+        child_env.update(env_overrides)
     try:
         process = subprocess.Popen(
             command,
@@ -330,6 +342,7 @@ def run_command(
             errors="strict",
             creationflags=creationflags,
             start_new_session=os.name != "nt",
+            env=child_env,
         )
     except Exception:
         if activity_file is not None:
@@ -816,8 +829,16 @@ def _validate_custom_executor_runtime(config) -> None:
 
 
 class CliAgentInvoker:
-    def __init__(self, config, *, execute=None, allow_test_executor: bool = False) -> None:
+    def __init__(
+        self,
+        config,
+        *,
+        execute=None,
+        allow_test_executor: bool = False,
+        claude_oauth_resolver=None,
+    ) -> None:
         self.config = config
+        self._claude_oauth_resolver = claude_oauth_resolver
         if execute is None:
             self.execute = run_command
             self._production_executor = True
@@ -900,20 +921,34 @@ class CliAgentInvoker:
                         ensure_claude_sandbox_image()
                         model = command[command.index("--model") + 1]
                         container_name = f"askrex-{role}-{invocation_id.replace('-', '')[:16]}"
-                        run_cmd = build_claude_sandbox_command(
-                            scratch, command[-1], model, container_name=container_name
+                        oauth_token = (
+                            self._claude_oauth_resolver()
+                            if self._claude_oauth_resolver is not None
+                            else None
                         )
-                        result = self.execute(
-                            run_cmd,
+                        sandbox_kwargs = {"container_name": container_name}
+                        if oauth_token:
+                            sandbox_kwargs["use_oauth_token_env"] = True
+                        run_cmd = build_claude_sandbox_command(
                             scratch,
-                            activity_file=activity_file,
-                            activity_metadata={
+                            command[-1],
+                            model,
+                            **sandbox_kwargs,
+                        )
+                        execute_kwargs = {
+                            "activity_file": activity_file,
+                            "activity_metadata": {
                                 **scratch_metadata,
                                 "container_name": container_name,
                                 "_preserve_activity_on_success": True,
                             },
-                            stdin_text=command[-1],
-                        )
+                            "stdin_text": command[-1],
+                        }
+                        if oauth_token:
+                            execute_kwargs["env_overrides"] = {
+                                "CLAUDE_CODE_OAUTH_TOKEN": oauth_token
+                            }
+                        result = self.execute(run_cmd, scratch, **execute_kwargs)
                     else:
                         result = invoke_custom_executor(command)
                     if result.returncode == 0:
