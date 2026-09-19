@@ -1292,6 +1292,58 @@ def test_custom_claude_executor_cannot_publish_to_live_repo(tmp_path: Path) -> N
     assert sp.check_output(["git", "status", "--porcelain"], cwd=backend, text=True).strip() == ""
 
 
+def test_production_codex_review_uses_invocation_bound_schema(tmp_path: Path, monkeypatch) -> None:
+    import json
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.runner import ProcessResult
+    from scripts.dev_orchestrator.types import TaskItem
+
+    config, _backend, _ = _safe_config(tmp_path)
+    observed: dict[str, object] = {}
+
+    def fake_run(command, _cwd, **kwargs):
+        invocation_id = kwargs["activity_metadata"]["invocation_id"]
+        schema_path = Path(command[command.index("--output-schema") + 1])
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        observed["schema_path"] = schema_path
+        observed["role"] = schema["properties"]["role"]
+        observed["task_id"] = schema["properties"]["task_id"]
+        observed["invocation_id"] = schema["properties"]["invocation_id"]
+        payload = {
+            "outcome": "pass",
+            "summary": "ok",
+            "next_action": "",
+            "needs_user": False,
+            "blocker_reason": "",
+            "task_id": "B-BOUND",
+            "task_prompt": "",
+            "role": "backend",
+            "invocation_id": invocation_id,
+            "coordination_messages": [],
+            "issue_updates": [],
+        }
+        return ProcessResult(0, json.dumps(payload), "")
+
+    monkeypatch.setattr(runner, "run_command", fake_run)
+    result = runner.CliAgentInvoker(config).review(
+        "backend",
+        WorkerState("backend"),
+        TaskItem("B-BOUND", "Review"),
+        "ctx",
+        TERRA_MODEL,
+    )
+
+    assert result.outcome == "pass"
+    assert observed["role"] == {"type": "string", "enum": ["backend"]}
+    assert observed["task_id"] == {"type": "string", "enum": ["B-BOUND"]}
+    invocation_schema = observed["invocation_id"]
+    assert isinstance(invocation_schema, dict)
+    assert invocation_schema["type"] == "string"
+    assert len(invocation_schema["enum"]) == 1
+    assert observed["schema_path"] != Path(runner._CODEX_SCHEMA_PATH)
+
+
 def test_production_codex_review_rejects_mismatched_task_binding(
     tmp_path: Path, monkeypatch
 ) -> None:

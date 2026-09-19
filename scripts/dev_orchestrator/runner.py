@@ -163,6 +163,30 @@ def ensure_claude_sandbox_image() -> None:
         )
 
 
+def _write_bound_codex_schema(
+    directory: Path,
+    *,
+    role: str,
+    task_id: str,
+    invocation_id: str,
+    phase: str,
+) -> Path:
+    schema = json.loads(_CODEX_SCHEMA_PATH.read_text(encoding="utf-8"))
+    schema["properties"]["role"] = {"type": "string", "enum": [role]}
+    schema["properties"]["invocation_id"] = {
+        "type": "string",
+        "enum": [invocation_id],
+    }
+    if phase in {"implement", "review"} and task_id:
+        schema["properties"]["task_id"] = {"type": "string", "enum": [task_id]}
+    path = directory / "agent-result.bound.codex.schema.json"
+    path.write_text(
+        json.dumps(schema, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def build_codex_command(kind: str, repo: Path, prompt: str, model: str) -> list[str]:
     if kind not in {"implement", "review", "lead"}:
         raise ValueError(f"unsupported Codex role: {kind}")
@@ -929,6 +953,15 @@ class CliAgentInvoker:
                         str(scratch) if part == str(repo) else part for part in command
                     ]
                     if self._production_executor:
+                        bound_schema = _write_bound_codex_schema(
+                            Path(temp_dir),
+                            role=role,
+                            task_id=task_id,
+                            invocation_id=invocation_id,
+                            phase=phase,
+                        )
+                        schema_index = scratch_command.index("--output-schema") + 1
+                        scratch_command[schema_index] = str(bound_schema)
                         stdin_text = scratch_command[-1]
                         scratch_command = [*scratch_command[:-1], "-"]
                         execute_kwargs = {
