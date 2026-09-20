@@ -3064,11 +3064,11 @@ cd gui && npm run typecheck && npm run build
 
 ---
 
-### US-086: Add scoped document upload and vector indexing
+### US-086: Add scoped chat attachments, document upload, and vector indexing
 
 **Priority:** P1
-**Workstream:** Memory / Retrieval / Privacy / Electron
-**Description:** As a user, I want to upload documents into Rex memory with a chosen scope and labels so retrieval can use them safely.
+**Workstream:** Memory / Retrieval / Privacy / Electron / Mobile
+**Description:** As a user, I want to attach files directly to Rex conversations from desktop or mobile, ask questions about those files in the current turn/conversation, and optionally promote selected uploads into Rex memory with an explicit scope and labels so later retrieval can use them safely.
 
 **Why it matters:** User uploads are powerful but high-risk if private content leaks into household context or cannot be deleted/audited.
 
@@ -3079,14 +3079,25 @@ cd gui && npm run typecheck && npm run build
 - `rex/memory*`
 - `data/`
 - `docs/memory.md`
+- mobile `app/(tabs)/index.tsx` chat composer
+- mobile `hooks/useChat.ts` / chat protocol and authenticated API client
+- mobile attachment/upload service using the existing `expo-document-picker` dependency and approved image/camera picker paths
+- authenticated mobile gateway upload/attachment endpoints and canonical document extraction/indexing services
 
-**Implementation notes:** Distinguish per-user vector stores from a household/shared vector store. Let users tag/label uploaded content or tell Rex how to label it.
+**Implementation notes:** Distinguish per-turn conversational attachments from persisted/indexed uploads. A chat attachment is private to the authenticated uploader and current conversation by default; attaching a file must not silently add it to long-term memory, broad/background context, or a household vector store. Promotion to indexed memory requires an explicit user choice for context eligibility and audience scope. Distinguish per-user vector stores from a household/shared vector store. Let users tag/label persisted uploads or tell Rex how to label them. Uploaded file contents are untrusted data, never instructions with authority: document text, metadata, filenames, images, OCR, and embedded prompts cannot override system/user policy, grant tools/permissions, or weaken action verification.
 
-> **Decomposition directive (skill-compliance):** This story is larger than one Ralph iteration. Before execution, split it into ordered one-iteration slices and run them in order: (a) upload UI accepting supported document/data types; (b) independent context-inclusion plus audience scope selection (private vs household) and user/Rex-confirmed tagging; (c) indexing into the correct per-user or household vector store with provenance; (d) search/delete/audit and later policy editing; (e) cross-scope/context-disabled isolation tests. Do not attempt the full bundle in one iteration.
+> **Mobile chat attachment requirement:** The iOS/Android chat composer must expose a clear attachment control (paperclip or `+`) supporting Files/document selection and supported photo/image selection, with camera capture where the platform permission model allows it. Show selected attachments before send, allow removal/retry, show bounded upload/progress/error state, and render attachment provenance in the resulting conversation. Reuse the existing `expo-document-picker`; do not create a parallel unauthenticated upload path.
+
+> **Decomposition directive (skill-compliance):** This story is larger than one Ralph iteration. Before execution, split it into ordered one-iteration slices and run them in order: (a) authenticated per-turn attachment contract/backend ingestion with strict size/count/type limits, MIME/content validation, temporary lifecycle cleanup, and provenance; (b) mobile chat-composer attachment UI for Files plus supported image/photo/camera inputs, preview/remove/progress/error UX, and message rendering; (c) explicit opt-in promotion from conversational attachment to durable upload with independent context-inclusion plus audience scope selection (private vs household) and user/Rex-confirmed tagging; (d) indexing into the correct per-user or household vector store with provenance; (e) search/delete/audit and later policy editing; (f) prompt-injection, malformed-file, cross-scope/context-disabled, and cross-user isolation tests. Do not attempt the full bundle in one iteration.
 
 **Acceptance Criteria:**
-- [ ] Upload UI accepts supported document/data types.
-- [ ] At upload time the uploader independently chooses whether the file is eligible for broad/background context and whether its audience scope is private to that user or shared household.
+- [ ] Desktop and mobile chat composers expose a clear attachment control that accepts supported document/data types; mobile supports Files plus supported photo/image selection and camera capture where permitted.
+- [ ] Selected attachments are visible before send with bounded filename/type/size metadata, can be removed or retried, and expose truthful upload/progress/error state without leaking local filesystem paths.
+- [ ] An attachment sent with a chat message is private to the authenticated uploader and current conversation by default and remains available for explicit authorized questions without being silently added to long-term memory, broad/background context, or a household index.
+- [ ] The authenticated mobile/backend attachment contract binds upload references to the validated user, conversation, and required device/session scopes; request-supplied user IDs, paths, MIME claims, or attachment IDs never grant authority.
+- [ ] Server-side ingestion enforces bounded attachment count/size, filename/path sanitization, supported-type allowlisting, content/MIME validation, archive/decompression safety, temporary-file lifecycle cleanup, and clear rejection of unsupported or malformed files.
+- [ ] Uploaded content, metadata, OCR, embedded text, and filenames are treated as untrusted data and cannot override Rex/system/user policy, grant permissions/tools, bypass confirmation, or self-promote action/verification outcomes.
+- [ ] At durable-promotion time the uploader independently chooses whether the file is eligible for broad/background context and whether its audience scope is private to that user or shared household.
 - [ ] Context inclusion and audience scope remain editable later by the uploader/owner; another user cannot promote someone else's private upload to household scope.
 - [ ] Context-disabled uploads remain available for explicit authorized file questions but cannot silently influence unrelated turns, proactive suggestions, or situational reasoning.
 - [ ] User can add tags/labels during upload.
@@ -3094,17 +3105,23 @@ cd gui && npm run typecheck && npm run build
 - [ ] Uploaded content is indexed into the correct per-user or household vector store with source provenance retained for derived context.
 - [ ] Private uploads are filtered before retrieval/ranking and are not retrieved or summarized into household/other-user context.
 - [ ] User can search, delete, audit, and inspect contextual-use/scope settings for uploaded content.
-- [ ] Tests cover scope, context inclusion on/off, tagging, retrieval, deletion, uploader authority, provenance, and cross-user/cross-scope isolation.
+- [ ] Tests cover per-turn attachment privacy, authenticated upload binding, size/type/malformed-file handling, prompt-injection resistance, scope, context inclusion on/off, tagging, retrieval, deletion, uploader authority, provenance, and cross-user/cross-scope isolation.
+- [ ] Mobile tests cover Files/image/camera picker flows, preview/remove/retry/progress/error behavior, attachment-to-message binding, and failure when backend authorization or upload validation rejects the attachment.
 - [ ] `cd gui && npm run typecheck && npm run build` passes.
+- [ ] In the authoritative mobile repo, `npm.cmd test`, `npm.cmd run lint`, and `npx.cmd tsc --noEmit` pass.
 - [ ] All relevant GitHub checks pass.
 
 **Validation commands:**
 ```bash
-pytest -q tests/test_us074_document_indexing.py
+pytest -q tests/test_us074_document_indexing.py tests/mobile_api
 cd gui && npm run typecheck && npm run build
+# In the authoritative mobile repo:
+npm.cmd test
+npm.cmd run lint
+npx.cmd tsc --noEmit
 ```
 
-**Risk notes:** Treat uploaded documents as sensitive by default. Avoid indexing unsupported binary content without clear failure.
+**Risk notes:** Treat uploaded documents and chat attachments as sensitive, untrusted content by default. Never equate "attached to this message" with consent to persist/index/share. Avoid parsing or indexing unsupported binary content without clear failure, and never allow document content or metadata to become an authority-bearing instruction channel.
 
 ---
 
