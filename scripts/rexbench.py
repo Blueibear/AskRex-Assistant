@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -23,6 +24,7 @@ import rex.assistant as assistant_module  # noqa: E402
 from rex.actions.graph import ActionGraph, ActionNode  # noqa: E402
 from rex.actions.graph_executor import ActionGraphExecutor  # noqa: E402
 from rex.actions.lifecycle import lifecycle_from_legacy_status  # noqa: E402
+from rex.audit import AuditLogger  # noqa: E402
 from rex.capabilities.registry import Capability, CapabilityRegistry  # noqa: E402
 from rex.capabilities.retrieval import CapabilityRetriever  # noqa: E402
 from rex.model_router import ModelRouter, ProviderRouteCandidate  # noqa: E402
@@ -31,6 +33,8 @@ from rex.rexbench import BenchmarkSample, build_report  # noqa: E402
 from rex.runtime.warm import WarmComponentSpec, WarmRuntimeManager  # noqa: E402
 from rex.tools.execution import ToolOperation  # noqa: E402
 from rex.tools.protocol import ToolResult  # noqa: E402
+from rex.tools.dispatcher import ToolDispatcher  # noqa: E402
+from rex.tools.registry import Tool, ToolRegistry  # noqa: E402
 from rex.voice_loop import VoiceLoop  # noqa: E402
 
 REQUEST_CLASSES = (
@@ -536,6 +540,78 @@ def run_parallel_actions(iterations: int) -> dict:
     return build_report(samples, profile="parallel-actions")
 
 
+def run_speculative_prefetch(iterations: int) -> dict:
+    """Measure a discardable speculative read through the production lifecycle.
+
+    The benchmark intentionally exercises the real dispatcher and lifecycle,
+    including audit recording.  Its correctness check protects the privacy
+    boundary while reporting only timing data.
+    """
+    if iterations < 1:
+        raise ValueError("iterations must be at least 1")
+
+    private_payload = "rexbench-private-speculative-payload"
+    private_exception = "rexbench-private-speculative-exception"
+
+    def failing_read(query: str) -> None:
+        raise ConnectionError(f"{private_exception}: {query}")
+
+    registry = ToolRegistry()
+    registry.register(
+        Tool(
+            name="rexbench_speculative_read",
+            description="Deterministic speculative benchmark read",
+            capability_tags=["benchmark"],
+            requires_config=[],
+            handler=failing_read,
+            operation="read",
+            risk="safe",
+            requires_identity=True,
+            required_args=("query",),
+            health="healthy",
+        )
+    )
+    dispatcher = ToolDispatcher(registry)
+    samples: list[BenchmarkSample] = []
+    with tempfile.TemporaryDirectory(prefix="rexbench-speculative-") as temp_dir:
+        audit_logger = AuditLogger(log_path=Path(temp_dir) / "audit.log")
+        with patch("rex.tools.execution.get_audit_logger", return_value=audit_logger):
+            for iteration in range(iterations):
+                request_id = f"rexbench-speculative-{iteration}"
+                started = time.perf_counter_ns()
+                result = dispatcher.dispatch(
+                    "rexbench_speculative_read",
+                    {"query": private_payload},
+                    {
+                        "user_id": "benchmark",
+                        "request_id": request_id,
+                        "speculative": True,
+                    },
+                )
+                elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000
+                entry = audit_logger.read_by_action_id(request_id)
+                persisted = audit_logger.log_path.read_text(encoding="utf-8")
+                if (
+                    result.status != "failed"
+                    or result.error != "Speculative read failed"
+                    or entry is None
+                    or entry.error != "Speculative read failed"
+                    or entry.tool_result is None
+                    or entry.tool_result.get("error_type") != "ConnectionError"
+                    or any(marker in persisted for marker in (private_payload, private_exception))
+                ):
+                    raise RuntimeError("speculative-prefetch privacy correctness check failed")
+                samples.append(
+                    BenchmarkSample(
+                        request_class="speculative_read_failure",
+                        warm_state="warm",
+                        evidence_class="deterministic_local",
+                        stages_ms={"dispatch": elapsed_ms, "total": elapsed_ms},
+                    )
+                )
+    return build_report(samples, profile="speculative-prefetch")
+
+
 def run_warm_runtime(iterations: int) -> dict:
     if iterations < 1:
         raise ValueError("iterations must be at least 1")
@@ -827,6 +903,7 @@ def main() -> int:
             "baseline",
             "capability-retrieval",
             "parallel-actions",
+            "speculative-prefetch",
             "warm-runtime",
             "model-routing",
             "routing-eval",
@@ -846,6 +923,8 @@ def main() -> int:
         report = run_capability_retrieval(args.iterations)
     elif args.profile == "parallel-actions":
         report = run_parallel_actions(args.iterations)
+    elif args.profile == "speculative-prefetch":
+        report = run_speculative_prefetch(args.iterations)
     elif args.profile == "warm-runtime":
         report = run_warm_runtime(args.iterations)
     elif args.profile == "model-routing":
