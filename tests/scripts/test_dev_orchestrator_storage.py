@@ -86,6 +86,41 @@ def test_atomic_store_retries_windows_replace_sharing_violation(
     assert store.read() == {"status": "working"}
 
 
+def test_atomic_store_uses_windows_native_replace_after_retry_exhaustion(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import os
+
+    from scripts.dev_orchestrator import storage as storage_module
+
+    path = tmp_path / "state.json"
+    store = AtomicJsonStore(path)
+    store.write({"status": "old"})
+    real_replace = os.replace
+    replace_calls = 0
+    fallback_calls = 0
+
+    def blocked_replace(source, destination):
+        nonlocal replace_calls
+        replace_calls += 1
+        raise PermissionError(5, "sharing violation")
+
+    def native_fallback(source, destination):
+        nonlocal fallback_calls
+        fallback_calls += 1
+        real_replace(source, destination)
+        return True
+
+    monkeypatch.setattr(storage_module.os, "replace", blocked_replace)
+    monkeypatch.setattr(storage_module, "_replace_file_windows", native_fallback)
+
+    store.write({"status": "new"})
+
+    assert replace_calls == 5
+    assert fallback_calls == 1
+    assert store.read() == {"status": "new"}
+
+
 def test_agent_result_rejects_needs_user_with_success_outcome() -> None:
     with pytest.raises(ValueError, match="schema"):
         validate_agent_result(

@@ -6,6 +6,27 @@ from pathlib import Path
 from typing import Any
 
 
+def _replace_file_windows(source: Path, destination: Path) -> bool:
+    """Atomically replace an existing file with Windows ReplaceFileW."""
+    if os.name != "nt" or not destination.exists():
+        return False
+
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    replace_file = kernel32.ReplaceFileW
+    replace_file.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_wchar_p,
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    replace_file.restype = ctypes.c_int
+    return bool(replace_file(str(destination), str(source), None, 0, None, None))
+
+
 class AtomicJsonStore:
     """Small atomic JSON file store for durable supervisor state."""
 
@@ -40,6 +61,8 @@ class AtomicJsonStore:
                 return
             except PermissionError:
                 if attempt == 4:
+                    if _replace_file_windows(temporary, self.path):
+                        return
                     raise
                 time.sleep(0.01 * (attempt + 1))
 
@@ -59,6 +82,8 @@ def atomic_write_text(path: Path, text: str) -> None:
                 return
             except PermissionError:
                 if attempt == 4:
+                    if _replace_file_windows(temporary, path):
+                        return
                     raise
                 time.sleep(0.01 * (attempt + 1))
     finally:
