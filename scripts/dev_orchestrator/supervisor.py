@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -59,6 +60,7 @@ def _state_from_dict(role: str, data: dict | None) -> WorkerState:
         claude_session_id=str(data.get("claude_session_id", "")),
         codex_session_id=str(data.get("codex_session_id", "")),
         last_result_invocation_id=str(data.get("last_result_invocation_id", "")),
+        idle_context_fingerprint=str(data.get("idle_context_fingerprint", "")),
     )
 
 
@@ -201,6 +203,11 @@ class Supervisor:
         except (OSError, subprocess.CalledProcessError):
             return ""
 
+    def _idle_fingerprint(self, role: str, context: str) -> str:
+        head = self._capture_task_base_head(role)
+        payload = f"{head}\0{context}".encode()
+        return hashlib.sha256(payload).hexdigest()
+
     def run_cycle(self) -> None:
         if self.config.observe_only:
             return
@@ -341,7 +348,14 @@ class Supervisor:
                     task=queued,
                     task_base_head=self._capture_task_base_head(role),
                     status=WorkerStatus.IMPLEMENTING,
+                    idle_context_fingerprint="",
                 )
+            elif (
+                state.status is WorkerStatus.IDLE
+                and state.idle_context_fingerprint
+                and state.idle_context_fingerprint == self._idle_fingerprint(role, context)
+            ):
+                return
             else:
                 self._plan(role, state, context)
                 return
@@ -562,6 +576,7 @@ class Supervisor:
                     task=TaskItem(result.task_id, result.task_prompt),
                     task_base_head=self._capture_task_base_head(role),
                     blocked_reason="",
+                    idle_context_fingerprint="",
                 )
             )
             return
@@ -680,12 +695,19 @@ class Supervisor:
                     )
                 )
                 return
+            fresh_context = build_coordination_context(
+                self.root,
+                role,
+                deferred_issue_ids=self.config.deferred_issue_ids,
+                deferred_task_prefixes=self.config.deferred_task_prefixes,
+            )
             self.save_state(
                 WorkerState(
                     role=role,
                     status=WorkerStatus.IDLE,
                     claude_session_id=state.claude_session_id,
                     codex_session_id=state.codex_session_id,
+                    idle_context_fingerprint=self._idle_fingerprint(role, fresh_context),
                 )
             )
             return

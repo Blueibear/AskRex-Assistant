@@ -112,6 +112,51 @@ def test_task_requires_implementation_and_independent_review_pass(tmp_path: Path
     state = supervisor.load_state("backend")
     assert state.status is WorkerStatus.IDLE
     assert state.task is None
+    assert state.idle_context_fingerprint
+
+    calls_before_idle_check = list(invoker.calls)
+    supervisor._run_role("backend")
+    assert invoker.calls == calls_before_idle_check
+
+    mailbox = supervisor.root / "mailbox" / "backend" / "MSG-new-context.md"
+    mailbox.write_text(
+        "From: mobile\nNeeds response: no\n\nNew coordination context.\n", encoding="utf-8"
+    )
+    invoker.add(
+        "backend",
+        "lead",
+        result("assign", task_id="B-2", task_prompt="Handle new coordination"),
+    )
+    supervisor._run_role("backend")
+    awakened = supervisor.load_state("backend")
+    assert awakened.status is WorkerStatus.IMPLEMENTING
+    assert awakened.task is not None
+    assert awakened.task.task_id == "B-2"
+    assert awakened.idle_context_fingerprint == ""
+
+
+def test_idle_fingerprint_does_not_hide_explicit_queued_work(tmp_path: Path) -> None:
+    invoker = FakeInvoker()
+    invoker.add("backend", "implement", result("ready_for_review"))
+    invoker.add("backend", "review", result("pass"))
+    supervisor = Supervisor(make_config(tmp_path, observe_only=False), invoker)
+    supervisor.enqueue("backend", TaskItem("B-1", "Finish initial task"))
+
+    supervisor.run_cycle()
+    supervisor.run_cycle()
+    idle = supervisor.load_state("backend")
+    assert idle.status is WorkerStatus.IDLE
+    assert idle.idle_context_fingerprint
+
+    invoker.add("backend", "implement", result("ready_for_review"))
+    supervisor.enqueue("backend", TaskItem("B-2", "Explicit queued work"))
+    supervisor._run_role("backend")
+
+    state = supervisor.load_state("backend")
+    assert ("backend", "implement", "B-2") in invoker.calls
+    assert state.status is WorkerStatus.REVIEWING
+    assert state.task == TaskItem("B-2", "Explicit queued work")
+    assert state.idle_context_fingerprint == ""
 
 
 def test_ready_for_review_fails_deterministic_validation_before_review(tmp_path: Path) -> None:

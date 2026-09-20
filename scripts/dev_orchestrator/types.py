@@ -73,6 +73,7 @@ class WorkerState:
     claude_session_id: str = ""
     codex_session_id: str = ""
     last_result_invocation_id: str = ""
+    idle_context_fingerprint: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
