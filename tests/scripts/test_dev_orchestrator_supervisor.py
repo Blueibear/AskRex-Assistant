@@ -512,6 +512,49 @@ def test_blocked_system_retries_from_saved_review_phase(tmp_path: Path) -> None:
     assert state.task is None
 
 
+def test_runner_pipe_block_is_system_retried_once_then_exhausted(tmp_path: Path) -> None:
+    reason = (
+        "CreateProcess: Failed to create unified exec process: "
+        "timed out after 15000ms connecting runner pipe-in"
+    )
+    blocked = AgentResult(
+        outcome="blocked_user",
+        summary=reason,
+        next_action="Restore terminal execution",
+        needs_user=True,
+        blocker_reason=reason,
+        task_id="B-PIPE",
+    )
+    invoker = FakeInvoker()
+    invoker.add("backend", "implement", blocked, blocked)
+    supervisor = Supervisor(make_config(tmp_path, observe_only=False), invoker)
+    supervisor.save_state(
+        WorkerState(
+            role="backend",
+            status=WorkerStatus.IMPLEMENTING,
+            task=TaskItem("B-PIPE", "Exercise runner recovery"),
+        )
+    )
+
+    supervisor._run_role("backend")
+
+    first = supervisor.load_state("backend")
+    assert first.status is WorkerStatus.BLOCKED_SYSTEM
+    assert first.blocker_kind == "system"
+    assert first.resume_status is WorkerStatus.IMPLEMENTING
+    assert first.implementation_failures == 1
+    assert "automatic retry 1/2" in first.blocked_reason
+
+    supervisor._run_role("backend")
+
+    exhausted = supervisor.load_state("backend")
+    assert exhausted.status is WorkerStatus.BLOCKED_SYSTEM
+    assert exhausted.blocker_kind == "system"
+    assert exhausted.resume_status is None
+    assert exhausted.implementation_failures == 2
+    assert "recovery exhausted after 2 attempts" in exhausted.blocked_reason
+
+
 def test_codex_implemented_checkpoint_forces_sol_review(tmp_path: Path) -> None:
     from scripts.dev_orchestrator.routing import SOL_MODEL
     from scripts.dev_orchestrator.storage import AtomicJsonStore

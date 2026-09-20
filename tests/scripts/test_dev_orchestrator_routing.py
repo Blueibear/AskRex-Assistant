@@ -197,6 +197,16 @@ def test_auth_and_timeout_failures_are_distinct() -> None:
     assert classify_cli_failure("unexpected crash", 1) == "failed"
 
 
+def test_runner_pipe_timeout_takes_precedence_over_incidental_auth_noise() -> None:
+    output = (
+        "skill loader warning mentions authentication metadata\n"
+        "CreateProcess: Failed to create unified exec process: "
+        "timed out after 15000ms connecting runner pipe-in"
+    )
+
+    assert classify_cli_failure(output, 1) == "timeout"
+
+
 def test_codex_commands_require_output_schema(tmp_path: Path) -> None:
     command = build_codex_command("review", tmp_path / "repo", "Review.", TERRA_MODEL)
 

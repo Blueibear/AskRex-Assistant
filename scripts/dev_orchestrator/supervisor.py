@@ -25,7 +25,7 @@ from .handoff import (
 )
 from .lifecycle import ControlPlaneLock
 from .routing import SOL_MODEL, select_implementer_model, select_reviewer_model
-from .runner import AgentInvocationError
+from .runner import AgentInvocationError, is_transient_runner_failure
 from .schema import validate_agent_result
 from .storage import AtomicJsonStore
 from .types import AgentResult, OrchestratorConfig, TaskItem, WorkerState, WorkerStatus
@@ -790,6 +790,31 @@ class Supervisor:
             return state.resume_status or state.status
         return state.status
 
+    def _save_transient_runner_failure(self, state: WorkerState, reason: str) -> None:
+        if state.status is WorkerStatus.REVIEWING:
+            failures = state.review_failures + 1
+            retry_limit = max(1, self.config.review_escalation_after)
+            updates = {"review_failures": failures}
+        else:
+            failures = state.implementation_failures + 1
+            retry_limit = max(1, self.config.implementation_escalation_after)
+            updates = {"implementation_failures": failures}
+        retrying = failures < retry_limit
+        if retrying:
+            message = f"transient agent runtime failure; automatic retry {failures}/{retry_limit}: {reason}"
+        else:
+            message = f"agent runtime recovery exhausted after {failures} attempts: {reason}"
+        self.save_state(
+            replace(
+                state,
+                status=WorkerStatus.BLOCKED_SYSTEM,
+                blocked_reason=message,
+                blocker_kind="system",
+                resume_status=state.status if retrying else None,
+                **updates,
+            )
+        )
+
     def _handle_invocation_error(
         self,
         role: str,
@@ -799,6 +824,9 @@ class Supervisor:
         context: str,
     ) -> None:
         resume_status = self._resume_status_for_phase(state, phase)
+        if is_transient_runner_failure(exc.detail):
+            self._save_transient_runner_failure(state, exc.detail)
+            return
         if exc.provider == "openai":
             if exc.kind == "usage_limit":
                 self.save_state(
@@ -949,6 +977,10 @@ class Supervisor:
         )
 
     def _save_block_or_failure(self, state: WorkerState, result: AgentResult) -> None:
+        reason = result.blocker_reason or result.summary
+        if is_transient_runner_failure(reason):
+            self._save_transient_runner_failure(state, reason)
+            return
         if result.outcome == "blocked_user" or result.needs_user:
             status = WorkerStatus.BLOCKED_USER
         else:
@@ -957,7 +989,7 @@ class Supervisor:
             replace(
                 state,
                 status=status,
-                blocked_reason=result.blocker_reason or result.summary,
+                blocked_reason=reason,
                 blocker_kind="human" if status is WorkerStatus.BLOCKED_USER else "system",
                 resume_status=state.status,
             )

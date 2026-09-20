@@ -392,6 +392,14 @@ def run_command(
             activity_file.unlink(missing_ok=True)
 
 
+def is_transient_runner_failure(text: str) -> bool:
+    normalized = text.lower()
+    return (
+        "connecting runner pipe-in" in normalized
+        or "failed to create unified exec process" in normalized
+    )
+
+
 def classify_cli_failure(text: str, returncode: int) -> str:
     normalized = text.lower()
     if (
@@ -401,6 +409,8 @@ def classify_cli_failure(text: str, returncode: int) -> str:
         or "quota" in normalized
     ):
         return "usage_limit"
+    if is_transient_runner_failure(normalized):
+        return "timeout"
     if (
         "login" in normalized
         or "not authenticated" in normalized
