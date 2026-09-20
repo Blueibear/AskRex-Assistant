@@ -112,20 +112,12 @@ def test_task_requires_implementation_and_independent_review_pass(tmp_path: Path
     state = supervisor.load_state("backend")
     assert state.status is WorkerStatus.IDLE
     assert state.task is None
-    assert state.idle_context_fingerprint
+    assert state.idle_context_fingerprint == ""
 
-    calls_before_idle_check = list(invoker.calls)
-    supervisor._run_role("backend")
-    assert invoker.calls == calls_before_idle_check
-
-    mailbox = supervisor.root / "mailbox" / "backend" / "MSG-new-context.md"
-    mailbox.write_text(
-        "From: mobile\nNeeds response: no\n\nNew coordination context.\n", encoding="utf-8"
-    )
     invoker.add(
         "backend",
         "lead",
-        result("assign", task_id="B-2", task_prompt="Handle new coordination"),
+        result("assign", task_id="B-2", task_prompt="Continue the active campaign"),
     )
     supervisor._run_role("backend")
     awakened = supervisor.load_state("backend")
@@ -146,7 +138,7 @@ def test_idle_fingerprint_does_not_hide_explicit_queued_work(tmp_path: Path) -> 
     supervisor.run_cycle()
     idle = supervisor.load_state("backend")
     assert idle.status is WorkerStatus.IDLE
-    assert idle.idle_context_fingerprint
+    assert idle.idle_context_fingerprint == ""
 
     invoker.add("backend", "implement", result("ready_for_review"))
     supervisor.enqueue("backend", TaskItem("B-2", "Explicit queued work"))

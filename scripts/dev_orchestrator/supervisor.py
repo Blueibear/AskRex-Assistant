@@ -350,13 +350,10 @@ class Supervisor:
                     status=WorkerStatus.IMPLEMENTING,
                     idle_context_fingerprint="",
                 )
-            elif (
-                state.status is WorkerStatus.IDLE
-                and state.idle_context_fingerprint
-                and state.idle_context_fingerprint == self._idle_fingerprint(role, context)
-            ):
-                return
             else:
+                # IDLE is a transient scheduling state in an active campaign.
+                # After a reviewed task clears, immediately ask the planner for
+                # the next bounded task. Only DONE or a real blocker parks work.
                 self._plan(role, state, context)
                 return
 
@@ -695,19 +692,13 @@ class Supervisor:
                     )
                 )
                 return
-            fresh_context = build_coordination_context(
-                self.root,
-                role,
-                deferred_issue_ids=self.config.deferred_issue_ids,
-                deferred_task_prefixes=self.config.deferred_task_prefixes,
-            )
             self.save_state(
                 WorkerState(
                     role=role,
                     status=WorkerStatus.IDLE,
                     claude_session_id=state.claude_session_id,
                     codex_session_id=state.codex_session_id,
-                    idle_context_fingerprint=self._idle_fingerprint(role, fresh_context),
+                    idle_context_fingerprint="",
                 )
             )
             return
