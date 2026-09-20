@@ -53,6 +53,16 @@ def _is_auth_error(exc: BaseException) -> bool:
     return bool(getattr(exc, "auth_error", False))
 
 
+def _is_speculative(context: dict[str, Any]) -> bool:
+    """Return whether this execution is a discardable speculative read.
+
+    Speculative callers must explicitly stamp the context.  That marker also
+    makes the lifecycle's diagnostic boundary metadata-only: an exception can
+    contain the private input or provider response that caused it.
+    """
+    return bool(context.get("speculative"))
+
+
 class ToolOperation(StrEnum):
     READ = "read"
     MUTATION = "mutation"
@@ -412,12 +422,30 @@ class ToolExecutionLifecycle:
                     and _is_transient_error(exc)
                     and not _is_auth_error(exc)
                 ):
-                    logger.debug(
-                        "tool_execution: %r transient read failure; retrying once: %s",
-                        tool.name,
-                        exc,
-                    )
+                    if _is_speculative(request.context):
+                        logger.debug(
+                            "tool_execution: %r transient speculative read failure; "
+                            "retrying once (%s)",
+                            tool.name,
+                            type(exc).__name__,
+                        )
+                    else:
+                        logger.debug(
+                            "tool_execution: %r transient read failure; retrying once: %s",
+                            tool.name,
+                            exc,
+                        )
                     continue
+                if _is_speculative(request.context):
+                    return self._finish(
+                        request,
+                        ToolOutcome.FAILED,
+                        risk,
+                        stages,
+                        started,
+                        error="Speculative read failed",
+                        error_type=type(exc).__name__,
+                    )
                 return self._finish(
                     request, ToolOutcome.FAILED, risk, stages, started, error=str(exc)
                 )
@@ -451,6 +479,12 @@ class ToolExecutionLifecycle:
             else:
                 detail = None
             outcome = ToolOutcome.VERIFIED if verified else ToolOutcome.ATTEMPTED_UNVERIFIED
+
+        if _is_speculative(request.context) and outcome == ToolOutcome.FAILED:
+            # A tool can report a provider error as structured output.  Treat
+            # it exactly like an exception so no private response text crosses
+            # the speculative diagnostic/audit boundary.
+            detail = "Speculative read failed"
 
         stages.append("truthful_response")
         result = self._finish(request, outcome, risk, stages, started, output=output, detail=detail)
@@ -492,6 +526,7 @@ class ToolExecutionLifecycle:
         output: Any = None,
         detail: str | None = None,
         error: str | None = None,
+        error_type: str | None = None,
     ) -> ToolResult:
         stages.append("audit_recording")
         plan_id = request.context.get("plan_id") or request.context.get("task_id")
@@ -536,6 +571,7 @@ class ToolExecutionLifecycle:
                         "success": result.success,
                         "risk": result.risk,
                         "lifecycle": lifecycle.to_dict(),
+                        **({"error_type": error_type} if error_type is not None else {}),
                     },
                     error=error,
                     requested_by=str(
