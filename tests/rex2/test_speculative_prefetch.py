@@ -12,6 +12,17 @@ from rex.tools.execution import ToolOutcome
 from rex.tools.registry import Tool, ToolRegistry
 
 
+class _PathLogCapture(logging.Handler):
+    """Collect records even when a relevant logger does not propagate."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
 def test_speculative_dispatcher_failure_retains_only_safe_metadata(
     tmp_path: Path, caplog
 ) -> None:
@@ -38,26 +49,42 @@ def test_speculative_dispatcher_failure_retains_only_safe_metadata(
         )
     )
     audit_logger = AuditLogger(log_path=tmp_path / "audit.log")
+    path_capture = _PathLogCapture()
+    path_loggers = tuple(
+        logging.getLogger(name)
+        for name in ("rex.tools.dispatcher", "rex.tools.execution", "rex.audit")
+    )
 
     with (
         patch("rex.tools.execution.get_audit_logger", return_value=audit_logger),
+        caplog.at_level(logging.DEBUG),
+        caplog.at_level(logging.DEBUG, logger="rex.tools.dispatcher"),
         caplog.at_level(logging.DEBUG, logger="rex.tools.execution"),
+        caplog.at_level(logging.DEBUG, logger="rex.audit"),
     ):
-        result = ToolDispatcher(registry).dispatch(
-            "speculative_lookup",
-            {"query": private_payload},
-            {
-                "user_id": "james",
-                "request_id": "speculative-private-failure",
-                "speculative": True,
-            },
-        )
+        for path_logger in path_loggers:
+            path_logger.addHandler(path_capture)
+        try:
+            result = ToolDispatcher(registry).dispatch(
+                "speculative_lookup",
+                {"query": private_payload},
+                {
+                    "user_id": "james",
+                    "request_id": "speculative-private-failure",
+                    "speculative": True,
+                },
+            )
+        finally:
+            for path_logger in path_loggers:
+                path_logger.removeHandler(path_capture)
 
     assert result.status == ToolOutcome.FAILED
     assert result.error == "Speculative read failed"
 
     persistent_audit = audit_logger.log_path.read_text(encoding="utf-8")
-    captured_logs = caplog.text
+    captured_logs = "\n".join(
+        (caplog.text, *(record.getMessage() for record in path_capture.records))
+    )
     for marker in (private_payload, private_exception):
         assert marker not in persistent_audit
         assert marker not in captured_logs
