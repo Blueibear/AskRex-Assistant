@@ -422,6 +422,69 @@ def test_coordination_only_second_review_rejection_escalates_and_astra_can_close
     assert saved.task is None
 
 
+def test_coordination_review_circuit_clears_pending_review_before_adjudication(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from scripts.dev_orchestrator.handoff import read_pending_result
+    from scripts.dev_orchestrator.storage import AtomicJsonStore
+
+    config = make_config(tmp_path, observe_only=False)
+    invoker = FakeInvoker()
+    invoker.add("backend", "lead", result("done", summary="closeout complete"))
+    supervisor = Supervisor(config, invoker)
+    monkeypatch.setattr(supervisor, "_has_current_green_validation", lambda *_args: True)
+    task = TaskItem(
+        "backend-closeout-evidence-v1",
+        (
+            "Complete only the coordination closeout. Do not change the accepted "
+            "implementation. Do not modify backend source/tests."
+        ),
+    )
+    state = WorkerState(
+        role="backend",
+        status=WorkerStatus.REVIEWING,
+        task=task,
+        task_base_head="abc123",
+        review_failures=1,
+    )
+    supervisor.save_state(state)
+    invocation_id = "review-pending-before-adjudication"
+    AtomicJsonStore(config.coordination_root / "handoff" / "backend.json").write(
+        {
+            "owner": "supervisor",
+            "pending_result": {
+                "role": "backend",
+                "phase": "review",
+                "task_id": task.task_id,
+                "invocation_id": invocation_id,
+                "pre_head": "abc123",
+                "post_head": "abc123",
+                "result": {
+                    "outcome": "changes_required",
+                    "summary": "repeat stale closeout objection",
+                    "next_action": "repeat evidence",
+                    "needs_user": False,
+                    "blocker_reason": "",
+                    "task_id": task.task_id,
+                    "task_prompt": "",
+                    "role": "backend",
+                    "invocation_id": invocation_id,
+                    "coordination_messages": [],
+                    "issue_updates": [],
+                },
+            }
+        }
+    )
+
+    supervisor._review("backend", state, "ctx")
+
+    saved = supervisor.load_state("backend")
+    assert read_pending_result(config, "backend") is None
+    assert ("backend", "lead", task.task_id) in invoker.calls
+    assert saved.status is WorkerStatus.IDLE
+    assert saved.task is None
+
+
 def test_astra_done_cannot_close_product_code_task_even_with_green_receipt(
     tmp_path: Path, monkeypatch
 ) -> None:

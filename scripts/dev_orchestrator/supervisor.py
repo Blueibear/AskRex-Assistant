@@ -784,7 +784,11 @@ class Supervisor:
                 and failures >= self.config.review_escalation_after
                 and self._has_current_green_validation(role, state)
             ):
-                self._adjudicate(role, failed_state, context)
+                # The review result is durably journaled. Commit its state transition
+                # first so save_state records/applies that invocation and clears the
+                # pending review receipt before the adjudication phase begins.
+                self.save_state(failed_state)
+                self._adjudicate(role, self.load_state(role), context)
             else:
                 self.save_state(failed_state)
             return
