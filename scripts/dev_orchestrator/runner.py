@@ -418,11 +418,30 @@ def recover_codex_windows_terminal_runner() -> bool:
     return recovered
 
 
+def _claude_error_envelope(output: str) -> tuple[str, str] | None:
+    """Return (kind, detail) for a Claude JSON API-error result envelope."""
+
+    candidates = [output.strip()]
+    candidates.extend(line.strip() for line in output.splitlines() if line.strip())
+    for candidate in reversed(candidates):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict) or not parsed.get("is_error"):
+            continue
+        api_status = parsed.get("api_error_status")
+        kind = "usage_limit" if api_status == 429 else classify_cli_failure(candidate, 1)
+        return kind, candidate
+    return None
+
+
 def classify_cli_failure(text: str, returncode: int) -> str:
     normalized = text.lower()
     if (
         "usage limit" in normalized
         or "session limit" in normalized
+        or "spend limit" in normalized
         or "rate limit" in normalized
         or "quota" in normalized
     ):
@@ -983,6 +1002,14 @@ class CliAgentInvoker:
                     else:
                         result = invoke_custom_executor(command)
                     if result.returncode == 0:
+                        envelope = _claude_error_envelope(result.stdout)
+                        if envelope is not None:
+                            kind, envelope_detail = envelope
+                            if self._production_executor:
+                                activity_file.unlink(missing_ok=True)
+                            raise AgentInvocationError(
+                                "claude", kind, envelope_detail[:4000]
+                            )
                         try:
                             parsed = extract_agent_result(result.stdout)
                             validate_agent_updates(
@@ -1140,12 +1167,23 @@ class CliAgentInvoker:
         return root
 
     def _finish(self, provider: str, result: ProcessResult) -> AgentResult:
+        detail = "\n".join(part for part in (result.stderr, result.stdout) if part).strip()
         if result.returncode != 0:
-            detail = "\n".join(part for part in (result.stderr, result.stdout) if part).strip()
             kind = classify_cli_failure(detail, result.returncode)
             if provider == "codex" and is_transient_runner_failure(detail):
                 recover_codex_windows_terminal_runner()
             raise AgentInvocationError(provider, kind, detail[:4000])
+
+        # Claude Code may report API failures as a JSON result envelope while
+        # exiting with code 0. Treat those envelopes as invocation failures so
+        # usage/auth fallbacks still apply instead of misclassifying them as
+        # invalid structured agent output.
+        if provider == "claude" and result.stdout.strip():
+            envelope = _claude_error_envelope(result.stdout)
+            if envelope is not None:
+                kind, envelope_detail = envelope
+                raise AgentInvocationError(provider, kind, envelope_detail[:4000])
+
         try:
             return extract_agent_result(result.stdout)
         except ValueError as exc:
