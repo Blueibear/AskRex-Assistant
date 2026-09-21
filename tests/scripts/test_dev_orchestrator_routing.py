@@ -207,6 +207,51 @@ def test_runner_pipe_timeout_takes_precedence_over_incidental_auth_noise() -> No
     assert classify_cli_failure(output, 1) == "timeout"
 
 
+def test_codex_runner_pipe_failure_resets_windows_sandbox_before_retry(monkeypatch) -> None:
+    from scripts.dev_orchestrator import runner
+
+    resets: list[bool] = []
+    monkeypatch.setattr(
+        runner,
+        "recover_codex_windows_terminal_runner",
+        lambda: resets.append(True) or True,
+    )
+    invoker = object.__new__(runner.CliAgentInvoker)
+    result = runner.ProcessResult(
+        1,
+        "",
+        "CreateProcess: Failed to create unified exec process: "
+        "timed out after 15000ms connecting runner pipe-in",
+    )
+
+    with pytest.raises(runner.AgentInvocationError) as exc:
+        invoker._finish("codex", result)
+
+    assert exc.value.kind == "timeout"
+    assert resets == [True]
+
+
+def test_windows_runner_recovery_resets_current_and_legacy_helpers(monkeypatch) -> None:
+    from scripts.dev_orchestrator import runner
+
+    calls: list[tuple[str, ...]] = []
+
+    class Completed:
+        returncode = 0
+
+    monkeypatch.setattr(runner.os, "name", "nt")
+    monkeypatch.setattr(
+        runner.subprocess,
+        "run",
+        lambda command, **_kwargs: calls.append(tuple(command)) or Completed(),
+    )
+    monkeypatch.setattr(runner.time, "sleep", lambda _seconds: None)
+
+    assert runner.recover_codex_windows_terminal_runner() is True
+    assert ("taskkill", "/IM", "codex-command-runner.exe", "/F") in calls
+    assert ("taskkill", "/IM", "codex-windows-sandbox-service.exe", "/F") in calls
+
+
 def test_codex_commands_require_output_schema(tmp_path: Path) -> None:
     command = build_codex_command("review", tmp_path / "repo", "Review.", TERRA_MODEL)
 

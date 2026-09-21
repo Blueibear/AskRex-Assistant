@@ -400,6 +400,23 @@ def is_transient_runner_failure(text: str) -> bool:
     )
 
 
+def recover_codex_windows_terminal_runner() -> bool:
+    """Reset stale Codex Windows command-runner helpers after a runner-pipe startup failure."""
+    if os.name != "nt":
+        return False
+    recovered = False
+    for image_name in ("codex-command-runner.exe", "codex-windows-sandbox-service.exe"):
+        completed = subprocess.run(
+            ["taskkill", "/IM", image_name, "/F"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        recovered = completed.returncode == 0 or recovered
+    time.sleep(0.25)
+    return recovered
+
+
 def classify_cli_failure(text: str, returncode: int) -> str:
     normalized = text.lower()
     if (
@@ -1122,6 +1139,8 @@ class CliAgentInvoker:
         if result.returncode != 0:
             detail = "\n".join(part for part in (result.stderr, result.stdout) if part).strip()
             kind = classify_cli_failure(detail, result.returncode)
+            if provider == "codex" and is_transient_runner_failure(detail):
+                recover_codex_windows_terminal_runner()
             raise AgentInvocationError(provider, kind, detail[:4000])
         try:
             return extract_agent_result(result.stdout)

@@ -504,7 +504,9 @@ def test_blocked_system_retries_from_saved_review_phase(tmp_path: Path) -> None:
     assert state.task is None
 
 
-def test_runner_pipe_block_is_system_retried_once_then_exhausted(tmp_path: Path) -> None:
+def test_runner_pipe_block_retries_with_recovery_then_exhausts(
+    tmp_path: Path, monkeypatch
+) -> None:
     reason = (
         "CreateProcess: Failed to create unified exec process: "
         "timed out after 15000ms connecting runner pipe-in"
@@ -518,7 +520,12 @@ def test_runner_pipe_block_is_system_retried_once_then_exhausted(tmp_path: Path)
         task_id="B-PIPE",
     )
     invoker = FakeInvoker()
-    invoker.add("backend", "implement", blocked, blocked)
+    invoker.add("backend", "implement", blocked, blocked, blocked, blocked)
+    resets: list[bool] = []
+    monkeypatch.setattr(
+        "scripts.dev_orchestrator.supervisor.recover_codex_windows_terminal_runner",
+        lambda: resets.append(True) or True,
+    )
     supervisor = Supervisor(make_config(tmp_path, observe_only=False), invoker)
     supervisor.save_state(
         WorkerState(
@@ -535,16 +542,30 @@ def test_runner_pipe_block_is_system_retried_once_then_exhausted(tmp_path: Path)
     assert first.blocker_kind == "system"
     assert first.resume_status is WorkerStatus.IMPLEMENTING
     assert first.implementation_failures == 1
-    assert "automatic retry 1/2" in first.blocked_reason
+    assert "automatic retry 1/4" in first.blocked_reason
 
     supervisor._run_role("backend")
+    second = supervisor.load_state("backend")
+    assert second.status is WorkerStatus.BLOCKED_SYSTEM
+    assert second.resume_status is WorkerStatus.IMPLEMENTING
+    assert second.implementation_failures == 2
+    assert "automatic retry 2/4" in second.blocked_reason
 
+    supervisor._run_role("backend")
+    third = supervisor.load_state("backend")
+    assert third.status is WorkerStatus.BLOCKED_SYSTEM
+    assert third.resume_status is WorkerStatus.IMPLEMENTING
+    assert third.implementation_failures == 3
+    assert "automatic retry 3/4" in third.blocked_reason
+
+    supervisor._run_role("backend")
     exhausted = supervisor.load_state("backend")
     assert exhausted.status is WorkerStatus.BLOCKED_SYSTEM
     assert exhausted.blocker_kind == "system"
     assert exhausted.resume_status is None
-    assert exhausted.implementation_failures == 2
-    assert "recovery exhausted after 2 attempts" in exhausted.blocked_reason
+    assert exhausted.implementation_failures == 4
+    assert "recovery exhausted after 4 attempts" in exhausted.blocked_reason
+    assert resets == [True, True, True, True]
 
 
 def test_codex_implemented_checkpoint_forces_sol_review(tmp_path: Path) -> None:

@@ -25,7 +25,11 @@ from .handoff import (
 )
 from .lifecycle import ControlPlaneLock
 from .routing import SOL_MODEL, select_implementer_model, select_reviewer_model
-from .runner import AgentInvocationError, is_transient_runner_failure
+from .runner import (
+    AgentInvocationError,
+    is_transient_runner_failure,
+    recover_codex_windows_terminal_runner,
+)
 from .schema import validate_agent_result
 from .storage import AtomicJsonStore
 from .types import AgentResult, OrchestratorConfig, TaskItem, WorkerState, WorkerStatus
@@ -784,11 +788,11 @@ class Supervisor:
     def _save_transient_runner_failure(self, state: WorkerState, reason: str) -> None:
         if state.status is WorkerStatus.REVIEWING:
             failures = state.review_failures + 1
-            retry_limit = max(1, self.config.review_escalation_after)
+            retry_limit = max(4, self.config.review_escalation_after)
             updates = {"review_failures": failures}
         else:
             failures = state.implementation_failures + 1
-            retry_limit = max(1, self.config.implementation_escalation_after)
+            retry_limit = max(4, self.config.implementation_escalation_after)
             updates = {"implementation_failures": failures}
         retrying = failures < retry_limit
         if retrying:
@@ -970,6 +974,7 @@ class Supervisor:
     def _save_block_or_failure(self, state: WorkerState, result: AgentResult) -> None:
         reason = result.blocker_reason or result.summary
         if is_transient_runner_failure(reason):
+            recover_codex_windows_terminal_runner()
             self._save_transient_runner_failure(state, reason)
             return
         if result.outcome == "blocked_user" or result.needs_user:
