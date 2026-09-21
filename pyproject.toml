@@ -60,6 +60,11 @@ dependencies = [
     # Windows-only OS-backed credential vault (S4): DPAPI via pywin32.
     # No effect on macOS/Linux installs (see rex/credential_vault.py).
     "pywin32>=311; sys_platform == 'win32'",
+
+    # OpenAI SDK: required base dependency, not an ML-only extra. It backs
+    # both the cloud OpenAI/OpenRouter providers and the OpenAI-compatible
+    # LM Studio endpoint, all of which work without local Transformers/torch.
+    "openai>=1.3.0",
 ]
 
 [project.optional-dependencies]
@@ -79,7 +84,7 @@ ml = [
     "torchaudio>=2.6.0,<2.13.0",
     "transformers>=4.38.0",
     "TTS==0.22.0",
-    "openai>=1.3.0",
+    # openai is a base dependency (see [project.dependencies]).
     "ollama>=0.4.0",
     "openai-whisper>=20230124",
     "openwakeword>=0.6.0",
@@ -141,7 +146,7 @@ full = [
     "torchaudio>=2.6.0,<2.13.0",
     "transformers>=4.38.0",
     "TTS==0.22.0",
-    "openai>=1.3.0",
+    "openai>=1.3.0",  # also a base dependency; kept here for [full] extra completeness
     "ollama>=0.4.0",
     "openai-whisper>=20230124",
     "openwakeword>=0.6.0",
