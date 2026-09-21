@@ -220,6 +220,66 @@ def _gates_for(config: OrchestratorConfig, role: str, task_id: str) -> tuple[Val
         raise ValueError(f"unsupported validation role: {role}") from exc
 
 
+
+def _has_task_validation_override(
+    config: OrchestratorConfig, role: str, task_id: str
+) -> bool:
+    settings = config.metadata.get("iteration_validation", {})
+    if not isinstance(settings, dict):
+        return False
+    role_settings = settings.get(role, {})
+    if not isinstance(role_settings, dict):
+        return False
+    overrides = role_settings.get("overrides", [])
+    if not isinstance(overrides, list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and bool(str(item.get("task_prefix", "")))
+        and task_id.startswith(str(item.get("task_prefix", "")))
+        for item in overrides
+    )
+
+
+def _coordination_only_gates(
+    config: OrchestratorConfig,
+    role: str,
+    *,
+    base_head: str,
+    head: str,
+) -> tuple[ValidationGate, ...]:
+    if not base_head or not head:
+        raise ValueError("coordination-only validation requires bound base/head revisions")
+    script = (config.coordination_root / "scripts" / "check-coordination.ps1").resolve()
+    return (
+        ValidationGate(
+            "coordination recheck",
+            (
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script),
+                "-Role",
+                role,
+            ),
+            timeout_seconds=300,
+        ),
+        ValidationGate(
+            "accepted checkpoint unchanged",
+            ("git", "diff", "--exit-code", base_head, head, "--"),
+            timeout_seconds=120,
+        ),
+        ValidationGate(
+            "coordination diff check",
+            ("git", "diff", "--check", f"{base_head}..{head}", "--"),
+            timeout_seconds=120,
+        ),
+    )
+
+
+
 def _repo_root(config: OrchestratorConfig, role: str) -> Path:
     root = config.backend_root if role == "backend" else config.mobile_root
     if root is None:
@@ -251,13 +311,23 @@ def run_iteration_validation(
     *,
     base_head: str = "",
     head: str = "",
+    coordination_only: bool = False,
 ) -> ValidationReport:
     _receipt_path(config, role, task_id)
     try:
         _clear_receipt(config, role, task_id)
-        gates = _gates_for(config, role, task_id)
-        if not gates:
+        configured_gates = _gates_for(config, role, task_id)
+        if not configured_gates:
             return ValidationReport(True)
+        if coordination_only and not _has_task_validation_override(config, role, task_id):
+            gates = _coordination_only_gates(
+                config,
+                role,
+                base_head=base_head,
+                head=head,
+            )
+        else:
+            gates = configured_gates
         repo = _repo_root(config, role)
         if head and _git_head(repo) != head:
             raise ValueError("validation target revision changed before gates ran")

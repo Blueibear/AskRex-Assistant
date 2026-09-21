@@ -384,6 +384,65 @@ def test_review_changes_required_loops_back_to_implementation(tmp_path: Path) ->
     assert "Fix schema mismatch" in state.task.feedback
 
 
+def test_coordination_only_second_review_rejection_escalates_and_astra_can_close(
+    tmp_path: Path, monkeypatch
+) -> None:
+    invoker = FakeInvoker()
+    invoker.add(
+        "backend",
+        "review",
+        result(
+            "changes_required",
+            summary="Repeat the same already-satisfied coordination evidence.",
+        ),
+    )
+    invoker.add("backend", "lead", result("done", summary="Closeout evidence is sufficient"))
+    supervisor = Supervisor(make_config(tmp_path, observe_only=False), invoker)
+    monkeypatch.setattr(supervisor, "_has_current_green_validation", lambda *_args: True)
+    state = WorkerState(
+        role="backend",
+        status=WorkerStatus.REVIEWING,
+        task=TaskItem(
+            "backend-closeout-evidence-v1",
+            (
+                "Complete only the coordination closeout. Do not change the accepted "
+                "implementation. Do not modify backend source/tests."
+            ),
+        ),
+        task_base_head="abc123",
+        review_failures=1,
+    )
+
+    supervisor._review("backend", state, "ctx")
+
+    saved = supervisor.load_state("backend")
+    assert ("backend", "review", "backend-closeout-evidence-v1") in invoker.calls
+    assert ("backend", "lead", "backend-closeout-evidence-v1") in invoker.calls
+    assert saved.status is WorkerStatus.IDLE
+    assert saved.task is None
+
+
+def test_astra_done_cannot_close_product_code_task_even_with_green_receipt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    invoker = FakeInvoker()
+    invoker.add("backend", "lead", result("done", summary="done"))
+    supervisor = Supervisor(make_config(tmp_path, observe_only=False), invoker)
+    monkeypatch.setattr(supervisor, "_has_current_green_validation", lambda *_args: True)
+    state = WorkerState(
+        role="backend",
+        status=WorkerStatus.IMPLEMENTING,
+        task=TaskItem("B-SOURCE", "Modify backend source and tests."),
+        task_base_head="abc123",
+    )
+
+    supervisor._adjudicate("backend", state, "ctx")
+
+    saved = supervisor.load_state("backend")
+    assert saved.status is WorkerStatus.BLOCKED_SYSTEM
+    assert "product-code task" in saved.blocked_reason
+
+
 def test_backend_human_blocker_does_not_stop_mobile(tmp_path: Path) -> None:
     invoker = FakeInvoker()
     invoker.add(
@@ -696,7 +755,7 @@ def test_backend_and_mobile_workstreams_execute_in_parallel(tmp_path: Path) -> N
     assert supervisor.load_state("mobile").status is WorkerStatus.IMPLEMENTING
 
 
-def test_passing_test_issue_review_parks_for_testing_without_canonical_mutation(
+def test_passing_test_issue_review_hands_retest_to_testing_and_keeps_backend_moving(
     tmp_path: Path,
 ) -> None:
     config = make_config(tmp_path, observe_only=False)
@@ -726,8 +785,9 @@ def test_passing_test_issue_review_parks_for_testing_without_canonical_mutation(
     )
     supervisor._run_role("backend")
     state = supervisor.load_state("backend")
-    assert state.status is WorkerStatus.BLOCKED_USER
-    assert state.blocker_kind == "retest"
+    assert state.status is WorkerStatus.IDLE
+    assert state.task is None
+    assert state.blocker_kind == ""
     assert "Status: open" in issue.read_text(encoding="utf-8")
     assert list((config.coordination_root / "mailbox" / "testing").glob("RETEST-*.md"))
 

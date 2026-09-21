@@ -269,7 +269,7 @@ def build_review_evidence(
                 ]
             ),
         ),
-        ("task", f"prompt:\n{task.prompt}\n\nfeedback:\n{task.feedback}"),
+        ("task", f"prompt:\n{task.prompt}\n\nhistorical_feedback_context_only:\n{task.feedback}"),
         ("coordination", coordination_context),
         ("outgoing_coordination", _outgoing_coordination(config, role, task)),
         ("diff_stat", _git(repo, "diff", "--stat", f"{base_head}..{head}", "--")),

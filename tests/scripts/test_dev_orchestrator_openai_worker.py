@@ -176,6 +176,16 @@ def _worker(config, transport: _FakeTransport, budget: _FakeBudget, invocation_i
     )
 
 
+def test_openai_review_instructions_treat_current_receipt_as_authoritative() -> None:
+    from scripts.dev_orchestrator.openai_worker import OpenAIModelWorker
+
+    instructions = OpenAIModelWorker._review_instructions().lower()
+
+    assert "current matching validation receipt" in instructions
+    assert "do not demand unrelated gates" in instructions
+    assert "historical task feedback is context only" in instructions
+
+
 def test_review_reserves_before_send_reconciles_and_persists_pending_result(
     tmp_path: Path,
 ) -> None:

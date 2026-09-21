@@ -34,7 +34,7 @@ from .schema import validate_agent_result
 from .storage import AtomicJsonStore
 from .types import AgentResult, OrchestratorConfig, TaskItem, WorkerState, WorkerStatus
 from .usage import UsageBudget, handle_usage_limit, is_cli_usage_provider
-from .validation import run_iteration_validation
+from .validation import load_validation_receipt, run_iteration_validation
 
 
 class AgentInvoker(Protocol):
@@ -66,6 +66,43 @@ def _state_from_dict(role: str, data: dict | None) -> WorkerState:
         last_result_invocation_id=str(data.get("last_result_invocation_id", "")),
         idle_context_fingerprint=str(data.get("idle_context_fingerprint", "")),
     )
+
+
+_COORDINATION_ONLY_MARKERS = (
+    "coordination-only",
+    "coordination only",
+    "coordination closeout",
+    "closeout evidence",
+    "mailbox closeout",
+)
+
+_NO_PRODUCT_MUTATION_MARKERS = (
+    "do not change the accepted implementation",
+    "do not modify backend source/tests",
+    "do not modify source/tests",
+    "do not change source/tests",
+    "no implementation change",
+    "no source changes",
+)
+
+
+def _is_coordination_only_task(task: TaskItem) -> bool:
+    text = f"{task.task_id}\n{task.prompt}".casefold()
+    return (
+        any(marker in text for marker in _COORDINATION_ONLY_MARKERS)
+        and any(marker in text for marker in _NO_PRODUCT_MUTATION_MARKERS)
+    )
+
+
+def _updates_are_retest_handoff(updates) -> bool:
+    statuses = {
+        str(update.status).strip().casefold().replace("_", "-")
+        for update in updates
+        if str(update.status).strip()
+    }
+    return bool(statuses) and statuses <= {"fixed-needs-retest", "needs-retest"}
+
+
 
 
 class Supervisor:
@@ -587,6 +624,22 @@ class Supervisor:
             return
         self._save_block_or_failure(state, result)
 
+    def _has_current_green_validation(self, role: str, state: WorkerState) -> bool:
+        if state.task is None or not state.task_base_head:
+            return False
+        head = self._capture_task_base_head(role)
+        try:
+            load_validation_receipt(
+                self.config,
+                role,
+                state.task.task_id,
+                base_head=state.task_base_head,
+                head=head,
+            )
+        except (FileNotFoundError, ValueError):
+            return False
+        return True
+
     def _implement(self, role: str, state: WorkerState, context: str) -> None:
         assert state.task is not None
         model = select_implementer_model(state, self.config)
@@ -609,6 +662,7 @@ class Supervisor:
                 state.task.task_id,
                 base_head=state.task_base_head,
                 head=validation_head,
+                coordination_only=_is_coordination_only_task(state.task),
             )
             if report.system_error:
                 self._save_state_preserving_pending_result(
@@ -637,7 +691,15 @@ class Supervisor:
             if not self._accept_result(role, state, result, allow_issue_updates=False):
                 return
             self.save_state(
-                replace(state, status=WorkerStatus.REVIEWING, iteration=state.iteration + 1)
+                replace(
+                    state,
+                    status=WorkerStatus.REVIEWING,
+                    task=replace(state.task, feedback=""),
+                    iteration=state.iteration + 1,
+                    implementation_failures=0,
+                    blocked_reason="",
+                    blocker_kind="",
+                )
             )
             return
         if not self._accept_result(role, state, result, allow_issue_updates=False):
@@ -684,13 +746,13 @@ class Supervisor:
         ):
             return
         if result.outcome == "pass":
-            if result.issue_updates:
+            if result.issue_updates and not _updates_are_retest_handoff(result.issue_updates):
                 issue_ids = ", ".join(update.issue_id for update in result.issue_updates)
                 self.save_state(
                     replace(
                         state,
                         status=WorkerStatus.BLOCKED_USER,
-                        blocked_reason=f"Awaiting testing verification for {issue_ids}",
+                        blocked_reason=f"Awaiting external verification for {issue_ids}",
                         blocker_kind="retest",
                         resume_status=WorkerStatus.IDLE,
                     )
@@ -708,15 +770,23 @@ class Supervisor:
             return
         if result.outcome == "changes_required":
             feedback = "\n\n".join(part for part in (result.summary, result.next_action) if part)
-            self.save_state(
-                replace(
-                    state,
-                    status=WorkerStatus.IMPLEMENTING,
-                    task=replace(state.task, feedback=feedback),
-                    review_failures=state.review_failures + 1,
-                    blocked_reason="",
-                )
+            failures = state.review_failures + 1
+            failed_state = replace(
+                state,
+                status=WorkerStatus.IMPLEMENTING,
+                task=replace(state.task, feedback=feedback),
+                review_failures=failures,
+                blocked_reason="",
+                blocker_kind="",
             )
+            if (
+                _is_coordination_only_task(state.task)
+                and failures >= self.config.review_escalation_after
+                and self._has_current_green_validation(role, state)
+            ):
+                self._adjudicate(role, failed_state, context)
+            else:
+                self.save_state(failed_state)
             return
         if result.outcome == "failed":
             self.save_state(
@@ -761,11 +831,28 @@ class Supervisor:
             )
             return
         if result.outcome == "done":
+            if (
+                state.task is not None
+                and _is_coordination_only_task(state.task)
+                and self._has_current_green_validation(role, state)
+            ):
+                self.save_state(
+                    WorkerState(
+                        role=role,
+                        status=WorkerStatus.IDLE,
+                        claude_session_id=state.claude_session_id,
+                        codex_session_id=state.codex_session_id,
+                        idle_context_fingerprint="",
+                    )
+                )
+                return
             self.save_state(
                 replace(
                     state,
                     status=WorkerStatus.BLOCKED_SYSTEM,
-                    blocked_reason="Astra cannot mark an active task done before independent review",
+                    blocked_reason=(
+                        "Astra cannot close an active product-code task before independent review"
+                    ),
                 )
             )
             return

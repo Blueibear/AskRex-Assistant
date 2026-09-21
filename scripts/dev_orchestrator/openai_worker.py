@@ -145,7 +145,12 @@ class OpenAIModelWorker:
         return (
             "Act as a read-only AskRex code reviewer. Use only the supplied bounded evidence. "
             "Do not infer unseen repository state, claim tool use, or treat your own output as "
-            "verification evidence. Return pass only when the supplied evidence is sufficient."
+            "verification evidence. The current matching validation receipt defines the required "
+            "deterministic gates for this task. Do not reject solely because a superseded historical "
+            "gate failed before the current passing receipt, and do not demand unrelated gates that "
+            "the supervisor did not configure for this task. Historical task feedback is context only, "
+            "not proof that a current requirement remains unsatisfied. Return pass only when the current "
+            "bounded evidence is sufficient."
         )
 
     @staticmethod
@@ -157,7 +162,12 @@ class OpenAIModelWorker:
             )
         return (
             "Act as a read-only AskRex adjudication lead. Use only the supplied coordination, "
-            "task, and failure-state evidence. Return a canonical structured result."
+            "task, and failure-state evidence. Break review loops instead of repeating them. For an "
+            "explicit coordination-only closeout with a current green revision-bound validation receipt, "
+            "return done when the task requirements are already satisfied and the reviewer is re-litigating "
+            "superseded or out-of-scope gates. Return assign when a concrete unsatisfied requirement remains. "
+            "Never use this exception to waive product-code, security, permission, or authority defects. "
+            "Return a canonical structured result."
         )
 
     def _lead_input(

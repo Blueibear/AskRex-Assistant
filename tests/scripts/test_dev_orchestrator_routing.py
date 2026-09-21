@@ -139,6 +139,8 @@ def test_review_prompt_keeps_validation_execution_outside_read_only_reviewer(
 
     assert "deterministic supervisor validation" in prompt.lower()
     assert "authoritative bounded review evidence" in prompt.lower()
+    assert "current matching validation receipt" in prompt.lower()
+    assert "do not demand unrelated gates" in prompt.lower()
     assert "do not use terminal commands merely to re-read facts" in prompt.lower()
     assert "do not rerun" in prompt.lower()
     assert "pytest" in prompt.lower()
