@@ -94,7 +94,14 @@ def validate_agent_updates(
             raise ValueError("development agents may only request fixed-needs-retest")
         if not re.fullmatch(r"TEST-\d{3}", update.issue_id):
             raise ValueError(f"invalid live-test issue id: {update.issue_id}")
-        if update.issue_id != task_id:
+        task_match = update.issue_id == task_id or bool(
+            re.search(
+                rf"(?<![A-Z0-9]){re.escape(update.issue_id)}(?![A-Z0-9])",
+                task_id,
+                flags=re.IGNORECASE,
+            )
+        )
+        if not task_match:
             raise ValueError(f"issue update {update.issue_id} does not match active task {task_id}")
         issue = root / "issues" / f"{update.issue_id}.md"
         if not issue.is_file():
@@ -102,8 +109,10 @@ def validate_agent_updates(
         original = issue.read_text(encoding="utf-8")
         if _issue_owner(original) not in {role, "both"}:
             raise ValueError(f"{role} does not own {update.issue_id}")
-        if _issue_status(original) != "open":
-            raise ValueError(f"{update.issue_id} must be open before requesting retest")
+        if _issue_status(original) not in {"open", "fixed-needs-retest"}:
+            raise ValueError(
+                f"{update.issue_id} must be open or fixed-needs-retest before requesting retest"
+            )
 
 
 def _safe_transaction_destination(root: Path, relative: str) -> Path:

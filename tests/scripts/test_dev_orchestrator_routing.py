@@ -143,6 +143,7 @@ def test_review_prompt_keeps_validation_execution_outside_read_only_reviewer(
     assert "do not rerun" in prompt.lower()
     assert "pytest" in prompt.lower()
     assert "read-only" in prompt.lower()
+    assert "already shows fixed-needs-retest" in prompt.lower()
 
 
 def test_claude_command_uses_structured_output_and_safe_permissions(tmp_path: Path) -> None:

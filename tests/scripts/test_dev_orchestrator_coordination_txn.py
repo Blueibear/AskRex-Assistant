@@ -99,6 +99,67 @@ def test_issue_update_must_match_reviewed_task_and_prevalidate_all_effects(tmp_p
     assert "Status: open" in issue.read_text(encoding="utf-8")
 
 
+
+
+def test_issue_update_accepts_descriptive_task_id_with_exact_issue_token(tmp_path: Path) -> None:
+    root = tmp_path / "coord"
+    issue = _issue(root, "TEST-005", owner="backend")
+    (root / "mailbox" / "mobile").mkdir(parents=True)
+    result = _result("TEST-005")
+
+    apply_agent_updates(
+        root,
+        "backend",
+        result,
+        allow_issue_updates=True,
+        task_id="backend-test-005-context-provider-lifecycle",
+    )
+
+    assert issue.exists()
+    retests = list((root / "mailbox" / "testing").glob("RETEST-*.md"))
+    assert len(retests) == 1
+
+
+def test_issue_update_rejects_partial_issue_token_collision(tmp_path: Path) -> None:
+    root = tmp_path / "coord"
+    _issue(root, "TEST-005", owner="backend")
+    (root / "mailbox" / "mobile").mkdir(parents=True)
+    result = _result("TEST-005")
+
+    with pytest.raises(ValueError, match="active task"):
+        apply_agent_updates(
+            root,
+            "backend",
+            result,
+            allow_issue_updates=True,
+            task_id="backend-test-0055-context-provider-lifecycle",
+        )
+
+
+def test_issue_update_is_idempotently_allowed_when_issue_already_fixed_needs_retest(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "coord"
+    issue = _issue(root, "TEST-005", owner="backend")
+    issue.write_text(
+        "# TEST-005\n\nStatus: fixed-needs-retest\nOwner: backend\n",
+        encoding="utf-8",
+    )
+    (root / "mailbox" / "mobile").mkdir(parents=True)
+    result = _result("TEST-005")
+
+    apply_agent_updates(
+        root,
+        "backend",
+        result,
+        allow_issue_updates=True,
+        task_id="backend-test-005-context-provider-lifecycle",
+    )
+
+    retests = list((root / "mailbox" / "testing").glob("RETEST-*.md"))
+    assert len(retests) == 1
+
+
 def test_issue_update_emits_testing_retest_request_without_mutating_canonical_issue(
     tmp_path: Path,
 ) -> None:
