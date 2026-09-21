@@ -260,6 +260,54 @@ def test_review_evidence_keeps_complete_task_diff_with_bounded_context(tmp_path:
     assert len(bundle.text) <= config.openai_max_input_chars
 
 
+
+def test_review_evidence_includes_current_changed_file_contents_for_small_diff(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "backend"
+    base = _git_repo(repo)
+    tests_dir = repo / "tests"
+    tests_dir.mkdir()
+    regression = tests_dir / "test_regression.py"
+    regression.write_text(
+        "def test_existing_context():\n"
+        "    marker = 'FULL-CURRENT-CONTEXT'\n"
+        "    assert marker\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "tests/test_regression.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "add regression"], cwd=repo, check=True)
+    head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=repo, text=True
+    ).strip()
+    config = _config(tmp_path, repo, [sys.executable, "-c", "print('OK')"])
+    assert run_iteration_validation(
+        config,
+        "backend",
+        "B-CURRENT-CONTEXT",
+        base_head=base,
+        head=head,
+    ).passed
+    state = WorkerState(
+        role="backend",
+        task=TaskItem("B-CURRENT-CONTEXT", "review"),
+        task_base_head=base,
+    )
+
+    bundle = build_review_evidence(
+        config,
+        "backend",
+        state,
+        state.task,
+        "coordination",
+        "inv-current-context",
+    )
+
+    assert "## changed_file_contents" in bundle.text
+    assert "### tests/test_regression.py" in bundle.text
+    assert "FULL-CURRENT-CONTEXT" in bundle.text
+    assert bundle.truncated is False
+
 def test_truncated_diff_stat_is_noncritical_when_task_diff_is_complete(tmp_path: Path) -> None:
     repo = tmp_path / "backend"
     base = _git_repo(repo)

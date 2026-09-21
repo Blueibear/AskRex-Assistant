@@ -17,6 +17,7 @@ from typing import Any
 
 from . import scratch as _scratch
 from .coordination import validate_agent_updates
+from .evidence import EvidenceError, build_review_evidence
 from .handoff import (
     HandoffRequired,
     advance_handoff,
@@ -507,7 +508,7 @@ def _task_prompt(role: str, task, coordination_root: Path, context: str, invocat
         f"For continue or ready_for_review, return task_id={task.task_id!r}, role={role!r}, and invocation_id={invocation_id!r} exactly. "
         "Return only the required structured result.\n\n"
         f"Coordination root reference: {coordination_root}\n"
-        "Authoritative bounded coordination snapshot:\n"
+        "Authoritative bounded review evidence:\n"
         f"{context}"
     )
 
@@ -533,16 +534,19 @@ def _review_prompt(
     return (
         f"Independently review AskRex {role} task {task.task_id}: {task.prompt}. "
         "Inspect the current diff, relevant tests, security/ownership constraints, and claimed validation. "
-        "Deterministic supervisor validation runs configured test/build/diff gates before review; treat the supplied "
-        "gate evidence as execution evidence. This review sandbox is intentionally read-only: do not rerun pytest, "
-        "build, formatter, cache-generating, or other commands that require writing repository or temporary files. "
-        "Use read-only inspection commands only. Do not modify files. Return pass only when the task is actually ready; "
+        "Treat the supplied bounded review evidence as authoritative for the validated revision, current changed-file "
+        "contents, coordination, and deterministic gate output. Do not use terminal commands merely to re-read facts "
+        "already present in that evidence; use read-only repository inspection only when a specific material fact is "
+        "missing. Deterministic supervisor validation runs configured test/build/diff gates before review; treat the "
+        "supplied gate evidence as execution evidence. This review sandbox is intentionally read-only: do not rerun "
+        "pytest, build, formatter, cache-generating, or other commands that require writing repository or temporary "
+        "files. Do not modify files. Return pass only when the task is actually ready; "
         "otherwise return changes_required, "
         "blocked_user, blocked_system, or failed using the required structured result. On a passing owned TEST issue, "
         "include an issue_updates request for fixed-needs-retest; never request verified. "
         f"Return task_id={task.task_id!r}, role={role!r}, and invocation_id={invocation_id!r} exactly.\n\n"
         f"Coordination root reference: {coordination_root}\n"
-        "Authoritative bounded coordination snapshot:\n"
+        "Authoritative bounded review evidence:\n"
         f"{context}"
     )
 
@@ -1196,10 +1200,31 @@ class CliAgentInvoker:
     def review(self, role, state, task, context, model) -> AgentResult:
         repo = self._repo(role)
         invocation_id = str(uuid.uuid4())
+        review_context = context
+        if state.task_base_head:
+            try:
+                evidence = build_review_evidence(
+                    self.config,
+                    role,
+                    state,
+                    task,
+                    context,
+                    invocation_id,
+                )
+            except EvidenceError:
+                evidence = None
+            if evidence is not None and not evidence.truncated:
+                review_context = evidence.text
         command = build_codex_command(
             "review",
             repo,
-            _review_prompt(role, task, self.config.coordination_root, context, invocation_id),
+            _review_prompt(
+                role,
+                task,
+                self.config.coordination_root,
+                review_context,
+                invocation_id,
+            ),
             model,
         )
         return self._finish(

@@ -34,10 +34,18 @@ _DEFAULT_SECTION_LIMITS = {
     "outgoing_coordination": 12_000,
     "diff_stat": 4_000,
     "task_diff": 70_000,
+    "changed_file_contents": 35_000,
     "validation": 12_000,
 }
 _REVIEW_CRITICAL_SECTIONS = frozenset(
-    {"identity", "task", "outgoing_coordination", "task_diff", "validation"}
+    {
+        "identity",
+        "task",
+        "outgoing_coordination",
+        "task_diff",
+        "changed_file_contents",
+        "validation",
+    }
 )
 
 
@@ -135,6 +143,59 @@ def _outgoing_coordination(config: OrchestratorConfig, role: str, task: TaskItem
     return "\n\n".join(rendered)
 
 
+def _changed_file_contents(
+    repo: Path,
+    base_head: str,
+    head: str,
+    task_diff: str,
+) -> str:
+    """Return current text for changed files when the incremental diff is small."""
+
+    if len(task_diff) > 20_000:
+        return (
+            "Current changed-file contents omitted because the task diff is already "
+            "large enough to provide substantial review context."
+        )
+
+    names = [
+        line.strip()
+        for line in _git(
+            repo,
+            "diff",
+            "--name-only",
+            "--diff-filter=ACMR",
+            f"{base_head}..{head}",
+            "--",
+        ).splitlines()
+        if line.strip()
+    ]
+    if not names:
+        return "No changed files were present for the validated task revision."
+
+    repo_root = repo.resolve()
+    rendered: list[str] = []
+    for relative in names[:20]:
+        candidate = (repo_root / relative).resolve()
+        try:
+            candidate.relative_to(repo_root)
+        except ValueError as exc:
+            raise EvidenceError("changed-file evidence escaped repository root") from exc
+        if not candidate.is_file():
+            continue
+        try:
+            raw = candidate.read_bytes()
+        except OSError as exc:
+            raise EvidenceError("cannot read changed-file review evidence") from exc
+        if b"\x00" in raw:
+            rendered.append(f"### {relative}\n[binary file omitted]")
+            continue
+        rendered.append(f"### {relative}\n{raw.decode('utf-8', errors='replace')}")
+
+    if len(names) > 20:
+        rendered.append(f"[{len(names) - 20} additional changed files omitted]")
+    return "\n\n".join(rendered) or "No readable changed-file contents were available."
+
+
 def _receipt_text(receipt: ValidationReceipt) -> str:
     lines = [
         f"role: {receipt.role}",
@@ -188,6 +249,14 @@ def build_review_evidence(
     except (FileNotFoundError, ValueError) as exc:
         raise EvidenceError("matching validation receipt is required") from exc
 
+    task_diff = _git(repo, "diff", f"{base_head}..{head}", "--")
+    changed_file_contents = _changed_file_contents(
+        repo,
+        base_head,
+        head,
+        task_diff,
+    )
+
     sections = (
         (
             "identity",
@@ -205,7 +274,8 @@ def build_review_evidence(
         ("coordination", coordination_context),
         ("outgoing_coordination", _outgoing_coordination(config, role, task)),
         ("diff_stat", _git(repo, "diff", "--stat", f"{base_head}..{head}", "--")),
-        ("task_diff", _git(repo, "diff", f"{base_head}..{head}", "--")),
+        ("task_diff", task_diff),
+        ("changed_file_contents", changed_file_contents),
         ("validation", _receipt_text(receipt)),
     )
     rendered: list[str] = []

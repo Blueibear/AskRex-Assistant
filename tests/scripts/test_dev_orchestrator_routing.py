@@ -138,6 +138,8 @@ def test_review_prompt_keeps_validation_execution_outside_read_only_reviewer(
     prompt = _review_prompt("backend", task, tmp_path, "bounded context", "inv-123")
 
     assert "deterministic supervisor validation" in prompt.lower()
+    assert "authoritative bounded review evidence" in prompt.lower()
+    assert "do not use terminal commands merely to re-read facts" in prompt.lower()
     assert "do not rerun" in prompt.lower()
     assert "pytest" in prompt.lower()
     assert "read-only" in prompt.lower()
