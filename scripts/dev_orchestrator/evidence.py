@@ -41,7 +41,6 @@ _REVIEW_CRITICAL_SECTIONS = frozenset(
     {
         "identity",
         "task",
-        "outgoing_coordination",
         "task_diff",
         "changed_file_contents",
         "validation",

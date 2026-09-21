@@ -224,6 +224,49 @@ def test_review_evidence_includes_task_relevant_outgoing_coordination(tmp_path: 
     assert bundle.truncated is False
 
 
+def test_truncated_outgoing_coordination_is_noncritical(tmp_path: Path) -> None:
+    repo = tmp_path / "backend"
+    base = _git_repo(repo)
+    head = _commit(repo, "base\nchanged\n")
+    config = _config(tmp_path, repo, [sys.executable, "-c", "print('OK')"])
+    assert run_iteration_validation(
+        config, "backend", "B-LONG-COORD", base_head=base, head=head
+    ).passed
+    mailbox = config.coordination_root / "mailbox" / "testing"
+    mailbox.mkdir(parents=True)
+    for index in range(8):
+        (mailbox / f"MSG-long-{index:02d}-00-backend.md").write_text(
+            "# AskRex Coordination Message\n\n"
+            "From: backend\n"
+            "To: testing\n"
+            "Priority: normal\n"
+            "Related: B-LONG-COORD\n"
+            "Needs response: no\n\n"
+            "## Message\n"
+            + ("X" * 4000)
+            + "\n",
+            encoding="utf-8",
+        )
+    state = WorkerState(
+        role="backend",
+        task=TaskItem("B-LONG-COORD", "review"),
+        task_base_head=base,
+    )
+
+    bundle = build_review_evidence(
+        config,
+        "backend",
+        state,
+        state.task,
+        "coordination",
+        "inv-long-coord",
+    )
+
+    assert "[truncated outgoing_coordination]" in bundle.text
+    assert bundle.truncated is False
+    assert "outgoing_coordination" not in bundle.truncation_reasons
+
+
 def test_review_evidence_keeps_complete_task_diff_with_bounded_context(tmp_path: Path) -> None:
     repo = tmp_path / "backend"
     base = _git_repo(repo)
