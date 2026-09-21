@@ -50,7 +50,11 @@ def test_speculative_dispatcher_failure_retains_only_safe_metadata(
     )
     audit_logger = AuditLogger(log_path=tmp_path / "audit.log")
     path_capture = _PathLogCapture()
-    path_loggers = tuple(
+    # Attach directly to the root logger *and* every named logger on the
+    # dispatch -> lifecycle -> audit path, so a logger that sets
+    # ``propagate = False`` in the future still cannot escape capture.
+    root_logger = logging.getLogger()
+    path_loggers = (root_logger,) + tuple(
         logging.getLogger(name)
         for name in ("rex.tools.dispatcher", "rex.tools.execution", "rex.audit")
     )
