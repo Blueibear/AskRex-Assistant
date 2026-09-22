@@ -57,6 +57,27 @@ describe('model discovery (US-072)', () => {
     )
   })
 
+  it('discovers LM Studio model ids from a full OpenAI-compatible /v1/models response (TEST-004)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({
+      object: 'list',
+      data: [
+        { id: 'openai/gpt-oss-20b', object: 'model', owned_by: 'organization_owner' }
+      ]
+    }))
+
+    const result = await discoverAiModelsAtEndpoint(
+      'lmstudio',
+      'http://127.0.0.1:1234/v1',
+      fetchImpl
+    )
+
+    expect(result).toEqual({ ok: true, models: ['openai/gpt-oss-20b'] })
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://127.0.0.1:1234/v1/models',
+      expect.objectContaining({ method: 'GET' })
+    )
+  })
+
   it.each([
     ['ollama', { models: [] }],
     ['lmstudio', { data: [] }]

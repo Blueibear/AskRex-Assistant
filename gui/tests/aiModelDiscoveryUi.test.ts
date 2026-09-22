@@ -16,11 +16,19 @@ describe('AI model discovery UI wiring (US-072)', () => {
     expect(source).toContain('Discover Models')
   })
 
-  it('persists current AI settings before calling the configured-endpoint discovery IPC', () => {
-    const saveIndex = source.indexOf(".setSettings('ai', form as unknown as Settings)")
+  it('persists only the discovery endpoint before calling the configured-endpoint discovery IPC', () => {
+    const saveIndex = source.indexOf(".setSettings('ai', endpointSettings)")
     const discoverIndex = source.indexOf('.discoverAiModels(provider)')
     expect(saveIndex).toBeGreaterThan(-1)
     expect(discoverIndex).toBeGreaterThan(saveIndex)
+  })
+
+  it('never sends the whole form (including model) as the pre-discovery save', () => {
+    const handlerStart = source.indexOf('function handleDiscoverModels')
+    const handlerEnd = source.indexOf('\n  function ', handlerStart + 1)
+    const handlerSource = source.slice(handlerStart, handlerEnd)
+    expect(handlerSource).not.toContain("setSettings('ai', form as unknown as Settings)")
+    expect(handlerSource).not.toContain('model: form.model')
   })
 
   it('does not trigger model discovery from the settings load effect', () => {

@@ -229,6 +229,20 @@ describe('settings vault routing (S4)', () => {
     expect(guiSettings).toMatchObject({ ai: expect.not.objectContaining({ autonomyMode: expect.anything() }) })
   })
 
+  it('preserves the persisted model when a discovery-only endpoint save is submitted (TEST-004)', async () => {
+    rexConfig = {
+      models: { llm_provider: 'openai' },
+      openai: { model: 'openai/gpt-oss-20b', base_url: 'http://127.0.0.1:1234/v1' }
+    }
+
+    const result = await invoke('rex:setSettings', 'ai', { openaiBaseUrl: 'http://127.0.0.1:1234/v1' })
+
+    expect(result).toEqual({ ok: true })
+    expect(mockMirror.mirrorToRexConfig).toHaveBeenCalledWith(
+      'ai', expect.objectContaining({ model: 'openai/gpt-oss-20b' })
+    )
+  })
+
   it('writes an API key to the vault and persists only a contextual reference', async () => {
     const result = await invoke('rex:setApiKey', 'OPENAI_API_KEY', 'sk-value')
     expect(result).toEqual({ ok: true })

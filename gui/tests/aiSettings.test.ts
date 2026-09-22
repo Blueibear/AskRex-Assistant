@@ -96,6 +96,18 @@ describe('OpenAI-compatible endpoint settings (US-072)', () => {
 
     expect(buildAiSettings({ openaiBaseUrl: '' }).openaiBaseUrl).toBe('')
   })
+
+  it('preserves the persisted model when only the discovery endpoint is submitted for save (TEST-004)', () => {
+    mockReadRexConfig.mockReturnValue({
+      models: { llm_provider: 'openai' },
+      openai: { model: 'openai/gpt-oss-20b', base_url: 'http://127.0.0.1:1234/v1' }
+    })
+
+    const saved = buildAiSettingsForSave({ openaiBaseUrl: 'http://127.0.0.1:1234/v1' })
+
+    expect(saved.model).toBe('openai/gpt-oss-20b')
+    expect(saved.model).not.toBe(OPENAI_DEFAULT_MODEL)
+  })
 })
 
 

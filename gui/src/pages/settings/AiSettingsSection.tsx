@@ -187,11 +187,20 @@ export function AiSettingsSection(): React.ReactElement {
     setDiscoveredModels([])
     setDiscoveryError('')
 
+    // Persist only the endpoint field so a discovery attempt (success or
+    // failure) can never overwrite the user's existing persisted model
+    // choice with the form's untouched default (buildAiSettings falls back
+    // to the currently-persisted model for any field omitted here).
+    const endpointSettings: Settings =
+      provider === 'ollama'
+        ? { ollamaBaseUrl: form.ollamaBaseUrl }
+        : { openaiBaseUrl: form.openaiBaseUrl }
+
     window.rex
-      .setSettings('ai', form as unknown as Settings)
+      .setSettings('ai', endpointSettings)
       .then((saved) => {
         if (!saved.ok) {
-          throw new Error(saved.error ?? 'Failed to save AI settings before model discovery')
+          throw new Error(saved.error ?? 'Failed to save the discovery endpoint before model discovery')
         }
         if (!discoveryRequestGateRef.current.isCurrent(requestId)) return null
         return window.rex.discoverAiModels(provider)
