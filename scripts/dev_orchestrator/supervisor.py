@@ -31,7 +31,7 @@ from .runner import (
     is_transient_runner_failure,
     recover_codex_windows_terminal_runner,
 )
-from .schema import validate_agent_result
+from .schema import validate_agent_result, validate_phase_outcome
 from .storage import AtomicJsonStore
 from .types import AgentResult, OrchestratorConfig, TaskItem, WorkerState, WorkerStatus
 from .usage import UsageBudget, handle_usage_limit, is_cli_usage_provider
@@ -408,8 +408,27 @@ class Supervisor:
         self._implement(role, state, context)
 
     def _accept_result(
-        self, role: str, state: WorkerState, result: AgentResult, *, allow_issue_updates: bool
+        self,
+        role: str,
+        state: WorkerState,
+        result: AgentResult,
+        *,
+        phase: str,
+        allow_issue_updates: bool,
     ) -> bool:
+        try:
+            validate_phase_outcome(result, phase)
+        except ValueError as exc:
+            self.save_state(
+                replace(
+                    state,
+                    status=WorkerStatus.BLOCKED_SYSTEM,
+                    blocked_reason=f"invalid {phase} agent result: {exc}",
+                    blocker_kind="system",
+                    resume_status=state.status,
+                )
+            )
+            return False
         if result.needs_user and result.outcome != "blocked_user":
             self.save_state(
                 replace(
@@ -528,7 +547,9 @@ class Supervisor:
         except AgentInvocationError as exc:
             self._handle_invocation_error(role, state, "review", exc, context)
             return
-        if not self._accept_result(role, state, result, allow_issue_updates=False):
+        if not self._accept_result(
+            role, state, result, phase="review", allow_issue_updates=False
+        ):
             return
         if result.outcome == "pass":
             with ControlPlaneLock(role_lease_lock_path(self.config, role)):
@@ -592,7 +613,9 @@ class Supervisor:
         except AgentInvocationError as exc:
             self._handle_invocation_error(role, state, "plan", exc, context)
             return
-        if not self._accept_result(role, state, result, allow_issue_updates=False):
+        if not self._accept_result(
+            role, state, result, phase="plan", allow_issue_updates=False
+        ):
             return
         if result.outcome == "assign":
             if not result.task_id or not result.task_prompt:
@@ -692,7 +715,9 @@ class Supervisor:
                     )
                 )
                 return
-            if not self._accept_result(role, state, result, allow_issue_updates=False):
+            if not self._accept_result(
+                role, state, result, phase="implement", allow_issue_updates=False
+            ):
                 return
             self.save_state(
                 replace(
@@ -706,7 +731,9 @@ class Supervisor:
                 )
             )
             return
-        if not self._accept_result(role, state, result, allow_issue_updates=False):
+        if not self._accept_result(
+            role, state, result, phase="implement", allow_issue_updates=False
+        ):
             return
         if result.outcome == "continue":
             self.save_state(
@@ -746,7 +773,11 @@ class Supervisor:
             self._handle_invocation_error(role, state, "review", exc, context)
             return
         if not self._accept_result(
-            role, state, result, allow_issue_updates=result.outcome == "pass"
+            role,
+            state,
+            result,
+            phase="review",
+            allow_issue_updates=result.outcome == "pass",
         ):
             return
         if result.outcome == "pass":
@@ -842,7 +873,9 @@ class Supervisor:
         except AgentInvocationError as exc:
             self._handle_invocation_error(role, state, "adjudicate", exc, context)
             return
-        if not self._accept_result(role, state, result, allow_issue_updates=False):
+        if not self._accept_result(
+            role, state, result, phase="adjudicate", allow_issue_updates=False
+        ):
             return
         if result.outcome == "assign":
             if not result.task_id or not result.task_prompt:

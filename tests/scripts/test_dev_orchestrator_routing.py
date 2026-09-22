@@ -1432,6 +1432,7 @@ def test_production_codex_review_uses_invocation_bound_schema(tmp_path: Path, mo
         observed["role"] = schema["properties"]["role"]
         observed["task_id"] = schema["properties"]["task_id"]
         observed["invocation_id"] = schema["properties"]["invocation_id"]
+        observed["outcome"] = schema["properties"]["outcome"]
         payload = {
             "outcome": "pass",
             "summary": "ok",
@@ -1459,6 +1460,19 @@ def test_production_codex_review_uses_invocation_bound_schema(tmp_path: Path, mo
     assert result.outcome == "pass"
     assert observed["role"] == {"type": "string", "enum": ["backend"]}
     assert observed["task_id"] == {"type": "string", "enum": ["B-BOUND"]}
+    review_outcomes = observed["outcome"]
+    assert isinstance(review_outcomes, dict)
+    assert set(review_outcomes["enum"]) == {
+        "pass",
+        "changes_required",
+        "blocked_user",
+        "blocked_system",
+        "failed",
+    }
+    assert "continue" not in review_outcomes["enum"]
+    assert "ready_for_review" not in review_outcomes["enum"]
+    assert "assign" not in review_outcomes["enum"]
+    assert "done" not in review_outcomes["enum"]
     invocation_schema = observed["invocation_id"]
     assert isinstance(invocation_schema, dict)
     assert invocation_schema["type"] == "string"

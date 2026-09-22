@@ -24,6 +24,37 @@ _ALLOWED_OUTCOMES = {
 _ALLOWED_RECIPIENTS = {"backend", "mobile", "testing", "supervisor"}
 _ALLOWED_PRIORITIES = {"low", "normal", "high", "critical"}
 _ALLOWED_ISSUE_STATUSES = {"fixed-needs-retest"}
+
+_PHASE_OUTCOMES = {
+    "implement": frozenset(
+        {"continue", "ready_for_review", "blocked_user", "blocked_system", "failed"}
+    ),
+    "review": frozenset(
+        {"pass", "changes_required", "blocked_user", "blocked_system", "failed"}
+    ),
+    "plan": frozenset({"assign", "done", "blocked_user", "blocked_system", "failed"}),
+    "adjudicate": frozenset(
+        {"assign", "done", "blocked_user", "blocked_system", "failed"}
+    ),
+}
+
+
+def allowed_outcomes_for_phase(phase: str) -> frozenset[str]:
+    try:
+        return _PHASE_OUTCOMES[phase]
+    except KeyError as exc:
+        raise ValueError(f"unsupported agent phase: {phase!r}") from exc
+
+
+def validate_phase_outcome(result: AgentResult, phase: str) -> None:
+    allowed = allowed_outcomes_for_phase(phase)
+    if result.outcome not in allowed:
+        expected = ", ".join(sorted(allowed))
+        raise ValueError(
+            f"agent outcome {result.outcome!r} is invalid for phase {phase!r}; "
+            f"expected one of: {expected}"
+        )
+
 _SCHEMA = json.loads(
     Path(__file__).with_name("agent-result.schema.json").read_text(encoding="utf-8")
 )

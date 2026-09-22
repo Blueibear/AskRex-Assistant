@@ -27,7 +27,7 @@ from .handoff import (
 )
 from .lifecycle import ControlPlaneLock
 from .paths import validate_runtime_paths
-from .schema import validate_agent_result
+from .schema import allowed_outcomes_for_phase, validate_agent_result, validate_phase_outcome
 from .types import AgentResult
 
 _clone_scratch_repo = _scratch._clone_scratch_repo
@@ -184,6 +184,10 @@ def _write_bound_codex_schema(
     schema["properties"]["invocation_id"] = {
         "type": "string",
         "enum": [invocation_id],
+    }
+    schema["properties"]["outcome"] = {
+        "type": "string",
+        "enum": sorted(allowed_outcomes_for_phase(phase)),
     }
     if phase in {"implement", "review"} and task_id:
         schema["properties"]["task_id"] = {"type": "string", "enum": [task_id]}

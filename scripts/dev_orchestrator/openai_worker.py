@@ -23,7 +23,7 @@ from .openai_budget import (
 )
 from .openai_transport import OpenAIResponsesTransport, OpenAITransportError
 from .runner import AgentInvocationError
-from .schema import validate_agent_result
+from .schema import validate_agent_result, validate_phase_outcome
 from .scratch import _clone_scratch_repo, _temporary_scratch_root
 from .types import AgentResult, OrchestratorConfig, TaskItem, WorkerState
 
@@ -218,6 +218,7 @@ class OpenAIModelWorker:
         role: str,
         task: TaskItem | None,
         invocation_id: str,
+        phase: str,
         allow_issue_updates: bool,
     ) -> AgentResult:
         try:
@@ -228,6 +229,7 @@ class OpenAIModelWorker:
                 task=task,
                 invocation_id=invocation_id,
             )
+            validate_phase_outcome(result, phase)
             validate_agent_updates(
                 self.config.coordination_root,
                 role,
@@ -314,6 +316,7 @@ class OpenAIModelWorker:
                 role=role,
                 task=task,
                 invocation_id=invocation_id,
+                phase="review",
                 allow_issue_updates=True,
             )
             if evidence.truncated:
@@ -377,6 +380,7 @@ class OpenAIModelWorker:
                 role=role,
                 task=task,
                 invocation_id=invocation_id,
+                phase=phase,
                 allow_issue_updates=False,
             )
             return self._persist(

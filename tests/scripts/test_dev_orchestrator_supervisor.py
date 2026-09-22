@@ -367,6 +367,44 @@ def test_validation_infrastructure_failure_blocks_system(tmp_path: Path) -> None
     assert "missing runner" in state.blocked_reason
 
 
+
+def test_review_phase_rejects_continue_before_coordination_side_effects(tmp_path: Path) -> None:
+    invoker = FakeInvoker()
+    invoker.add(
+        "backend",
+        "review",
+        AgentResult(
+            "continue",
+            "invalid review outcome",
+            "should not publish",
+            coordination_messages=(
+                CoordinationMessage(
+                    to="testing",
+                    priority="high",
+                    related="TEST-005",
+                    needs_response=True,
+                    body="THIS-MUST-NOT-BE-PUBLISHED",
+                ),
+            ),
+        ),
+    )
+    supervisor = Supervisor(make_config(tmp_path, observe_only=False), invoker)
+    state = WorkerState(
+        role="backend",
+        status=WorkerStatus.REVIEWING,
+        task=TaskItem("B-REVIEW-PHASE", "Review only"),
+    )
+
+    supervisor._review("backend", state, "ctx")
+
+    saved = supervisor.load_state("backend")
+    assert saved.status is WorkerStatus.BLOCKED_SYSTEM
+    assert saved.resume_status is WorkerStatus.REVIEWING
+    assert "invalid review agent result" in saved.blocked_reason
+    mailbox = supervisor.root / "mailbox" / "testing"
+    assert not list(mailbox.glob("*.md"))
+
+
 def test_review_changes_required_loops_back_to_implementation(tmp_path: Path) -> None:
     invoker = FakeInvoker()
     invoker.add("mobile", "implement", result("ready_for_review"))

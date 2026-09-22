@@ -250,6 +250,58 @@ def test_review_marks_reserved_spend_uncertain_after_transport_failure(
     assert read_pending_result(config, "backend") is None
 
 
+
+def test_openai_review_rejects_implementation_outcome_before_coordination_validation(
+    tmp_path: Path,
+) -> None:
+    from scripts.dev_orchestrator.openai_worker import OpenAIModelWorker
+    from scripts.dev_orchestrator.runner import AgentInvocationError
+    from scripts.dev_orchestrator.types import TaskItem
+
+    config, _repo, _state, _task = _leased_review(tmp_path)
+    events: list[str] = []
+    worker = _worker(
+        config,
+        _FakeTransport(events, {}),
+        _FakeBudget(events),
+        "inv-phase",
+    )
+    task = TaskItem("B-PHASE", "Review only")
+    payload = {
+        "outcome": "continue",
+        "summary": "invalid for review",
+        "next_action": "continue",
+        "needs_user": False,
+        "blocker_reason": "",
+        "task_id": "B-PHASE",
+        "task_prompt": "",
+        "role": "backend",
+        "invocation_id": "inv-phase",
+        "coordination_messages": [
+            {
+                "to": "testing",
+                "priority": "high",
+                "related": "TEST-005",
+                "needs_response": True,
+                "body": "SHOULD-NOT-VALIDATE-FOR-REVIEW",
+            }
+        ],
+        "issue_updates": [],
+    }
+
+    with pytest.raises(AgentInvocationError, match="invalid for phase") as caught:
+        worker._parse_and_bind(
+            payload,
+            role="backend",
+            task=task,
+            invocation_id="inv-phase",
+            phase="review",
+            allow_issue_updates=True,
+        )
+
+    assert caught.value.kind == "invalid_output"
+
+
 def test_review_reconciles_before_rejecting_binding_mismatch(tmp_path: Path) -> None:
     config, _repo, state, task = _leased_review(tmp_path)
     events: list[str] = []
