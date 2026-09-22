@@ -265,6 +265,14 @@ def _validated_artifact_contents(
 
 
 def _receipt_text(receipt: ValidationReceipt) -> str:
+    """Render a concise validation receipt suitable for bounded review evidence.
+
+    Validation command output can be extremely verbose (for example pytest warning
+    summaries). Preserve every gate identity/exit code plus bounded command/stdout/
+    stderr excerpts so a noisy but successful gate cannot make the entire review
+    bundle critically truncated.
+    """
+
     lines = [
         f"role: {receipt.role}",
         f"task_id: {receipt.task_id}",
@@ -272,15 +280,28 @@ def _receipt_text(receipt: ValidationReceipt) -> str:
         f"head: {receipt.head}",
         f"passed_at: {receipt.passed_at}",
     ]
+    gate_count = max(1, len(receipt.gates))
+    payload_budget = max(320, 8_000 // gate_count)
+    command_budget = max(120, payload_budget // 3)
+    stdout_budget = max(140, payload_budget // 2)
+    stderr_budget = max(80, payload_budget - command_budget - stdout_budget)
+
     for gate in receipt.gates:
+        command, _ = _bound(
+            "gate_command",
+            subprocess.list2cmdline(list(gate.command)),
+            command_budget,
+        )
+        stdout, _ = _bound("gate_stdout", gate.stdout or "", stdout_budget)
+        stderr, _ = _bound("gate_stderr", gate.stderr or "", stderr_budget)
         lines.extend(
             [
                 f"gate: {gate.name}",
-                f"command: {subprocess.list2cmdline(list(gate.command))}",
+                f"command: {command}",
                 f"cwd: {gate.cwd}",
                 f"exit_code: {gate.exit_code}",
-                f"stdout:\n{gate.stdout}",
-                f"stderr:\n{gate.stderr}",
+                f"stdout:\n{stdout}",
+                f"stderr:\n{stderr}",
             ]
         )
     return "\n".join(lines)

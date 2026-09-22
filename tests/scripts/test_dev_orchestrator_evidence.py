@@ -536,6 +536,45 @@ def test_review_evidence_marks_truncated_sections_explicitly(tmp_path: Path) -> 
     assert "[truncated task_diff]" in bundle.text
 
 
+
+def test_verbose_validation_output_does_not_critically_truncate_review_bundle(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "backend"
+    base = _git_repo(repo)
+    head = _commit(repo, "base\nchanged\n")
+    noisy = (
+        "print('START-VALIDATION'); "
+        "print('X' * 40000); "
+        "print('112 passed');"
+    )
+    config = _config(tmp_path, repo, [sys.executable, "-c", noisy])
+    assert run_iteration_validation(
+        config, "backend", "B-NOISY", base_head=base, head=head
+    ).passed
+    state = WorkerState(
+        role="backend",
+        task=TaskItem("B-NOISY", "review"),
+        task_base_head=base,
+    )
+
+    bundle = build_review_evidence(
+        config,
+        "backend",
+        state,
+        state.task,
+        "coordination",
+        "inv-noisy",
+    )
+
+    assert bundle.truncated is False
+    assert "validation" not in bundle.truncation_reasons
+    assert "gate: focused" in bundle.text
+    assert "exit_code: 0" in bundle.text
+    assert "START-VALIDATION" in bundle.text
+    assert "112 passed" in bundle.text
+    assert "[truncated gate_stdout]" in bundle.text
+
 def test_validation_receipt_rejects_tampered_success_evidence(tmp_path: Path) -> None:
     import json
 
