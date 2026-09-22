@@ -241,6 +241,95 @@ def _has_task_validation_override(
     )
 
 
+def _scoped_backend_gates_from_diff(
+    config: OrchestratorConfig,
+    role: str,
+    *,
+    base_head: str,
+    head: str,
+) -> tuple[ValidationGate, ...]:
+    """Use changed regression tests for small Python-only backend tasks."""
+
+    if role != "backend" or not base_head or not head or base_head == head:
+        return ()
+    settings = config.metadata.get("iteration_validation", {})
+    if not isinstance(settings, dict):
+        return ()
+    role_settings = settings.get(role, {})
+    if (
+        not isinstance(role_settings, dict)
+        or role_settings.get("scoped_default_from_diff") is not True
+    ):
+        return ()
+
+    repo = _repo_root(config, role)
+    changed = subprocess.run(
+        (
+            "git",
+            "diff",
+            "--name-only",
+            "--diff-filter=ACMR",
+            f"{base_head}..{head}",
+            "--",
+        ),
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    if changed.returncode != 0:
+        return ()
+
+    paths = [
+        line.strip().replace("\\", "/")
+        for line in changed.stdout.splitlines()
+        if line.strip()
+    ]
+    if not paths or len(paths) > 24:
+        return ()
+    if any(not path.endswith(".py") for path in paths):
+        return ()
+
+    tests = [
+        path
+        for path in paths
+        if path.startswith("tests/") and Path(path).name.startswith("test_")
+    ]
+    if not tests or len(tests) > 12:
+        return ()
+
+    sources = [path for path in paths if path not in tests]
+    gates: list[ValidationGate] = [
+        ValidationGate(
+            "scoped changed regression tests",
+            ("py", "-3.11", "-m", "pytest", "-q", *tests),
+            timeout_seconds=900,
+        ),
+        ValidationGate(
+            "scoped changed-file ruff",
+            ("py", "-3.11", "-m", "ruff", "check", *paths),
+            timeout_seconds=300,
+        ),
+    ]
+    if sources:
+        gates.append(
+            ValidationGate(
+                "scoped changed-source syntax",
+                ("py", "-3.11", "-m", "py_compile", *sources),
+                timeout_seconds=300,
+            )
+        )
+    gates.append(
+        ValidationGate(
+            "scoped task diff check",
+            ("git", "diff", "--check", f"{base_head}..{head}", "--"),
+            timeout_seconds=120,
+        )
+    )
+    return tuple(gates)
+
+
 def _coordination_only_gates(
     config: OrchestratorConfig,
     role: str,
@@ -326,6 +415,14 @@ def run_iteration_validation(
                 base_head=base_head,
                 head=head,
             )
+        elif not _has_task_validation_override(config, role, task_id):
+            scoped_gates = _scoped_backend_gates_from_diff(
+                config,
+                role,
+                base_head=base_head,
+                head=head,
+            )
+            gates = scoped_gates or configured_gates
         else:
             gates = configured_gates
         repo = _repo_root(config, role)
