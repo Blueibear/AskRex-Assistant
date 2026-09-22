@@ -72,4 +72,13 @@ describe('US-125 packaged first-run bootstrap', () => {
     expect(appSource).toContain('if (needsSetup !== false) return')
     expect(appSource).toContain('.getStatus()')
   })
+
+  it('hands ambiguous missing/stale identity off to the existing user-selection flow instead of failing the launch', () => {
+    expect(mainSource).toContain('AmbiguousElectronIdentityError')
+    expect(mainSource).toContain('promptForActiveUser')
+    expect(mainSource).toContain('selectElectronSessionUser')
+    expect(mainSource.indexOf('instanceof AmbiguousElectronIdentityError')).toBeLessThan(
+      mainSource.indexOf("dialog.showErrorBox('AskRex needs an active user'")
+    )
+  })
 })

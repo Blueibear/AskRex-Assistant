@@ -15,13 +15,36 @@ import { planElectronStartup } from './firstRunStartup'
 import { integrationSettingsFrom } from './integrationStatus'
 import { mirrorToRexConfig } from './settingsMirror'
 import { registerAuthenticatedIpcHandlers } from './ipc'
-import { resolveElectronSessionIdentity } from './sessionIdentity'
+import {
+  AmbiguousElectronIdentityError,
+  resolveElectronSessionIdentity,
+  selectElectronSessionUser
+} from './sessionIdentity'
 import { createWindow } from './window'
 import { runInstalledArtifactSmoke, runInstalledFirstRunSmoke } from './artifactSmoke'
 
 const artifactSmokeRuntimeRoot = process.env['ASKREX_ARTIFACT_SMOKE_RUNTIME_ROOT']
 if (process.env['ASKREX_ARTIFACT_SMOKE'] === '1' && artifactSmokeRuntimeRoot) {
   app.setPath('userData', artifactSmokeRuntimeRoot)
+}
+
+// Existing user-selection flow for a normal relaunch when identity state is
+// missing/stale and more than one desktop user is discoverable. Never guesses
+// a user; returns null when the person cancels instead of picking one.
+function promptForActiveUser(knownUserIds: string[]): string | null {
+  if (knownUserIds.length === 0) return null
+  const cancelId = knownUserIds.length
+  const choice = dialog.showMessageBoxSync({
+    type: 'question',
+    title: 'Select AskRex user',
+    message: 'AskRex could not automatically determine the active user.',
+    detail: 'Choose the account to open:',
+    buttons: [...knownUserIds, 'Cancel'],
+    defaultId: 0,
+    cancelId
+  })
+  if (choice < 0 || choice >= knownUserIds.length) return null
+  return knownUserIds[choice]
 }
 
 app.whenReady().then(async () => {
@@ -68,13 +91,35 @@ app.whenReady().then(async () => {
     try {
       sessionIdentity = resolveElectronSessionIdentity()
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      appendElectronLog('ERROR', 'Electron user session could not be established', {
-        event: 'electron_identity_failed',
-        error: message
-      })
-      dialog.showErrorBox('AskRex needs an active user', message)
-      return false
+      if (error instanceof AmbiguousElectronIdentityError) {
+        const chosenUserId = promptForActiveUser(error.knownUserIds)
+        if (!chosenUserId) {
+          appendElectronLog('WARNING', 'Electron user selection was cancelled', {
+            event: 'electron_identity_selection_cancelled'
+          })
+          return false
+        }
+        try {
+          sessionIdentity = selectElectronSessionUser(chosenUserId)
+        } catch (selectionError) {
+          const message =
+            selectionError instanceof Error ? selectionError.message : String(selectionError)
+          appendElectronLog('ERROR', 'Electron user selection could not be saved', {
+            event: 'electron_identity_selection_failed',
+            error: message
+          })
+          dialog.showErrorBox('AskRex needs an active user', message)
+          return false
+        }
+      } else {
+        const message = error instanceof Error ? error.message : String(error)
+        appendElectronLog('ERROR', 'Electron user session could not be established', {
+          event: 'electron_identity_failed',
+          error: message
+        })
+        dialog.showErrorBox('AskRex needs an active user', message)
+        return false
+      }
     }
 
     unregisterSetupPreviewHandlers()

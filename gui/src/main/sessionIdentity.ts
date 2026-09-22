@@ -24,6 +24,18 @@ interface IdentityBridgeResponse {
   user_id?: string
   authentication?: string
   error?: string
+  code?: string
+  known_user_ids?: string[]
+}
+
+export class AmbiguousElectronIdentityError extends Error {
+  readonly knownUserIds: string[]
+
+  constructor(message: string, knownUserIds: string[]) {
+    super(message)
+    this.name = 'AmbiguousElectronIdentityError'
+    this.knownUserIds = knownUserIds
+  }
 }
 
 export function validateSessionUserId(userId: string): string {
@@ -51,13 +63,13 @@ export function createSessionIdentity(
   }
 }
 
-export function resolveElectronSessionIdentity(): ElectronSessionIdentity {
+function callIdentityBridge(payload: Record<string, unknown>): ElectronSessionIdentity {
   const result = spawnSync(
     resolvePythonCommand(),
     [resolveBridgePath('rex_identity_bridge.py')],
     {
       ...bridgeSpawnOptions(),
-      input: JSON.stringify({ action: 'resolve_electron_session' }),
+      input: JSON.stringify(payload),
       encoding: 'utf8',
       timeout: 10_000,
       windowsHide: true
@@ -74,6 +86,12 @@ export function resolveElectronSessionIdentity(): ElectronSessionIdentity {
     )
   }
   if (result.status !== 0 || !response.ok || !response.user_id) {
+    if (response.code === 'ambiguous_identity') {
+      throw new AmbiguousElectronIdentityError(
+        response.error || 'AskRex needs a user selection before it can open.',
+        response.known_user_ids ?? []
+      )
+    }
     throw new Error(
       response.error || 'Electron session identity could not be established'
     )
@@ -84,6 +102,16 @@ export function resolveElectronSessionIdentity(): ElectronSessionIdentity {
     )
   }
   return createSessionIdentity(response.user_id)
+}
+
+export function resolveElectronSessionIdentity(): ElectronSessionIdentity {
+  return callIdentityBridge({ action: 'resolve_electron_session' })
+}
+
+// Persists an explicit choice from the existing user-selection flow when
+// identity state is missing/stale and more than one user is discoverable.
+export function selectElectronSessionUser(userId: string): ElectronSessionIdentity {
+  return callIdentityBridge({ action: 'select_electron_session_user', user_id: userId })
 }
 
 export function privateSessionPayload(
