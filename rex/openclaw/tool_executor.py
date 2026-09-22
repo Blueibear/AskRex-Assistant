@@ -41,6 +41,15 @@ logger = logging.getLogger(__name__)
 TOOL_REQUEST_PREFIX = "TOOL_REQUEST:"
 TOOL_RESULT_PREFIX = "TOOL_RESULT:"
 
+# Tools the free-text ``TOOL_REQUEST:`` convention may invoke. This must stay
+# in sync with the tools documented to the model in
+# ``rex.context.builder._TOOL_INSTRUCTIONS``. A model-emitted tool name
+# outside this set was never taught to the model as callable through this
+# convention; being registered elsewhere (e.g. for deterministic/authorized
+# dispatch such as ``media_read``) does not authorize a spurious or
+# unsupported model-emitted call here (TEST-010).
+TEXT_TOOL_REQUEST_ALLOWED_TOOLS = frozenset({"time_now", "weather_now", "web_search"})
+
 
 @dataclass(frozen=True)
 class ToolError:
@@ -254,6 +263,12 @@ def execute_tool(
     # For tools outside the built-in set, check the canonical registry before
     # declaring "Unknown tool".  Tools registered via register_tool() or the
     # default registry are dispatched through ToolDispatcher further below.
+    # Note: this built-in set governs execute_tool()'s general dispatch
+    # validation and intentionally differs from TEXT_TOOL_REQUEST_ALLOWED_TOOLS,
+    # which additionally restricts which tools the untrusted free-text
+    # TOOL_REQUEST: convention may invoke (TEST-010); execute_tool() itself
+    # remains usable for any canonically registered tool through explicit
+    # authorized callers.
     _BUILTIN_TOOLS = {"time_now", "weather_now", "web_search"}
     if tool not in _BUILTIN_TOOLS:
         try:
@@ -500,6 +515,24 @@ def route_if_tool_request(
 
     tool = request.get("tool", "unknown")
     args = request.get("args", {})
+
+    if tool not in TEXT_TOOL_REQUEST_ALLOWED_TOOLS:
+        logger.warning(
+            "Ignoring unsupported model-emitted tool request: tool=%s",
+            tool,
+            extra={"event": "tool_request_unsupported_tool_ignored"},
+        )
+        unsupported_result = _error_result(
+            f"Tool '{tool}' is not available for a direct tool request.",
+            tool=tool,
+            args=args,
+        )
+        tool_result_line = format_tool_result(tool, args, unsupported_result)
+        tool_message = {"role": "tool", "content": tool_result_line}
+        try:
+            return model_call_fn(tool_message)
+        except Exception:
+            return "Sorry, I could not complete that tool request."
 
     try:
         result = execute_tool(
