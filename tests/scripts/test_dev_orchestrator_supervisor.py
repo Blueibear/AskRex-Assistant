@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -1457,3 +1458,92 @@ def test_openai_api_blockers_preserve_exact_resume_phase(tmp_path: Path) -> None
         assert saved.status is WorkerStatus.BLOCKED_SYSTEM
         assert saved.resume_status is expected_resume
         assert saved.task == state.task
+
+
+def test_review_pass_records_completed_task_and_planner_cannot_resurrect_it(
+    tmp_path: Path,
+) -> None:
+    invoker = FakeInvoker()
+    invoker.add("backend", "implement", result("ready_for_review"))
+    invoker.add("backend", "review", result("pass"))
+    config = make_config(tmp_path, observe_only=False)
+    repo = config.backend_root
+    assert repo is not None
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "tests@example.invalid"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "AskRex Tests"], cwd=repo, check=True)
+    (repo / "tracked.txt").write_text("baseline\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "baseline"], cwd=repo, check=True, capture_output=True)
+    supervisor = Supervisor(config, invoker)
+    supervisor.enqueue(
+        "backend",
+        TaskItem(
+            "backend-us101-root-capture",
+            "Complete US-101 speculative privacy root capture.",
+        ),
+    )
+
+    supervisor.run_cycle()
+    supervisor.run_cycle()
+    assert supervisor.load_state("backend").status is WorkerStatus.IDLE
+
+    records = supervisor.completed_tasks.records("backend")
+    assert len(records) == 1
+    assert "US-101" in records[0]["keys"]
+
+    invoker.add(
+        "backend",
+        "lead",
+        result(
+            "assign",
+            task_id="backend-us101-speculative-failure-privacy-root-capture",
+            task_prompt="Reopen US-101 because an old mailbox message still says needs response.",
+        ),
+    )
+    supervisor._run_role("backend")
+
+    state = supervisor.load_state("backend")
+    assert state.status is WorkerStatus.IDLE
+    assert state.task is None
+    assert not any(call[:2] == ("backend", "implement") for call in invoker.calls[3:])
+    alerts = list((config.coordination_root / "alerts").glob("duplicate-completed-task-backend-*.json"))
+    assert len(alerts) == 1
+
+
+def test_completed_task_remains_closed_when_reviewed_head_is_ancestor(
+    tmp_path: Path,
+) -> None:
+    config = make_config(tmp_path, observe_only=False)
+    repo = config.backend_root
+    assert repo is not None
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "tests@example.invalid"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "AskRex Tests"], cwd=repo, check=True)
+    (repo / "tracked.txt").write_text("one\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "one"], cwd=repo, check=True, capture_output=True)
+    completed_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+
+    supervisor = Supervisor(config, FakeInvoker())
+    completed = TaskItem("backend-us101-done", "Finish US-101.")
+    supervisor.completed_tasks.record(
+        "backend",
+        completed,
+        completed_head=completed_head,
+        source="independent_review",
+    )
+
+    (repo / "tracked.txt").write_text("two\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "two"], cwd=repo, check=True, capture_output=True)
+    current_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+
+    record = supervisor.completed_tasks.matching_record(
+        "backend",
+        TaskItem("backend-us101-reopen", "Old evidence asks to reopen US-101."),
+        repo=repo,
+        current_head=current_head,
+    )
+    assert record is not None
+    assert record["completed_head"] == completed_head

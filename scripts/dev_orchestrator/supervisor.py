@@ -10,6 +10,7 @@ from typing import Protocol
 
 from .alerts import AlertSink
 from .completion import evaluate_completion
+from .completed_tasks import CompletedTaskLedger
 from .evidence import EvidenceError, build_review_evidence
 from .coordination import (
     _issue_status,
@@ -116,6 +117,7 @@ class Supervisor:
         self.root = config.coordination_root
         recover_coordination_transactions(self.root)
         self.alerts = AlertSink(self.root / "alerts")
+        self.completed_tasks = CompletedTaskLedger(self.root)
         self._result_context = threading.local()
 
     def _state_store(self, role: str) -> AtomicJsonStore:
@@ -123,6 +125,51 @@ class Supervisor:
 
     def _queue_store(self, role: str) -> AtomicJsonStore:
         return AtomicJsonStore(self.root / "queues" / f"{role}.json")
+
+    def _repo_for_role(self, role: str) -> Path:
+        if role == "backend":
+            root = self.config.backend_root
+        elif role == "mobile":
+            root = self.config.mobile_root
+        else:
+            raise ValueError(f"unsupported role: {role}")
+        if root is None:
+            raise ValueError(f"{role} repository root is not configured")
+        return root.resolve()
+
+    def _completion_context(self, role: str) -> str:
+        repo = self._repo_for_role(role)
+        return self.completed_tasks.planning_summary(
+            role,
+            repo=repo,
+            current_head=self._capture_task_base_head(role),
+        )
+
+    def _completed_assignment(self, role: str, task: TaskItem):
+        repo = self._repo_for_role(role)
+        return self.completed_tasks.matching_record(
+            role,
+            task,
+            repo=repo,
+            current_head=self._capture_task_base_head(role),
+        )
+
+    def _record_completed_task(
+        self,
+        role: str,
+        task: TaskItem,
+        *,
+        source: str,
+        invocation_id: str = "",
+    ) -> None:
+        with ControlPlaneLock(self.root / "control-plane.lock"):
+            self.completed_tasks.record(
+                role,
+                task,
+                completed_head=self._capture_task_base_head(role),
+                invocation_id=invocation_id,
+                source=source,
+            )
 
     def _last_provider(self, role: str) -> str:
         record = AtomicJsonStore(self.root / "handoff" / f"{role}.json").read(default={})
@@ -600,6 +647,7 @@ class Supervisor:
         self._save_block_or_failure(state, result)
 
     def _plan(self, role: str, state: WorkerState, context: str) -> None:
+        planning_context = context + self._completion_context(role)
         try:
             result = self._invoke_or_recover(
                 role,
@@ -607,7 +655,7 @@ class Supervisor:
                 phase="plan",
                 task_id="",
                 invoke=lambda: self.invoker.lead(
-                    role, replace(state, status=WorkerStatus.PLANNING), context
+                    role, replace(state, status=WorkerStatus.PLANNING), planning_context
                 ),
             )
         except AgentInvocationError as exc:
@@ -620,6 +668,29 @@ class Supervisor:
         if result.outcome == "assign":
             if not result.task_id or not result.task_prompt:
                 raise ValueError("lead assign result requires task_id and task_prompt")
+            candidate = TaskItem(result.task_id, result.task_prompt)
+            completed = self._completed_assignment(role, candidate)
+            if completed is not None:
+                self.alerts.emit(
+                    role=role,
+                    kind="duplicate-completed-task",
+                    message=(
+                        f"Planner assignment {result.task_id} matches reviewed completed work "
+                        f"at {completed.get('completed_head', '')}; assignment rejected."
+                    ),
+                )
+                self.save_state(
+                    replace(
+                        state,
+                        status=WorkerStatus.IDLE,
+                        task=None,
+                        task_base_head="",
+                        blocked_reason="",
+                        blocker_kind="",
+                        idle_context_fingerprint="",
+                    )
+                )
+                return
             if self._task_is_deferred(result.task_id):
                 self.save_state(
                     replace(
@@ -781,6 +852,12 @@ class Supervisor:
         ):
             return
         if result.outcome == "pass":
+            self._record_completed_task(
+                role,
+                state.task,
+                source="independent_review",
+                invocation_id=result.invocation_id,
+            )
             if result.issue_updates and not _updates_are_retest_handoff(result.issue_updates):
                 issue_ids = ", ".join(update.issue_id for update in result.issue_updates)
                 self.save_state(
@@ -898,6 +975,12 @@ class Supervisor:
                 and _is_coordination_only_task(state.task)
                 and self._has_current_green_validation(role, state)
             ):
+                self._record_completed_task(
+                    role,
+                    state.task,
+                    source="coordination_adjudication",
+                    invocation_id=result.invocation_id,
+                )
                 self.save_state(
                     WorkerState(
                         role=role,
