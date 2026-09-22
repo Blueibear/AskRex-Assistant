@@ -183,6 +183,54 @@ def test_review_evidence_rejects_dirty_or_unvalidated_revision(tmp_path: Path) -
         build_review_evidence(config, "backend", state, state.task, "coordination", "inv-2")
 
 
+def test_review_evidence_includes_matching_canonical_issue_outside_coordination_budget(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "backend"
+    base = _git_repo(repo)
+    head = _commit(repo, "base\nchanged\n")
+    config = _config(tmp_path, repo, [sys.executable, "-c", "print('OK')"])
+    assert run_iteration_validation(
+        config,
+        "backend",
+        "backend-test-004-lm-studio-model-discovery",
+        base_head=base,
+        head=head,
+    ).passed
+
+    issue = config.coordination_root / "issues" / "TEST-004.md"
+    issue.parent.mkdir(parents=True, exist_ok=True)
+    issue.write_text(
+        "# TEST-004\n\nStatus: fixed-needs-retest\nOwner: backend\n",
+        encoding="utf-8",
+    )
+    state = WorkerState(
+        role="backend",
+        task=TaskItem(
+            "backend-test-004-lm-studio-model-discovery",
+            "Fix TEST-004 model discovery",
+        ),
+        task_base_head=base,
+    )
+    noisy_coordination = "COORD-START\n" + ("C" * 20_000) + "\nCOORD-END\n"
+
+    bundle = build_review_evidence(
+        config,
+        "backend",
+        state,
+        state.task,
+        noisy_coordination,
+        "inv-task-issue",
+    )
+
+    assert "## task_issues" in bundle.text
+    assert "### issues/TEST-004.md" in bundle.text
+    assert "Status: fixed-needs-retest" in bundle.text
+    assert "Owner: backend" in bundle.text
+    assert "[truncated coordination]" in bundle.text
+    assert bundle.truncated is False
+
+
 def test_review_evidence_includes_task_relevant_outgoing_coordination(tmp_path: Path) -> None:
     repo = tmp_path / "backend"
     base = _git_repo(repo)
@@ -222,7 +270,6 @@ def test_review_evidence_includes_task_relevant_outgoing_coordination(tmp_path: 
     assert "MSG-task-retest-00-backend.md" in bundle.text
     assert "Please retest the bounded B-COORD behavior" in bundle.text
     assert bundle.truncated is False
-
 
 
 def test_review_evidence_includes_supervisor_validated_coordination_artifact(
@@ -344,6 +391,7 @@ def test_review_evidence_does_not_follow_validated_gate_path_outside_coordinatio
     assert "OUTSIDE-SECRET-CONTENT" not in bundle.text
     assert "No validated coordination artifacts were referenced" in bundle.text
 
+
 def test_truncated_outgoing_coordination_is_noncritical(tmp_path: Path) -> None:
     repo = tmp_path / "backend"
     base = _git_repo(repo)
@@ -362,9 +410,7 @@ def test_truncated_outgoing_coordination_is_noncritical(tmp_path: Path) -> None:
             "Priority: normal\n"
             "Related: B-LONG-COORD\n"
             "Needs response: no\n\n"
-            "## Message\n"
-            + ("X" * 4000)
-            + "\n",
+            "## Message\n" + ("X" * 4000) + "\n",
             encoding="utf-8",
         )
     state = WorkerState(
@@ -423,7 +469,6 @@ def test_review_evidence_keeps_complete_task_diff_with_bounded_context(tmp_path:
     assert len(bundle.text) <= config.openai_max_input_chars
 
 
-
 def test_review_evidence_includes_current_changed_file_contents_for_small_diff(
     tmp_path: Path,
 ) -> None:
@@ -440,9 +485,7 @@ def test_review_evidence_includes_current_changed_file_contents_for_small_diff(
     )
     subprocess.run(["git", "add", "tests/test_regression.py"], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-qm", "add regression"], cwd=repo, check=True)
-    head = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=repo, text=True
-    ).strip()
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
     config = _config(tmp_path, repo, [sys.executable, "-c", "print('OK')"])
     assert run_iteration_validation(
         config,
@@ -470,6 +513,60 @@ def test_review_evidence_includes_current_changed_file_contents_for_small_diff(
     assert "### tests/test_regression.py" in bundle.text
     assert "FULL-CURRENT-CONTEXT" in bundle.text
     assert bundle.truncated is False
+
+
+def test_large_changed_file_snapshot_is_noncritical_when_task_diff_is_complete(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "backend"
+    _git_repo(repo)
+    large = repo / "large_source.py"
+    large.write_text(
+        "HEADER = 'BASE'\n" + ("X = 'context'\n" * 4000),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "large_source.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "large source"], cwd=repo, check=True)
+    base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+
+    source = large.read_text(encoding="utf-8")
+    large.write_text(
+        source.replace("HEADER = 'BASE'", "HEADER = 'CHANGED'", 1),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "large_source.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "small change"], cwd=repo, check=True)
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+
+    config = _config(tmp_path, repo, [sys.executable, "-c", "print('OK')"])
+    assert run_iteration_validation(
+        config,
+        "backend",
+        "B-LARGE-CURRENT-CONTEXT",
+        base_head=base,
+        head=head,
+    ).passed
+    state = WorkerState(
+        role="backend",
+        task=TaskItem("B-LARGE-CURRENT-CONTEXT", "review"),
+        task_base_head=base,
+    )
+
+    bundle = build_review_evidence(
+        config,
+        "backend",
+        state,
+        state.task,
+        "coordination",
+        "inv-large-current-context",
+    )
+
+    assert "HEADER = 'CHANGED'" in bundle.text
+    assert "[truncated changed_file_contents]" in bundle.text
+    assert "[truncated task_diff]" not in bundle.text
+    assert bundle.truncated is False
+    assert "changed_file_contents" not in bundle.truncation_reasons
+
 
 def test_truncated_diff_stat_is_noncritical_when_task_diff_is_complete(tmp_path: Path) -> None:
     repo = tmp_path / "backend"
@@ -536,22 +633,15 @@ def test_review_evidence_marks_truncated_sections_explicitly(tmp_path: Path) -> 
     assert "[truncated task_diff]" in bundle.text
 
 
-
 def test_verbose_validation_output_does_not_critically_truncate_review_bundle(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "backend"
     base = _git_repo(repo)
     head = _commit(repo, "base\nchanged\n")
-    noisy = (
-        "print('START-VALIDATION'); "
-        "print('X' * 40000); "
-        "print('112 passed');"
-    )
+    noisy = "print('START-VALIDATION'); " "print('X' * 40000); " "print('112 passed');"
     config = _config(tmp_path, repo, [sys.executable, "-c", noisy])
-    assert run_iteration_validation(
-        config, "backend", "B-NOISY", base_head=base, head=head
-    ).passed
+    assert run_iteration_validation(config, "backend", "B-NOISY", base_head=base, head=head).passed
     state = WorkerState(
         role="backend",
         task=TaskItem("B-NOISY", "review"),
@@ -574,6 +664,7 @@ def test_verbose_validation_output_does_not_critically_truncate_review_bundle(
     assert "START-VALIDATION" in bundle.text
     assert "112 passed" in bundle.text
     assert "[truncated gate_stdout]" in bundle.text
+
 
 def test_validation_receipt_rejects_tampered_success_evidence(tmp_path: Path) -> None:
     import json

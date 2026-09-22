@@ -30,6 +30,7 @@ _SECRET_PATTERNS = (
 _DEFAULT_SECTION_LIMITS = {
     "identity": 2_000,
     "task": 8_000,
+    "task_issues": 12_000,
     "coordination": 6_000,
     "outgoing_coordination": 12_000,
     "diff_stat": 4_000,
@@ -42,8 +43,8 @@ _REVIEW_CRITICAL_SECTIONS = frozenset(
     {
         "identity",
         "task",
+        "task_issues",
         "task_diff",
-        "changed_file_contents",
         "validated_artifacts",
         "validation",
     }
@@ -147,6 +148,27 @@ def _outgoing_coordination(config: OrchestratorConfig, role: str, task: TaskItem
         relative = path.relative_to(config.coordination_root).as_posix()
         rendered.append(f"### {relative}\n{text}")
     return "\n\n".join(rendered)
+
+
+def _task_issue_contents(config: OrchestratorConfig, task: TaskItem) -> str:
+    issues_root = config.coordination_root / "issues"
+    if not issues_root.is_dir():
+        return "No task-matching canonical issue files were found."
+
+    anchors = _task_coordination_anchors(task)
+    rendered: list[str] = []
+    try:
+        for path in sorted(issues_root.glob("*.md")):
+            stem = path.stem.casefold()
+            if stem not in anchors:
+                continue
+            body = path.read_text(encoding="utf-8-sig", errors="replace")
+            relative = path.relative_to(config.coordination_root).as_posix()
+            rendered.append(f"### {relative}\n{body}")
+    except OSError as exc:
+        raise EvidenceError("cannot read task-matching canonical issue evidence") from exc
+
+    return "\n\n".join(rendered) or "No task-matching canonical issue files were found."
 
 
 def _changed_file_contents(
@@ -362,6 +384,7 @@ def build_review_evidence(
             ),
         ),
         ("task", f"prompt:\n{task.prompt}\n\nhistorical_feedback_context_only:\n{task.feedback}"),
+        ("task_issues", _task_issue_contents(config, task)),
         ("coordination", coordination_context),
         ("outgoing_coordination", _outgoing_coordination(config, role, task)),
         ("diff_stat", _git(repo, "diff", "--stat", f"{base_head}..{head}", "--")),
