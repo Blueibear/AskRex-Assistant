@@ -73,12 +73,16 @@ def main() -> None:
 
 
 def _read_user_count() -> int:
-    """Read the canonical auth-user count; callers decide how failures are represented."""
+    """Read all canonical desktop-user stores for first-run routing."""
     from rex.auth import _open_db  # noqa: PLC2701
+    from rex.identity import list_known_users
 
     with _open_db() as conn:
         row = conn.execute("SELECT COUNT(*) FROM users").fetchone()
-    return int(row[0]) if row else 0
+    auth_user_count = int(row[0]) if row else 0
+    # Legacy completed installs may have a user profile but predate the auth
+    # database.  They are established households, not first-run installs.
+    return max(auth_user_count, len(list_known_users()))
 
 
 def _handle_status() -> None:

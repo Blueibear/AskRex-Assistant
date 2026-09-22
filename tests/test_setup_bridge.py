@@ -226,6 +226,28 @@ def test_background_voice_defaults_off_in_setup_runtime_contract(
     assert background_voice_schema["default"] is False
 
 
+def test_existing_legacy_profile_is_not_routed_to_first_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(self, _query: str):
+            return self
+
+        def fetchone(self) -> tuple[int]:
+            return (0,)
+
+    monkeypatch.setattr("rex.auth._open_db", lambda: _Connection())
+    monkeypatch.setattr("rex.identity.list_known_users", lambda: [{"id": "james"}])
+
+    assert rex_setup_bridge._read_user_count() == 1
+
+
 def test_audio_devices_returns_sanitized_portaudio_inventory(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
