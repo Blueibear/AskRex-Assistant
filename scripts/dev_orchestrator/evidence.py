@@ -35,6 +35,7 @@ _DEFAULT_SECTION_LIMITS = {
     "diff_stat": 4_000,
     "task_diff": 70_000,
     "changed_file_contents": 35_000,
+    "validated_artifacts": 45_000,
     "validation": 12_000,
 }
 _REVIEW_CRITICAL_SECTIONS = frozenset(
@@ -43,6 +44,7 @@ _REVIEW_CRITICAL_SECTIONS = frozenset(
         "task",
         "task_diff",
         "changed_file_contents",
+        "validated_artifacts",
         "validation",
     }
 )
@@ -101,11 +103,16 @@ def _message_field(text: str, field: str) -> str:
 
 def _task_coordination_anchors(task: TaskItem) -> tuple[str, ...]:
     anchors = {task.task_id.casefold()}
-    for match in re.finditer(r"(?i)\bS\d+\b", task.task_id):
-        anchors.add(match.group(0).casefold())
-    task_text = f"{task.prompt}\n{task.feedback}"
-    for match in re.finditer(r"(?i)\bMSG-[A-Za-z0-9-]+", task_text):
-        anchors.add(match.group(0).casefold())
+    task_text = f"{task.task_id}\n{task.prompt}\n{task.feedback}"
+    for pattern in (
+        r"(?i)\bS\d+\b",
+        r"(?i)\bTEST-\d+\b",
+        r"(?i)\bUS-\d+\b",
+        r"(?i)\bSTORY-S\d+(?:-[A-Za-z0-9-]+)?\b",
+        r"(?i)\bMSG-[A-Za-z0-9-]+",
+    ):
+        for match in re.finditer(pattern, task_text):
+            anchors.add(match.group(0).casefold())
     return tuple(sorted(anchor for anchor in anchors if anchor))
 
 
@@ -195,6 +202,68 @@ def _changed_file_contents(
     return "\n\n".join(rendered) or "No readable changed-file contents were available."
 
 
+def _validated_artifact_contents(
+    config: OrchestratorConfig,
+    receipt: ValidationReceipt,
+) -> str:
+    """Include supervisor-validated coordination artifacts named by successful gates.
+
+    Only existing regular files under the coordination mailbox/evidence roots may be
+    followed. Gate output is evidence, not filesystem authority, so every candidate
+    is canonicalized and confined before reading.
+    """
+
+    root = config.coordination_root.resolve()
+    allowed_roots = tuple(
+        path.resolve() for path in (root / "mailbox", root / "evidence") if path.exists()
+    )
+    if not allowed_roots:
+        return "No validated coordination artifacts were referenced by gate output."
+
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for gate in receipt.gates:
+        for raw_line in f"{gate.stdout}\n{gate.stderr}".splitlines():
+            line = raw_line.strip().strip('"')
+            if not line:
+                continue
+            path: Path | None = None
+            try:
+                raw_path = Path(line)
+                if raw_path.is_absolute():
+                    path = raw_path.resolve()
+                elif line.replace("\\", "/").startswith(("mailbox/", "evidence/")):
+                    path = (root / raw_path).resolve()
+            except (OSError, ValueError):
+                continue
+            if path is None or path in seen:
+                continue
+            if not any(path == allowed or allowed in path.parents for allowed in allowed_roots):
+                continue
+            try:
+                if not path.is_file() or path.stat().st_size > 128_000:
+                    continue
+            except OSError:
+                continue
+            seen.add(path)
+            candidates.append(path)
+
+    if not candidates:
+        return "No validated coordination artifacts were referenced by gate output."
+
+    rendered: list[str] = []
+    for path in candidates[:12]:
+        try:
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError as exc:
+            raise EvidenceError("cannot read validated coordination artifact") from exc
+        relative = path.relative_to(root).as_posix()
+        rendered.append(f"### {relative}\n{text}")
+    if len(candidates) > 12:
+        rendered.append(f"[{len(candidates) - 12} additional validated artifacts omitted]")
+    return "\n\n".join(rendered)
+
+
 def _receipt_text(receipt: ValidationReceipt) -> str:
     lines = [
         f"role: {receipt.role}",
@@ -256,6 +325,8 @@ def build_review_evidence(
         task_diff,
     )
 
+    validated_artifacts = _validated_artifact_contents(config, receipt)
+
     sections = (
         (
             "identity",
@@ -275,6 +346,7 @@ def build_review_evidence(
         ("diff_stat", _git(repo, "diff", "--stat", f"{base_head}..{head}", "--")),
         ("task_diff", task_diff),
         ("changed_file_contents", changed_file_contents),
+        ("validated_artifacts", validated_artifacts),
         ("validation", _receipt_text(receipt)),
     )
     rendered: list[str] = []

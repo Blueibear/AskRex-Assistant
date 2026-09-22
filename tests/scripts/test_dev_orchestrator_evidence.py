@@ -224,6 +224,126 @@ def test_review_evidence_includes_task_relevant_outgoing_coordination(tmp_path: 
     assert bundle.truncated is False
 
 
+
+def test_review_evidence_includes_supervisor_validated_coordination_artifact(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "backend"
+    base = _git_repo(repo)
+    head = _commit(repo, "base\nchanged\n")
+    base_config = _config(tmp_path, repo, [sys.executable, "-c", "print('placeholder')"])
+
+    artifact = (
+        base_config.coordination_root
+        / "mailbox"
+        / "testing"
+        / "MSG-validated-artifact-00-backend.md"
+    )
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text(
+        "# AskRex Coordination Message\n\n"
+        "From: backend\n"
+        "To: testing\n"
+        "Related: TEST-005\n\n"
+        "## Message\n"
+        "VALIDATED-ARTIFACT-CONTENT\n",
+        encoding="utf-8",
+    )
+    config = replace(
+        base_config,
+        metadata={
+            "iteration_validation": {
+                "enabled": True,
+                "backend": {
+                    "gates": [
+                        {
+                            "name": "artifact proof",
+                            "command": [
+                                sys.executable,
+                                "-c",
+                                f"print({str(artifact)!r})",
+                            ],
+                        }
+                    ]
+                },
+            }
+        },
+    )
+    assert run_iteration_validation(
+        config, "backend", "TEST-005-CLOSEOUT", base_head=base, head=head
+    ).passed
+    state = WorkerState(
+        role="backend",
+        task=TaskItem("TEST-005-CLOSEOUT", "coordination closeout"),
+        task_base_head=base,
+    )
+
+    bundle = build_review_evidence(
+        config,
+        "backend",
+        state,
+        state.task,
+        "coordination",
+        "inv-validated-artifact",
+    )
+
+    assert "## validated_artifacts" in bundle.text
+    assert "mailbox/testing/MSG-validated-artifact-00-backend.md" in bundle.text
+    assert "VALIDATED-ARTIFACT-CONTENT" in bundle.text
+    assert bundle.truncated is False
+
+
+def test_review_evidence_does_not_follow_validated_gate_path_outside_coordination_roots(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "backend"
+    base = _git_repo(repo)
+    head = _commit(repo, "base\nchanged\n")
+    base_config = _config(tmp_path, repo, [sys.executable, "-c", "print('placeholder')"])
+
+    outside = tmp_path / "outside-secret.txt"
+    outside.write_text("OUTSIDE-SECRET-CONTENT\n", encoding="utf-8")
+    config = replace(
+        base_config,
+        metadata={
+            "iteration_validation": {
+                "enabled": True,
+                "backend": {
+                    "gates": [
+                        {
+                            "name": "outside path",
+                            "command": [
+                                sys.executable,
+                                "-c",
+                                f"print({str(outside)!r})",
+                            ],
+                        }
+                    ]
+                },
+            }
+        },
+    )
+    assert run_iteration_validation(
+        config, "backend", "B-OUTSIDE", base_head=base, head=head
+    ).passed
+    state = WorkerState(
+        role="backend",
+        task=TaskItem("B-OUTSIDE", "review"),
+        task_base_head=base,
+    )
+
+    bundle = build_review_evidence(
+        config,
+        "backend",
+        state,
+        state.task,
+        "coordination",
+        "inv-outside",
+    )
+
+    assert "OUTSIDE-SECRET-CONTENT" not in bundle.text
+    assert "No validated coordination artifacts were referenced" in bundle.text
+
 def test_truncated_outgoing_coordination_is_noncritical(tmp_path: Path) -> None:
     repo = tmp_path / "backend"
     base = _git_repo(repo)

@@ -10,6 +10,7 @@ from typing import Protocol
 
 from .alerts import AlertSink
 from .completion import evaluate_completion
+from .evidence import EvidenceError, build_review_evidence
 from .coordination import (
     _issue_status,
     active_owned_issues,
@@ -83,6 +84,9 @@ _NO_PRODUCT_MUTATION_MARKERS = (
     "do not change source/tests",
     "no implementation change",
     "no source changes",
+    "without changing implementation",
+    "without modifying implementation",
+    "accepted implementation unchanged",
 )
 
 
@@ -806,13 +810,34 @@ class Supervisor:
 
     def _adjudicate(self, role: str, state: WorkerState, context: str) -> None:
         assert state.task is not None
+        adjudication_context = context
+        if _is_coordination_only_task(state.task) and self._has_current_green_validation(role, state):
+            try:
+                evidence = build_review_evidence(
+                    self.config,
+                    role,
+                    state,
+                    state.task,
+                    context,
+                    "supervisor-adjudication-evidence",
+                )
+            except EvidenceError:
+                evidence = None
+            if evidence is not None and not evidence.truncated:
+                adjudication_context = (
+                    "Authoritative revision-bound supervisor evidence follows. "
+                    "The nested evidence-bundle invocation identifier is not the lead invocation binding.\n\n"
+                    + evidence.text
+                )
         try:
             result = self._invoke_or_recover(
                 role,
                 state,
                 phase="adjudicate",
                 task_id=state.task.task_id,
-                invoke=lambda: self.invoker.lead(role, state, context, task=state.task),
+                invoke=lambda: self.invoker.lead(
+                    role, state, adjudication_context, task=state.task
+                ),
             )
         except AgentInvocationError as exc:
             self._handle_invocation_error(role, state, "adjudicate", exc, context)
