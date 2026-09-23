@@ -156,6 +156,31 @@ def _device_hostapi_name(device: dict, hostapis: list[dict]) -> str:
     return name or "Unknown audio API"
 
 
+def _truncated_mme_name_candidates(
+    normalized_name: str,
+    hostapi_name: str,
+    eligible: list[tuple[int, dict, str, str]],
+) -> set[str]:
+    """Return possible full names for a truncated Windows MME entry.
+
+    Some Windows MME device names are cut off by PortAudio while the same
+    driver exposes a complete name through another host API.  A prefix match
+    is presentation evidence only, not proof of physical identity.  It is
+    safe to expand that presentation hint only when it has exactly one full
+    normalized-name candidate.  All underlying indices remain separate.
+    """
+    if _normalize_device_name(hostapi_name) != "mme" or len(normalized_name) < 12:
+        return set()
+
+    return {
+        str(device.get("name", "")).strip()
+        for _, device, candidate_name, candidate_hostapi in eligible
+        if _normalize_device_name(candidate_hostapi) != "mme"
+        and candidate_name.startswith(normalized_name)
+        and candidate_name != normalized_name
+    }
+
+
 def _build_device_picker_choices(
     resolved_devices: list[dict],
     resolved_hostapis: list[dict],
@@ -194,11 +219,27 @@ def _build_device_picker_choices(
         eligible.append((index, device, normalized_name, hostapi_name))
         name_counts[normalized_name] = name_counts.get(normalized_name, 0) + 1
 
+    # The key includes the matched full name so multiple truncated MME
+    # occurrences receive deterministic labels while still keeping their
+    # canonical PortAudio indices independently selectable.
     choices: list[dict[str, object]] = []
     position_counts: dict[tuple[str, str], int] = {}
     for index, device, normalized_name, hostapi_name in eligible:
         name = str(device.get("name", "")).strip()
-        if name_counts[normalized_name] > 1:
+        matched_names = _truncated_mme_name_candidates(
+            normalized_name, hostapi_name, eligible
+        )
+        if len(matched_names) == 1:
+            matched_full_name = next(iter(matched_names))
+            position_key = (normalized_name, matched_full_name.casefold())
+            position_counts[position_key] = position_counts.get(position_key, 0) + 1
+            label = (
+                f"{matched_full_name} (MME truncated-name match "
+                f"{position_counts[position_key]})"
+            )
+        elif matched_names:
+            label = f"{name} (MME truncated-name match ambiguous)"
+        elif name_counts[normalized_name] > 1:
             position_key = (normalized_name, hostapi_name.casefold())
             position_counts[position_key] = position_counts.get(position_key, 0) + 1
             label = f"{name} ({hostapi_name} {position_counts[position_key]})"

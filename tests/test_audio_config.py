@@ -382,6 +382,73 @@ def test_microphone_picker_choice_persists_its_canonical_portaudio_index():
     assert config == {"audio": {"input_device_index": 1}}
 
 
+def test_microphone_picker_expands_only_unambiguous_truncated_mme_name_matches():
+    """A physical Windows MME truncation is explained but never merged."""
+    choices = audio_config.build_microphone_picker_devices(
+        devices=[
+            {
+                "name": "Microphone (C922 Pro Stream Web",
+                "max_input_channels": 1,
+                "hostapi": 0,
+            },
+            {
+                "name": "Microphone (C922 Pro Stream Webcam)",
+                "max_input_channels": 1,
+                "hostapi": 1,
+            },
+            {
+                "name": "Microphone (C922 Pro Stream Webcam)",
+                "max_input_channels": 1,
+                "hostapi": 2,
+            },
+            {
+                "name": "Microphone (C922 Pro Stream Webcam)",
+                "max_input_channels": 1,
+                "hostapi": 3,
+            },
+        ],
+        hostapis=[
+            {"name": "MME"},
+            {"name": "Windows DirectSound"},
+            {"name": "Windows WASAPI"},
+            {"name": "Windows WDM-KS"},
+        ],
+    )
+
+    assert {choice["index"] for choice in choices} == {0, 1, 2, 3}
+    assert (
+        choices[0]["name"]
+        == "Microphone (C922 Pro Stream Webcam) (MME truncated-name match 1)"
+    )
+    assert [choice["name"] for choice in choices[1:]] == [
+        "Microphone (C922 Pro Stream Webcam) (Windows DirectSound 1)",
+        "Microphone (C922 Pro Stream Webcam) (Windows WASAPI 1)",
+        "Microphone (C922 Pro Stream Webcam) (Windows WDM-KS 1)",
+    ]
+
+
+def test_microphone_picker_does_not_expand_ambiguous_truncated_mme_name_match():
+    """A prefix shared by distinct devices cannot safely identify either one."""
+    choices = audio_config.build_microphone_picker_devices(
+        devices=[
+            {"name": "Microphone (Studio", "max_input_channels": 1, "hostapi": 0},
+            {"name": "Microphone (Studio A)", "max_input_channels": 1, "hostapi": 1},
+            {"name": "Microphone (Studio B)", "max_input_channels": 1, "hostapi": 2},
+        ],
+        hostapis=[
+            {"name": "MME"},
+            {"name": "Windows DirectSound"},
+            {"name": "Windows WASAPI"},
+        ],
+    )
+
+    assert {choice["index"] for choice in choices} == {0, 1, 2}
+    assert (
+        choices[0]["name"]
+        == "Microphone (Studio (MME truncated-name match ambiguous)"
+    )
+
+
 def test_main_updates_json_config(monkeypatch, tmp_path):
     """Test that audio_config.main updates rex_config.json instead of .env."""
     # Create a temporary config file

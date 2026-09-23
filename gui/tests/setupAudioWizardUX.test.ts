@@ -28,13 +28,12 @@ describe('US-125 setup audio wizard UX', () => {
     expect(pageSource).toMatch(/setSpeakerDevices\(\s*result\.speakers/)
   })
 
-  it('explains that Windows host-API duplicates are labeled without changing the runtime choice', () => {
+  it('explains that MME truncated-name matches remain distinct runtime choices', () => {
     const duplicateLabelOccurrences = pageSource.match(
-      /Entries sharing a name are labeled with their Windows audio API so each stays a distinct/g
+      /Windows MME names that are safely recognized as truncated show their full-name match/g
     )
-    expect(duplicateLabelOccurrences).toHaveLength(2)
+    expect(duplicateLabelOccurrences).toHaveLength(1)
     expect(pageSource).toContain('individually selectable microphone')
-    expect(pageSource).toContain('individually selectable speaker')
     expect(pageSource).toContain('keeps the tested voice-runtime device.')
   })
 

@@ -393,7 +393,7 @@ def test_audio_devices_returns_sanitized_portaudio_inventory(
         lambda *, devices: [
             {
                 "index": 0,
-                "name": "USB Microphone",
+                "name": "USB Microphone Full Name (MME truncated-name match 1)",
                 "max_input_channels": 1,
                 "max_output_channels": 0,
                 "host_api": "Windows WASAPI",
@@ -422,7 +422,7 @@ def test_audio_devices_returns_sanitized_portaudio_inventory(
         "devices": [
             {
                 "index": 0,
-                "name": "USB Microphone",
+                "name": "USB Microphone Full Name (MME truncated-name match 1)",
                 "max_input_channels": 1,
                 "max_output_channels": 0,
             },
