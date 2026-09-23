@@ -23,6 +23,7 @@ const BRIDGE_REGISTRY: Record<string, string> = {
   rex_speaker_bridge: 'rex_speaker_bridge.py',
   rex_chat_bridge: 'rex_chat_bridge.py',
   rex_chat_stream_bridge: 'rex_chat_stream_bridge.py',
+  rex_conversation_bridge: 'rex_conversation_bridge.py',
   rex_voices_bridge: 'rex_voices_bridge.py',
   rex_voice_enrollment_bridge: 'rex_voice_enrollment_bridge.py',
   rex_voice_sample_bridge: 'rex_voice_sample_bridge.py',
