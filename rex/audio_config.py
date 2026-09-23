@@ -211,7 +211,12 @@ def build_microphone_picker_devices(
         alias_count = len(candidates)
         normalized_name = _normalize_device_name(name)
         conflict_count = name_group_counts[normalized_name]
-        if conflict_count > 1:
+        if alias_count > 1:
+            label = (
+                f"{name} (preferred via {hostapi_name}; "
+                f"{alias_count} Windows audio entries)"
+            )
+        elif conflict_count > 1:
             conflict_positions[normalized_name] = conflict_positions.get(normalized_name, 0) + 1
             label = f"{name} ({hostapi_name} {conflict_positions[normalized_name]})"
         else:

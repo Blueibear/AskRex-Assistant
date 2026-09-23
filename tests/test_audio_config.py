@@ -117,7 +117,7 @@ def test_microphone_picker_groups_host_aliases_and_keeps_preferred_canonical_ind
         },
         {
             "index": 1,
-            "name": "USB Mic",
+            "name": "USB Mic (preferred via Windows DirectSound; 3 Windows audio entries)",
             "max_input_channels": 1,
             "max_output_channels": 0,
             "host_api": "Windows DirectSound",
@@ -140,6 +140,22 @@ def test_microphone_picker_labels_same_host_name_conflicts_without_deduplicating
         "USB Mic (Windows WASAPI 1)",
         "USB Mic (Windows WASAPI 2)",
     ]
+
+
+def test_microphone_picker_choice_persists_its_canonical_portaudio_index():
+    choice = audio_config.build_microphone_picker_devices(
+        devices=[
+            {"name": "USB Mic", "max_input_channels": 1, "hostapi": 0},
+            {"name": "USB Mic", "max_input_channels": 1, "hostapi": 1},
+        ],
+        hostapis=[{"name": "Windows WASAPI"}, {"name": "Windows DirectSound"}],
+    )[0]
+
+    config: dict[str, object] = {}
+    audio_config.set_selected_input_device_index(config, choice["index"])
+
+    assert choice["index"] == 1
+    assert config == {"audio": {"input_device_index": 1}}
 
 
 def test_main_updates_json_config(monkeypatch, tmp_path):

@@ -330,6 +330,10 @@ function StepMicrophone({
           ))}
         </select>
       </div>
+      <p className="text-text-muted text-xs">
+        Similar Windows audio entries are grouped into one microphone choice. The selected choice
+        keeps the tested voice-runtime device.
+      </p>
       {inventoryError && <p className="text-red-400 text-sm">{inventoryError}</p>}
       <button
         type="button"

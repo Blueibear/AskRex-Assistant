@@ -27,6 +27,11 @@ describe('US-125 setup audio wizard UX', () => {
     expect(pageSource).toContain('setMicrophoneDevices(result.microphones')
   })
 
+  it('explains that Windows host-API aliases are grouped without changing the runtime choice', () => {
+    expect(pageSource).toContain('Similar Windows audio entries are grouped into one microphone choice.')
+    expect(pageSource).toContain('keeps the tested voice-runtime device.')
+  })
+
   it('starts first-run verification from the persisted canonical microphone index, not a display-name remap', () => {
     expect(pageSource).not.toContain('microphoneLabel ? { microphoneLabel } : undefined')
   })
