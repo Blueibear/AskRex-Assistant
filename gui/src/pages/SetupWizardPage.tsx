@@ -332,8 +332,7 @@ function StepMicrophone({
       </div>
       <p className="text-text-muted text-xs">
         Entries sharing a name are labeled with their Windows audio API so each stays a distinct,
-        individually selectable microphone. The selected choice keeps the tested voice-runtime
-        device.
+        individually selectable microphone. The selected choice keeps the tested voice-runtime device.
       </p>
       {inventoryError && <p className="text-red-400 text-sm">{inventoryError}</p>}
       <button
