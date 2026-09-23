@@ -163,21 +163,27 @@ def build_microphone_picker_devices(
 ) -> list[dict[str, object]]:
     """Build physical-microphone choices without changing PortAudio IDs.
 
-    Windows exposes one endpoint through several PortAudio host APIs. A
-    normalized name is only merged into one alias group across host APIs
-    when it appears at most once per host API, since that is the only case
-    where PortAudio's name/host-API pair unambiguously identifies a single
-    alias to preferred-canonical mapping. A normalized name that repeats
-    within any single host API is ambiguous: there is no reliable way to
-    pair those duplicates with a same-named entry on another host API, so
-    every instance of that name stays its own canonical choice rather than
-    risking a merge that silently drops a distinct physical device.
-    Explicit system-audio loopbacks are not microphone choices.
+    Windows commonly exposes one physical microphone through several
+    PortAudio host APIs (MME, DirectSound, WASAPI, WDM-KS) using the same
+    or a near-identical name. PortAudio does not expose a stable physical
+    device identifier, so a shared name string is never sufficient proof
+    that two entries are the same hardware: distinct devices can coincide
+    on a name, including one occurrence apiece on different host APIs.
+    Collapsing entries on that unproven assumption would silently remove a
+    distinct canonical PortAudio index from the picker.
+
+    Every eligible device therefore keeps its own choice and its own exact
+    canonical index; no entries are ever merged. When a normalized name
+    repeats (whether on the same host API or across different host APIs),
+    each occurrence is instead labeled with its host API and a stable
+    per-host position so the entries stay distinguishable without hiding
+    any canonical index. Explicit system-audio loopbacks are not
+    microphone choices.
     """
     resolved_devices, resolved_hostapis = _load_audio_inventory(devices, hostapis)
 
     eligible: list[tuple[int, dict, str, str]] = []
-    per_host_name_counts: dict[tuple[str, str], int] = {}
+    name_counts: dict[str, int] = {}
     for index, device in enumerate(resolved_devices):
         if int(device.get("max_input_channels", 0) or 0) < 1:
             continue
@@ -187,57 +193,16 @@ def build_microphone_picker_devices(
             continue
         hostapi_name = _device_hostapi_name(device, resolved_hostapis)
         eligible.append((index, device, normalized_name, hostapi_name))
-        host_key = (normalized_name, hostapi_name.casefold())
-        per_host_name_counts[host_key] = per_host_name_counts.get(host_key, 0) + 1
-
-    # Cross-host alias merging requires an unambiguous 1:1 pairing between
-    # host APIs. A name that repeats within one host API breaks that
-    # pairing for every host API carrying the name, so none of its
-    # instances are merged.
-    ambiguous_names = {
-        normalized_name
-        for (normalized_name, _hostapi_key), count in per_host_name_counts.items()
-        if count > 1
-    }
-
-    grouped: dict[tuple[str, object], list[tuple[int, dict, str]]] = {}
-    for index, device, normalized_name, hostapi_name in eligible:
-        group_key: tuple[str, object]
-        if normalized_name in ambiguous_names:
-            group_key = ("device", index)
-        else:
-            group_key = ("alias", normalized_name)
-        grouped.setdefault(group_key, []).append((index, device, hostapi_name))
-
-    groups = list(grouped.values())
-    name_group_counts: dict[str, int] = {}
-    for candidates in groups:
-        normalized_name = _normalize_device_name(str(candidates[0][1].get("name", "")))
-        name_group_counts[normalized_name] = name_group_counts.get(normalized_name, 0) + 1
+        name_counts[normalized_name] = name_counts.get(normalized_name, 0) + 1
 
     choices: list[dict[str, object]] = []
-    conflict_positions: dict[tuple[str, str], int] = {}
-    for candidates in groups:
-        index, device, hostapi_name = max(
-            candidates,
-            key=lambda candidate: (
-                _device_hostapi_priority(candidate[1], resolved_hostapis),
-                -candidate[0],
-            ),
-        )
+    position_counts: dict[tuple[str, str], int] = {}
+    for index, device, normalized_name, hostapi_name in eligible:
         name = str(device.get("name", "")).strip()
-        alias_count = len(candidates)
-        normalized_name = _normalize_device_name(name)
-        conflict_count = name_group_counts[normalized_name]
-        if alias_count > 1:
-            label = (
-                f"{name} (preferred via {hostapi_name}; "
-                f"{alias_count} Windows audio entries)"
-            )
-        elif conflict_count > 1:
+        if name_counts[normalized_name] > 1:
             position_key = (normalized_name, hostapi_name.casefold())
-            conflict_positions[position_key] = conflict_positions.get(position_key, 0) + 1
-            label = f"{name} ({hostapi_name} {conflict_positions[position_key]})"
+            position_counts[position_key] = position_counts.get(position_key, 0) + 1
+            label = f"{name} ({hostapi_name} {position_counts[position_key]})"
         else:
             label = name
         choices.append(
@@ -247,7 +212,7 @@ def build_microphone_picker_devices(
                 "max_input_channels": int(device.get("max_input_channels", 0) or 0),
                 "max_output_channels": int(device.get("max_output_channels", 0) or 0),
                 "host_api": hostapi_name,
-                "alias_count": alias_count,
+                "alias_count": 1,
             }
         )
 

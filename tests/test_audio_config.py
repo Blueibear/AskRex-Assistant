@@ -90,7 +90,11 @@ def test_resolve_input_device_index_fails_closed_for_unknown_device():
         )
 
 
-def test_microphone_picker_groups_host_aliases_and_keeps_preferred_canonical_index():
+def test_microphone_picker_labels_host_api_duplicates_without_merging_canonical_indices():
+    """Distinct PortAudio entries that share a name must stay separately
+    selectable: a shared name is not proof of shared physical identity, so
+    the picker must never collapse them into one preferred alias that hides
+    the other canonical indices (see TEST-002 review)."""
     choices = audio_config.build_microphone_picker_devices(
         devices=[
             {"name": "USB Mic", "max_input_channels": 1, "hostapi": 0},
@@ -116,14 +120,57 @@ def test_microphone_picker_groups_host_aliases_and_keeps_preferred_canonical_ind
             "alias_count": 1,
         },
         {
+            "index": 0,
+            "name": "USB Mic (MME 1)",
+            "max_input_channels": 1,
+            "max_output_channels": 0,
+            "host_api": "MME",
+            "alias_count": 1,
+        },
+        {
             "index": 1,
-            "name": "USB Mic (preferred via Windows DirectSound; 3 Windows audio entries)",
+            "name": "USB Mic (Windows DirectSound 1)",
             "max_input_channels": 1,
             "max_output_channels": 0,
             "host_api": "Windows DirectSound",
-            "alias_count": 3,
+            "alias_count": 1,
+        },
+        {
+            "index": 2,
+            "name": "USB Mic (Windows WASAPI 1)",
+            "max_input_channels": 1,
+            "max_output_channels": 0,
+            "host_api": "Windows WASAPI",
+            "alias_count": 1,
         },
     ]
+    # All three canonical PortAudio indices remain independently selectable
+    # rather than being collapsed into one preferred alias.
+    assert {choice["index"] for choice in choices} == {0, 1, 2, 3}
+
+
+def test_microphone_picker_preserves_both_indices_for_identical_names_on_different_host_apis():
+    """Two physically distinct microphones can coincidentally report an
+    identical driver name while each appearing exactly once on a different
+    host API. PortAudio exposes no physical-identity signal beyond
+    name/host-API, so this exact shape must never be treated as one device
+    redundantly exposed twice: each canonical index must remain its own
+    choice (see TEST-002 review)."""
+    choices = audio_config.build_microphone_picker_devices(
+        devices=[
+            {"name": "USB Mic", "max_input_channels": 1, "hostapi": 0},
+            {"name": "USB Mic", "max_input_channels": 1, "hostapi": 1},
+        ],
+        hostapis=[{"name": "MME"}, {"name": "Windows WASAPI"}],
+    )
+
+    assert [choice["index"] for choice in choices] == [0, 1]
+    assert [choice["name"] for choice in choices] == [
+        "USB Mic (MME 1)",
+        "USB Mic (Windows WASAPI 1)",
+    ]
+    assert [choice["alias_count"] for choice in choices] == [1, 1]
+    assert {choice["index"] for choice in choices} == {0, 1}
 
 
 def test_microphone_picker_labels_same_host_name_conflicts_without_deduplicating():
