@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sqlite3
-import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -215,11 +214,10 @@ def test_legacy_turns_are_migrated_to_a_reopenable_canonical_conversation(tmp_pa
     assert store.list_conversations("alice") == conversations
 
 
-def test_conversation_store_closes_sqlite_handles_before_temp_cleanup() -> None:
-    """Temporary conversation databases must not leak into the worktree on Windows."""
-    with tempfile.TemporaryDirectory() as directory:
-        store = HistoryStore(Path(directory) / "history.db")
-        conversation = store.create_conversation("alice")
-        store.save_turn("alice", "user", "persisted", _ts(), conversation_id=conversation["id"])
-        history = store.load_history("alice", conversation_id=conversation["id"])
-        assert history[0]["content"] == "persisted"
+def test_conversation_store_closes_sqlite_handles_before_temp_cleanup(tmp_path: Path) -> None:
+    """Use pytest's managed temp directory so Windows cleanup cannot leave repo artifacts."""
+    store = HistoryStore(tmp_path / "history.db")
+    conversation = store.create_conversation("alice")
+    store.save_turn("alice", "user", "persisted", _ts(), conversation_id=conversation["id"])
+    history = store.load_history("alice", conversation_id=conversation["id"])
+    assert history[0]["content"] == "persisted"
