@@ -729,6 +729,44 @@ def test_runner_pipe_block_retries_with_recovery_then_exhausts(
     assert resets == [True, True, True, True]
 
 
+def test_runner_pipe_invocation_error_recovers_before_retry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from scripts.dev_orchestrator.runner import AgentInvocationError
+
+    reason = (
+        'CreateProcess: Failed to create unified exec process: '
+        'timed out after 15000ms connecting runner pipe-in'
+    )
+    resets: list[bool] = []
+    monkeypatch.setattr(
+        'scripts.dev_orchestrator.supervisor.recover_codex_windows_terminal_runner',
+        lambda: resets.append(True) or True,
+    )
+    supervisor = Supervisor(make_config(tmp_path, observe_only=False), FakeInvoker())
+    state = WorkerState(
+        role='backend',
+        status=WorkerStatus.IMPLEMENTING,
+        task=TaskItem('B-PIPE-EXC', 'Exercise invocation-error runner recovery'),
+    )
+
+    supervisor._handle_invocation_error(
+        'backend',
+        state,
+        'implement',
+        AgentInvocationError('codex', 'transient', reason),
+        'ctx',
+    )
+
+    saved = supervisor.load_state('backend')
+    assert resets == [True]
+    assert saved.status is WorkerStatus.BLOCKED_SYSTEM
+    assert saved.blocker_kind == 'system'
+    assert saved.resume_status is WorkerStatus.IMPLEMENTING
+    assert saved.implementation_failures == 1
+    assert 'automatic retry 1/4' in saved.blocked_reason
+
+
 def test_codex_implemented_checkpoint_forces_sol_review(tmp_path: Path) -> None:
     from scripts.dev_orchestrator.routing import SOL_MODEL
     from scripts.dev_orchestrator.storage import AtomicJsonStore

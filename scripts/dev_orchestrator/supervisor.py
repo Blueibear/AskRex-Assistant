@@ -9,9 +9,8 @@ from pathlib import Path
 from typing import Protocol
 
 from .alerts import AlertSink
-from .completion import evaluate_completion
 from .completed_tasks import CompletedTaskLedger
-from .evidence import EvidenceError, build_review_evidence
+from .completion import evaluate_completion
 from .coordination import (
     _issue_status,
     active_owned_issues,
@@ -19,6 +18,7 @@ from .coordination import (
     build_coordination_context,
     recover_coordination_transactions,
 )
+from .evidence import EvidenceError, build_review_evidence
 from .handoff import (
     clear_pending_result,
     read_pending_result,
@@ -1052,6 +1052,7 @@ class Supervisor:
     ) -> None:
         resume_status = self._resume_status_for_phase(state, phase)
         if is_transient_runner_failure(exc.detail):
+            recover_codex_windows_terminal_runner()
             self._save_transient_runner_failure(state, exc.detail)
             return
         if exc.provider == "openai":
