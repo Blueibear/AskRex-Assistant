@@ -112,6 +112,7 @@ class Assistant:
         settings_obj: Settings | None = None,
         transcripts_dir: str | Path | None = None,
         user_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> None:
         self._settings = settings_obj or settings
         self._llm = LanguageModel(config=self._settings)
@@ -123,6 +124,7 @@ class Assistant:
         # Explicit user_id="default" remains a valid, deliberate selection
         # of the profile named "default".
         self._user_id: str | None = validate_user_id(user_id) if user_id is not None else None
+        self._conversation_id = conversation_id
 
         # Per-user in-memory history windows keyed by user id (issue #303).
         # ``self._history`` is a property that resolves to the current
@@ -146,7 +148,7 @@ class Assistant:
                 self._history_store = HistoryStore(db_path=db_path)
                 if self._user_id is not None:
                     # Preload the last 50 turns into in-memory history
-                    stored = self._history_store.load_history(self._user_id, limit=50)
+                    stored = self._history_store.load_history(self._user_id, limit=50, conversation_id=self._conversation_id)
                     self._history = [
                         ConversationTurn(speaker=row["role"], text=row["content"]) for row in stored
                     ]
@@ -566,13 +568,16 @@ class Assistant:
     # Per-user in-memory history (issue #303)
     # ------------------------------------------------------------------
 
+    def _history_key(self, user_id: str) -> str:
+        return user_id if self._conversation_id is None else f"{user_id}\0{self._conversation_id}"
+
     def _load_persisted_history(self, user_id: str) -> list[ConversationTurn]:
         """Load the most recent persisted turns for *user_id* (empty when no store)."""
         store = getattr(self, "_history_store", None)
         if store is None:
             return []
         try:
-            stored = store.load_history(user_id, limit=50)
+            stored = store.load_history(user_id, limit=50, conversation_id=self._conversation_id)
             return [ConversationTurn(speaker=row["role"], text=row["content"]) for row in stored]
         except Exception as exc:
             logger.warning("Failed to load history for user %s: %s", user_id, exc)
@@ -581,10 +586,11 @@ class Assistant:
     def _history_for(self, user_id: str) -> list[ConversationTurn]:
         """Return the in-memory history window for *user_id*, loading it lazily."""
         histories: dict[str, list[ConversationTurn]] = self.__dict__.setdefault("_histories", {})
-        hist = histories.get(user_id)
+        key = self._history_key(user_id)
+        hist = histories.get(key)
         if hist is None:
             hist = self._load_persisted_history(user_id)
-            histories[user_id] = hist
+            histories[key] = hist
         return hist
 
     @property
@@ -594,7 +600,8 @@ class Assistant:
 
     @_history.setter
     def _history(self, value: list[ConversationTurn]) -> None:
-        self.__dict__.setdefault("_histories", {})[self._require_user_id()] = list(value)
+        user_id = self._require_user_id()
+        self.__dict__.setdefault("_histories", {})[self._history_key(user_id)] = list(value)
 
     # ------------------------------------------------------------------
     # Per-user pending follow-ups (issue #303)
@@ -841,15 +848,15 @@ class Assistant:
         history_store = getattr(self, "_history_store", None)
         if history_store is not None:
             try:
-                history_store.save_turn(uid, "user", transcript, now)
-                history_store.save_turn(uid, "assistant", completion, now)
+                history_store.save_turn(uid, "user", transcript, now, conversation_id=self._conversation_id)
+                history_store.save_turn(uid, "assistant", completion, now, conversation_id=self._conversation_id)
             except Exception as exc:
                 logger.warning("Failed to persist conversation turn: %s", exc)
 
         hist = self._history_for(uid)
         hist.append(ConversationTurn("user", transcript))
         hist.append(ConversationTurn("assistant", completion))
-        self._histories[uid] = [
+        self._histories[self._history_key(uid)] = [
             ConversationTurn(**item) if isinstance(item, dict) else item
             for item in trim_history(hist, limit=self._history_limit)  # type: ignore[arg-type]
         ]

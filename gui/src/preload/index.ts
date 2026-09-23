@@ -66,7 +66,8 @@ function makeSendChatStream(
   onToken: (token: string) => void,
   cancel?: ChatStreamCancelHandle,
   onStatus?: (status: ChatStreamStatus) => void,
-  onRecovery?: (recovery: ChatRecoveryPlan) => void
+  onRecovery?: (recovery: ChatRecoveryPlan) => void,
+  conversationId?: string
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const streamId = `${Date.now()}-${Math.random()}`
@@ -128,7 +129,7 @@ function makeSendChatStream(
     }
     if (typeof cancel?.onAbort === 'function') cancel.onAbort(abortHandler)
 
-    ipcRenderer.invoke('rex:startChatStream', { message, streamId }).catch((err: unknown) => {
+    ipcRenderer.invoke('rex:startChatStream', { message, streamId, conversationId }).catch((err: unknown) => {
       cleanup()
       reject(err)
     })
@@ -222,6 +223,7 @@ function stopVoice(): Promise<void> {
 
 const rexAPI = {
   sendChat: (message: string) => ipcRenderer.invoke('rex:sendChat', message),
+  conversation: (action: string, payload?: Record<string, unknown>) => ipcRenderer.invoke('rex:conversation', action, payload),
   sendChatStream: makeSendChatStream,
   getStatus: () => ipcRenderer.invoke('rex:getStatus'),
   onStatusChange: (cb: (status: string) => void): (() => void) => {

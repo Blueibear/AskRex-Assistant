@@ -846,14 +846,31 @@ export interface ChatRecoveryPlan {
   blocked: boolean
 }
 
+export interface ConversationSummary {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+  archived_at: string | null
+}
+
+export interface ConversationMessage {
+  id: number
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: string
+}
+
 export interface RexAPI {
   sendChat: (message: string) => Promise<string>
+  conversation: (action: 'create' | 'list' | 'open' | 'rename' | 'archive', payload?: Record<string, unknown>) => Promise<unknown>
   sendChatStream: (
     message: string,
     onToken: (token: string) => void,
     cancel?: ChatStreamCancelHandle,
     onStatus?: (status: ChatStreamStatus) => void,
-    onRecovery?: (recovery: ChatRecoveryPlan) => void
+    onRecovery?: (recovery: ChatRecoveryPlan) => void,
+    conversationId?: string
   ) => Promise<void>
   getStatus: () => Promise<StatusResponse>
   onStatusChange: (cb: (status: string) => void) => (() => void)

@@ -3,6 +3,7 @@ import { MessageList } from '../components/chat/MessageList'
 import { ChatInput } from '../components/chat/ChatInput'
 import type { Message, MessageAttachment } from '../components/chat/MessageList'
 import type { PendingAttachment } from '../components/chat/ChatInput'
+import type { ConversationMessage, ConversationSummary } from '../types/ipc'
 
 let nextId = 1
 function genId(): string {
@@ -30,6 +31,39 @@ function sanitizeAssistantText(text: string): string {
 export function ChatPage(): React.ReactElement {
   const [messages, setMessages] = useState<Message[]>([])
   const [sending, setSending] = useState(false)
+  const [conversations, setConversations] = useState<ConversationSummary[]>([])
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
+
+  const toMessages = (rows: ConversationMessage[]): Message[] => rows.map((row) => ({
+    id: `stored-${row.id}`, role: row.role === 'assistant' ? 'rex' : 'user', content: row.content,
+    timestamp: new Date(row.timestamp)
+  }))
+
+  const refreshConversations = useCallback(async (): Promise<ConversationSummary[]> => {
+    const rows = await window.rex.conversation('list') as ConversationSummary[]
+    setConversations(rows)
+    return rows
+  }, [])
+
+  const openConversation = useCallback(async (id: string): Promise<void> => {
+    const result = await window.rex.conversation('open', { conversation_id: id }) as { messages: ConversationMessage[] }
+    setActiveConversationId(id)
+    setMessages(toMessages(result.messages))
+  }, [])
+
+  const createConversation = useCallback(async (): Promise<void> => {
+    const created = await window.rex.conversation('create') as ConversationSummary
+    await refreshConversations()
+    setActiveConversationId(created.id)
+    setMessages([])
+  }, [refreshConversations])
+
+  useEffect(() => {
+    void refreshConversations().then(async (rows) => {
+      if (rows[0]) await openConversation(rows[0].id)
+      else await createConversation()
+    }).catch(() => undefined)
+  }, [createConversation, openConversation, refreshConversations])
 
   useEffect(() => {
     const focusInput = (): void => {
@@ -129,7 +163,8 @@ export function ChatPage(): React.ReactElement {
                 m.id === rexMsgId ? { ...m, recoveryActions: recovery.actions } : m
               )
             )
-          }
+          },
+          activeConversationId ?? undefined
         )
         // Finalize: remove streaming cursor
         setMessages((prev) =>
@@ -157,15 +192,46 @@ export function ChatPage(): React.ReactElement {
         )
       } finally {
         setSending(false)
+        void refreshConversations()
       }
     },
-    []
+    [activeConversationId, refreshConversations]
   )
 
+  const renameActive = async (): Promise<void> => {
+    if (!activeConversationId) return
+    const current = conversations.find((item) => item.id === activeConversationId)
+    const title = window.prompt('Conversation name', current?.title ?? '')
+    if (title?.trim()) {
+      await window.rex.conversation('rename', { conversation_id: activeConversationId, title })
+      await refreshConversations()
+    }
+  }
+
+  const archiveActive = async (): Promise<void> => {
+    if (!activeConversationId || !window.confirm('Archive this conversation?')) return
+    await window.rex.conversation('archive', { conversation_id: activeConversationId })
+    const rows = await refreshConversations()
+    if (rows[0]) await openConversation(rows[0].id)
+    else await createConversation()
+  }
+
   return (
-    <div className="flex flex-col h-full">
-      <MessageList messages={messages} />
-      <ChatInput onSend={handleSend} sending={sending} />
+    <div className="flex h-full">
+      <aside className="w-56 shrink-0 border-r border-border p-3 overflow-y-auto" aria-label="Conversations">
+        <button className="w-full rounded bg-accent px-3 py-2 text-left" onClick={() => void createConversation()}>New conversation</button>
+        <div className="mt-3 space-y-1">
+          {conversations.map((conversation) => <button key={conversation.id} className="w-full rounded px-2 py-2 text-left text-sm hover:bg-surface" aria-current={conversation.id === activeConversationId ? 'page' : undefined} onClick={() => void openConversation(conversation.id)}>{conversation.title}</button>)}
+        </div>
+      </aside>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex justify-end gap-2 border-b border-border p-2">
+          <button onClick={() => void renameActive()} disabled={!activeConversationId}>Rename</button>
+          <button onClick={() => void archiveActive()} disabled={!activeConversationId}>Archive</button>
+        </div>
+        <MessageList messages={messages} />
+        <ChatInput onSend={handleSend} sending={sending || !activeConversationId} />
+      </div>
     </div>
   )
 }

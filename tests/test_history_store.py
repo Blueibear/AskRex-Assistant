@@ -139,3 +139,27 @@ def test_prune_only_affects_specified_user(store: HistoryStore) -> None:
 
 def test_prune_empty_user_returns_zero(store: HistoryStore) -> None:
     assert store.prune("nobody", keep_days=30) == 0
+
+
+def test_canonical_conversations_are_persisted_and_isolated(store: HistoryStore) -> None:
+    first = store.create_conversation("alice", "First")
+    second = store.create_conversation("alice", "Second")
+    store.save_turn("alice", "user", "first message", _ts(), conversation_id=first["id"])
+    store.save_turn("alice", "user", "second message", _ts(), conversation_id=second["id"])
+
+    assert {row["title"] for row in store.list_conversations("alice")} == {"First", "Second"}
+    assert [row["content"] for row in store.load_history("alice", conversation_id=first["id"])] == ["first message"]
+    assert [row["content"] for row in store.load_history("alice", conversation_id=second["id"])] == ["second message"]
+    assert store.list_conversations("bob") == []
+
+
+def test_conversation_rename_and_archive_hide_only_that_conversation(store: HistoryStore) -> None:
+    first = store.create_conversation("alice", "First")
+    second = store.create_conversation("alice", "Second")
+
+    renamed = store.rename_conversation("alice", first["id"], "Renamed")
+    store.archive_conversation("alice", second["id"])
+
+    assert renamed["title"] == "Renamed"
+    assert [row["id"] for row in store.list_conversations("alice")] == [first["id"]]
+    assert {row["id"] for row in store.list_conversations("alice", include_archived=True)} == {first["id"], second["id"]}

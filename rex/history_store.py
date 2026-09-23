@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -34,6 +35,22 @@ _CREATE_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_turns_user_ts ON turns (user_id, timestamp);
 """
 
+_CREATE_CONVERSATIONS_SQL = """
+CREATE TABLE IF NOT EXISTS conversations (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    archived_at TEXT
+);
+"""
+
+
+def _conversation_id(value: str) -> str:
+    """Validate the opaque, canonical UUID used to address a conversation."""
+    return str(uuid.UUID(value))
+
 
 class HistoryStore:
     """Thread-safe SQLite-backed store for conversation turns.
@@ -51,6 +68,15 @@ class HistoryStore:
         with self._connect() as conn:
             conn.execute(_CREATE_TABLE_SQL)
             conn.execute(_CREATE_INDEX_SQL)
+            conn.execute(_CREATE_CONVERSATIONS_SQL)
+            # This is safe for existing installations: SQLite adds the nullable
+            # column once, and legacy rows remain available through the old API.
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(turns)")}
+            if "conversation_id" not in columns:
+                conn.execute("ALTER TABLE turns ADD COLUMN conversation_id TEXT")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_turns_conversation_ts ON turns (user_id, conversation_id, id)"
+            )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -71,6 +97,7 @@ class HistoryStore:
         role: str,
         content: str,
         timestamp: datetime,
+        conversation_id: str | None = None,
     ) -> None:
         """Persist a single conversation turn.
 
@@ -81,15 +108,22 @@ class HistoryStore:
             timestamp: When the turn occurred.  Stored as UTC ISO-8601.
         """
         user_id = validate_user_id(user_id)
+        if conversation_id is not None:
+            conversation_id = _conversation_id(conversation_id)
         ts = timestamp.astimezone(UTC).isoformat()
         with self._lock:
             with self._connect() as conn:
                 conn.execute(
-                    "INSERT INTO turns (user_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
-                    (user_id, role, content, ts),
+                    "INSERT INTO turns (user_id, role, content, timestamp, conversation_id) VALUES (?, ?, ?, ?, ?)",
+                    (user_id, role, content, ts, conversation_id),
                 )
+                if conversation_id is not None:
+                    conn.execute(
+                        "UPDATE conversations SET updated_at = ? WHERE id = ? AND user_id = ?",
+                        (ts, conversation_id, user_id),
+                    )
 
-    def load_history(self, user_id: str, limit: int = 50) -> list[dict]:
+    def load_history(self, user_id: str, limit: int = 50, conversation_id: str | None = None) -> list[dict]:
         """Return the most recent *limit* turns for *user_id*, oldest first.
 
         Args:
@@ -101,6 +135,8 @@ class HistoryStore:
             ``content``, ``timestamp``.
         """
         user_id = validate_user_id(user_id)
+        if conversation_id is not None:
+            conversation_id = _conversation_id(conversation_id)
         with self._lock:
             with self._connect() as conn:
                 cursor = conn.execute(
@@ -109,15 +145,63 @@ class HistoryStore:
                     FROM (
                         SELECT id, user_id, role, content, timestamp
                         FROM turns
-                        WHERE user_id = ?
+                        WHERE user_id = ? AND (conversation_id = ? OR (? IS NULL AND conversation_id IS NULL))
                         ORDER BY id DESC
                         LIMIT ?
                     ) sub
                     ORDER BY id ASC
                     """,
-                    (user_id, limit),
+                    (user_id, conversation_id, conversation_id, limit),
                 )
                 return [dict(row) for row in cursor.fetchall()]
+
+    def create_conversation(self, user_id: str, title: str = "New conversation") -> dict:
+        user_id = validate_user_id(user_id)
+        now = datetime.now(UTC).isoformat()
+        conversation_id = str(uuid.uuid4())
+        title = title.strip()[:120] or "New conversation"
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    "INSERT INTO conversations (id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    (conversation_id, user_id, title, now, now),
+                )
+        return {"id": conversation_id, "title": title, "created_at": now, "updated_at": now, "archived_at": None}
+
+    def list_conversations(self, user_id: str, include_archived: bool = False) -> list[dict]:
+        user_id = validate_user_id(user_id)
+        archived_clause = "" if include_archived else "AND archived_at IS NULL"
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    f"SELECT id, title, created_at, updated_at, archived_at FROM conversations WHERE user_id = ? {archived_clause} ORDER BY updated_at DESC, id DESC",
+                    (user_id,),
+                ).fetchall()
+                return [dict(row) for row in rows]
+
+    def rename_conversation(self, user_id: str, conversation_id: str, title: str) -> dict:
+        user_id = validate_user_id(user_id)
+        conversation_id = _conversation_id(conversation_id)
+        title = title.strip()[:120]
+        if not title:
+            raise ValueError("Conversation title is required")
+        now = datetime.now(UTC).isoformat()
+        with self._lock:
+            with self._connect() as conn:
+                cursor = conn.execute("UPDATE conversations SET title = ?, updated_at = ? WHERE id = ? AND user_id = ? AND archived_at IS NULL", (title, now, conversation_id, user_id))
+                if cursor.rowcount != 1:
+                    raise KeyError("Conversation not found")
+        return {"id": conversation_id, "title": title, "updated_at": now}
+
+    def archive_conversation(self, user_id: str, conversation_id: str) -> None:
+        user_id = validate_user_id(user_id)
+        conversation_id = _conversation_id(conversation_id)
+        now = datetime.now(UTC).isoformat()
+        with self._lock:
+            with self._connect() as conn:
+                cursor = conn.execute("UPDATE conversations SET archived_at = ?, updated_at = ? WHERE id = ? AND user_id = ? AND archived_at IS NULL", (now, now, conversation_id, user_id))
+                if cursor.rowcount != 1:
+                    raise KeyError("Conversation not found")
 
     def clear_history(self, user_id: str) -> None:
         """Delete all conversation turns for *user_id*.

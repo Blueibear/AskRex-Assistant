@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { spawn, ChildProcess } from 'child_process'
+import { spawn, spawnSync, ChildProcess } from 'child_process'
 import { bridgeSpawnOptions, resolveBridgePath, resolvePythonCommand } from '../bridgeResolver'
 import { logChatLatency } from '../chatLatency'
 import { privateSessionPayload, type ElectronSessionIdentity } from '../sessionIdentity'
@@ -57,6 +57,19 @@ function callRexBackend(message: string, session: ElectronSessionIdentity): Prom
     py.stdin.write(JSON.stringify(privateSessionPayload(session, { message })))
     py.stdin.end()
   })
+}
+
+function callConversationBackend(
+  session: ElectronSessionIdentity,
+  action: string,
+  payload: Record<string, unknown> = {}
+): unknown {
+  const result = spawnSync(resolvePythonCommand(), [resolveBridgePath('rex_conversation_bridge.py')], {
+    ...bridgeSpawnOptions(), input: JSON.stringify(privateSessionPayload(session, { action, ...payload })), encoding: 'utf8', timeout: 10_000
+  })
+  const response = JSON.parse((result.stdout || '').trim()) as { ok: boolean; result?: unknown; error?: string }
+  if (result.status !== 0 || !response.ok) throw new Error(response.error || 'Conversation request failed')
+  return response.result
 }
 
 // ---------------------------------------------------------------------------
@@ -177,6 +190,9 @@ async function transcribeAudio(audioBase64: string): Promise<string> {
 }
 
 export function registerChatHandlers(session: ElectronSessionIdentity): void {
+  ipcMain.handle('rex:conversation', (_event, action: string, payload?: Record<string, unknown>) =>
+    callConversationBackend(session, action, payload)
+  )
   ipcMain.handle('rex:sendChat', async (_event, message: string): Promise<string> => {
     const startedAt = performance.now()
     try {
@@ -189,7 +205,7 @@ export function registerChatHandlers(session: ElectronSessionIdentity): void {
     }
   })
 
-  ipcMain.handle('rex:startChatStream', async (event, { message, streamId }: { message: string; streamId: string }): Promise<{ ok: boolean }> => {
+  ipcMain.handle('rex:startChatStream', async (event, { message, streamId, conversationId }: { message: string; streamId: string; conversationId?: string }): Promise<{ ok: boolean }> => {
     const scriptPath = resolveBridgePath('rex_chat_stream_bridge.py')
 
     const py = spawn(resolvePythonCommand(), [scriptPath], {
@@ -356,7 +372,7 @@ export function registerChatHandlers(session: ElectronSessionIdentity): void {
         })
     })
 
-    py.stdin.write(JSON.stringify(privateSessionPayload(session, { message })))
+    py.stdin.write(JSON.stringify(privateSessionPayload(session, { message, conversation_id: conversationId })))
     py.stdin.end()
 
     return { ok: true }
