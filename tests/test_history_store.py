@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -176,3 +177,38 @@ def test_archived_or_foreign_conversation_cannot_receive_new_turns(store: Histor
         store.save_turn("alice", "user", "after archive", _ts(), conversation_id=conversation["id"])
     with pytest.raises(KeyError, match="Conversation not found"):
         store.save_turn("bob", "user", "foreign", _ts(), conversation_id=conversation["id"])
+
+
+def test_legacy_turns_are_migrated_to_a_reopenable_canonical_conversation(tmp_path: Path) -> None:
+    """An upgrade must not make pre-conversation desktop history disappear."""
+    db_path = tmp_path / "legacy-history.db"
+    first = datetime(2026, 1, 1, tzinfo=UTC).isoformat()
+    second = datetime(2026, 1, 2, tzinfo=UTC).isoformat()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE turns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp TEXT NOT NULL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO turns (user_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
+            [("alice", "user", "legacy question", first), ("alice", "assistant", "legacy reply", second)],
+        )
+
+    store = HistoryStore(db_path=db_path)
+    conversations = store.list_conversations("alice")
+
+    assert len(conversations) == 1
+    assert conversations[0]["title"] == "Previous conversation"
+    conversation_id = conversations[0]["id"]
+    assert [row["content"] for row in store.load_history("alice", conversation_id=conversation_id)] == [
+        "legacy question",
+        "legacy reply",
+    ]
+    assert store.list_conversations("alice") == conversations

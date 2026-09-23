@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS conversations (
 );
 """
 
+_LEGACY_CONVERSATION_TITLE = "Previous conversation"
+
 
 def _conversation_id(value: str) -> str:
     """Validate the opaque, canonical UUID used to address a conversation."""
@@ -86,6 +88,42 @@ class HistoryStore:
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
+
+    def _migrate_legacy_turns(self, conn: sqlite3.Connection) -> None:
+        """Expose pre-conversation history through one canonical thread per user.
+
+        Earlier installations wrote turns without ``conversation_id``.  Moving
+        those rows when the conversation list is first requested keeps the old
+        non-conversation callers compatible while making the desktop's
+        canonical list/open controls able to recover the persisted transcript.
+        """
+        legacy_users = conn.execute(
+            """
+            SELECT user_id, MIN(timestamp) AS created_at, MAX(timestamp) AS updated_at
+            FROM turns
+            WHERE conversation_id IS NULL
+            GROUP BY user_id
+            """
+        ).fetchall()
+        for row in legacy_users:
+            conversation_id = str(uuid.uuid4())
+            conn.execute(
+                """
+                INSERT INTO conversations (id, user_id, title, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    conversation_id,
+                    row["user_id"],
+                    _LEGACY_CONVERSATION_TITLE,
+                    row["created_at"],
+                    row["updated_at"],
+                ),
+            )
+            conn.execute(
+                "UPDATE turns SET conversation_id = ? WHERE user_id = ? AND conversation_id IS NULL",
+                (conversation_id, row["user_id"]),
+            )
 
     # ------------------------------------------------------------------
     # Public API
@@ -180,6 +218,7 @@ class HistoryStore:
         archived_clause = "" if include_archived else "AND archived_at IS NULL"
         with self._lock:
             with self._connect() as conn:
+                self._migrate_legacy_turns(conn)
                 rows = conn.execute(
                     f"SELECT id, title, created_at, updated_at, archived_at FROM conversations WHERE user_id = ? {archived_clause} ORDER BY updated_at DESC, id DESC",
                     (user_id,),
