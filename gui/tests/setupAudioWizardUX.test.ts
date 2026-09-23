@@ -21,6 +21,16 @@ describe('US-125 setup audio wizard UX', () => {
     expect(pageSource).not.toContain('type="number"')
   })
 
+  it('uses the grouped physical microphone inventory while leaving speaker compatibility intact', () => {
+    expect(pageSource).toContain('result.microphones ?? result.devices.filter')
+    expect(pageSource).toContain('const speakerDevices = audioDevices.filter')
+    expect(pageSource).toContain('setMicrophoneDevices(result.microphones')
+  })
+
+  it('starts first-run verification from the persisted canonical microphone index, not a display-name remap', () => {
+    expect(pageSource).not.toContain('microphoneLabel ? { microphoneLabel } : undefined')
+  })
+
   it('runs non-persisting microphone and speaker functional tests', () => {
     expect(pageSource).toContain("window.rex.testSetupAudioDevice('microphone', data.microphoneDeviceIndex)")
     expect(pageSource).toContain("window.rex.testSetupAudioDevice('speaker', data.speakerDeviceIndex)")

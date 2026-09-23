@@ -671,11 +671,14 @@ export interface SetupAudioDevice {
   name: string
   max_input_channels: number
   max_output_channels: number
+  host_api?: string
+  alias_count?: number
 }
 
 export interface SetupAudioDevicesResponse {
   ok: boolean
   devices: SetupAudioDevice[]
+  microphones?: SetupAudioDevice[]
   error?: string
 }
 

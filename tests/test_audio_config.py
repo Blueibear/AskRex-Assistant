@@ -90,6 +90,58 @@ def test_resolve_input_device_index_fails_closed_for_unknown_device():
         )
 
 
+def test_microphone_picker_groups_host_aliases_and_keeps_preferred_canonical_index():
+    choices = audio_config.build_microphone_picker_devices(
+        devices=[
+            {"name": "USB Mic", "max_input_channels": 1, "hostapi": 0},
+            {"name": "USB Mic", "max_input_channels": 1, "hostapi": 1},
+            {"name": "USB Mic", "max_input_channels": 1, "hostapi": 2},
+            {"name": "Line In", "max_input_channels": 1, "hostapi": 2},
+            {"name": "Speakers (Loopback)", "max_input_channels": 2, "hostapi": 2},
+        ],
+        hostapis=[
+            {"name": "MME"},
+            {"name": "Windows DirectSound"},
+            {"name": "Windows WASAPI"},
+        ],
+    )
+
+    assert choices == [
+        {
+            "index": 3,
+            "name": "Line In",
+            "max_input_channels": 1,
+            "max_output_channels": 0,
+            "host_api": "Windows WASAPI",
+            "alias_count": 1,
+        },
+        {
+            "index": 1,
+            "name": "USB Mic",
+            "max_input_channels": 1,
+            "max_output_channels": 0,
+            "host_api": "Windows DirectSound",
+            "alias_count": 3,
+        },
+    ]
+
+
+def test_microphone_picker_labels_same_host_name_conflicts_without_deduplicating():
+    choices = audio_config.build_microphone_picker_devices(
+        devices=[
+            {"name": "USB Mic", "max_input_channels": 1, "hostapi": 0},
+            {"name": "USB Mic", "max_input_channels": 1, "hostapi": 0},
+        ],
+        hostapis=[{"name": "Windows WASAPI"}],
+    )
+
+    assert [choice["index"] for choice in choices] == [0, 1]
+    assert [choice["name"] for choice in choices] == [
+        "USB Mic (Windows WASAPI 1)",
+        "USB Mic (Windows WASAPI 2)",
+    ]
+
+
 def test_main_updates_json_config(monkeypatch, tmp_path):
     """Test that audio_config.main updates rex_config.json instead of .env."""
     # Create a temporary config file

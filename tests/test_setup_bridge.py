@@ -125,6 +125,15 @@ def test_household_voice_choices_persist_to_canonical_runtime_config(
     assert config["runtime"]["background_voice_enabled"] is True
 
 
+def test_microphone_picker_canonical_index_is_persisted_without_name_remapping() -> None:
+    choices = rex_setup_bridge._parse_setup_choices({"microphone_device_index": 17})
+    config: dict[str, Any] = {}
+
+    rex_setup_bridge._apply_voice_config(config, choices)
+
+    assert config["audio"]["input_device_index"] == 17
+
+
 def test_lmstudio_provider_persists_as_openai_runtime_with_base_url_and_model(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -367,6 +376,19 @@ def test_audio_devices_returns_sanitized_portaudio_inventory(
             },
         ],
     )
+    monkeypatch.setattr(
+        "rex.audio_config.build_microphone_picker_devices",
+        lambda *, devices: [
+            {
+                "index": 0,
+                "name": "USB Microphone",
+                "max_input_channels": 1,
+                "max_output_channels": 0,
+                "host_api": "Windows WASAPI",
+                "alias_count": 1,
+            }
+        ],
+    )
 
     rex_setup_bridge._handle_audio_devices()
 
@@ -385,6 +407,16 @@ def test_audio_devices_returns_sanitized_portaudio_inventory(
                 "max_input_channels": 0,
                 "max_output_channels": 2,
             },
+        ],
+        "microphones": [
+            {
+                "index": 0,
+                "name": "USB Microphone",
+                "max_input_channels": 1,
+                "max_output_channels": 0,
+                "host_api": "Windows WASAPI",
+                "alias_count": 1,
+            }
         ],
     }
 

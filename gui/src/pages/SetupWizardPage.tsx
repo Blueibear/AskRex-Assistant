@@ -739,6 +739,7 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
   const [setupPersisted, setSetupPersisted] = useState(false)
   const [setupRuntimeWarning, setSetupRuntimeWarning] = useState('')
   const [audioDevices, setAudioDevices] = useState<SetupAudioDevice[]>([])
+  const [microphoneDevices, setMicrophoneDevices] = useState<SetupAudioDevice[]>([])
   const [audioDevicesLoading, setAudioDevicesLoading] = useState(true)
   const [audioDevicesError, setAudioDevicesError] = useState('')
   const [microphoneTesting, setMicrophoneTesting] = useState(false)
@@ -825,14 +826,19 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
         if (!result.ok) {
           setAudioDevicesError(result.error ?? 'Unable to enumerate audio devices.')
           setAudioDevices([])
+          setMicrophoneDevices([])
           return
         }
         setAudioDevices(result.devices)
+        setMicrophoneDevices(
+          result.microphones ?? result.devices.filter((device) => device.max_input_channels > 0)
+        )
         setAudioDevicesError('')
       } catch {
         if (!cancelled) {
           setAudioDevicesError('Unable to enumerate audio devices.')
           setAudioDevices([])
+          setMicrophoneDevices([])
         }
       } finally {
         if (!cancelled) setAudioDevicesLoading(false)
@@ -952,7 +958,6 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
     }
   }, [data.wakeWordId, wakeWordsLoading])
 
-  const microphoneDevices = audioDevices.filter((device) => device.max_input_channels > 0)
   const speakerDevices = audioDevices.filter((device) => device.max_output_channels > 0)
 
   const resetLmStudioModelDiscovery = (): void => {
@@ -1142,10 +1147,6 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
     })
     verificationVoiceActiveRef.current = true
 
-    const microphoneLabel = microphoneDevices
-      .find((device) => device.index === data.microphoneDeviceIndex)
-      ?.name.trim()
-
     try {
       await window.rex.startVoice(
         (state) => applyVoiceVerificationEvent({ type: 'voice_state', state }),
@@ -1159,8 +1160,7 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
           if (status === 'voice_playback_complete') {
             void stopVerificationSession()
           }
-        },
-        microphoneLabel ? { microphoneLabel } : undefined
+        }
       )
     } catch (verificationError) {
       const message =

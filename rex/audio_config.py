@@ -99,6 +99,8 @@ _HOSTAPI_INPUT_PRIORITY = {
     "windows wdm ks": 10,
 }
 
+_LOOPBACK_INPUT_NAME_RE = re.compile(r"\b(?:loopback|stereo\s+mix|what\s+u\s+hear)\b", re.IGNORECASE)
+
 
 def _load_audio_inventory(
     devices: list[dict] | None,
@@ -134,11 +136,98 @@ def _device_name_match_score(requested: str, candidate: str) -> int | None:
 
 
 def _device_hostapi_priority(device: dict, hostapis: list[dict]) -> int:
-    hostapi_index = int(device.get("hostapi", -1) or -1)
+    hostapi_index = device.get("hostapi", -1)
+    if isinstance(hostapi_index, bool) or not isinstance(hostapi_index, int):
+        return 0
     if not 0 <= hostapi_index < len(hostapis):
         return 0
     hostapi_name = _normalize_device_name(str(hostapis[hostapi_index].get("name", "")))
     return _HOSTAPI_INPUT_PRIORITY.get(hostapi_name, 0)
+
+
+def _device_hostapi_name(device: dict, hostapis: list[dict]) -> str:
+    """Return the human-readable PortAudio host API name when available."""
+    hostapi_index = device.get("hostapi", -1)
+    if isinstance(hostapi_index, bool) or not isinstance(hostapi_index, int):
+        return "Unknown audio API"
+    if not 0 <= hostapi_index < len(hostapis):
+        return "Unknown audio API"
+    name = str(hostapis[hostapi_index].get("name", "")).strip()
+    return name or "Unknown audio API"
+
+
+def build_microphone_picker_devices(
+    *,
+    devices: list[dict] | None = None,
+    hostapis: list[dict] | None = None,
+) -> list[dict[str, object]]:
+    """Build physical-microphone choices without changing PortAudio IDs.
+
+    Windows exposes one endpoint through several PortAudio host APIs. An exact
+    normalized name across different hosts is therefore one alias group and
+    retains the preferred canonical index. Same-host name collisions remain
+    separate because PortAudio supplies no stable physical-device identity.
+    Explicit system-audio loopbacks are not microphone choices.
+    """
+    resolved_devices, resolved_hostapis = _load_audio_inventory(devices, hostapis)
+    grouped: dict[str, list[tuple[int, dict, str]]] = {}
+    occurrences: dict[tuple[str, str], int] = {}
+
+    for index, device in enumerate(resolved_devices):
+        if int(device.get("max_input_channels", 0) or 0) < 1:
+            continue
+        name = str(device.get("name", "")).strip()
+        normalized_name = _normalize_device_name(name)
+        if not normalized_name or _LOOPBACK_INPUT_NAME_RE.search(name):
+            continue
+        hostapi_name = _device_hostapi_name(device, resolved_hostapis)
+        occurrence_key = (normalized_name, hostapi_name.casefold())
+        occurrence = occurrences.get(occurrence_key, 0)
+        occurrences[occurrence_key] = occurrence + 1
+        group_key = (
+            normalized_name
+            if occurrence == 0
+            else f"{normalized_name}\0{hostapi_name}\0{occurrence}"
+        )
+        grouped.setdefault(group_key, []).append((index, device, hostapi_name))
+
+    groups = list(grouped.values())
+    name_group_counts: dict[str, int] = {}
+    for candidates in groups:
+        normalized_name = _normalize_device_name(str(candidates[0][1].get("name", "")))
+        name_group_counts[normalized_name] = name_group_counts.get(normalized_name, 0) + 1
+
+    choices: list[dict[str, object]] = []
+    conflict_positions: dict[str, int] = {}
+    for candidates in groups:
+        index, device, hostapi_name = max(
+            candidates,
+            key=lambda candidate: (
+                _device_hostapi_priority(candidate[1], resolved_hostapis),
+                -candidate[0],
+            ),
+        )
+        name = str(device.get("name", "")).strip()
+        alias_count = len(candidates)
+        normalized_name = _normalize_device_name(name)
+        conflict_count = name_group_counts[normalized_name]
+        if conflict_count > 1:
+            conflict_positions[normalized_name] = conflict_positions.get(normalized_name, 0) + 1
+            label = f"{name} ({hostapi_name} {conflict_positions[normalized_name]})"
+        else:
+            label = name
+        choices.append(
+            {
+                "index": index,
+                "name": label,
+                "max_input_channels": int(device.get("max_input_channels", 0) or 0),
+                "max_output_channels": int(device.get("max_output_channels", 0) or 0),
+                "host_api": hostapi_name,
+                "alias_count": alias_count,
+            }
+        )
+
+    return sorted(choices, key=lambda choice: str(choice["name"]).casefold())
 
 
 def _input_device_candidate_score(
