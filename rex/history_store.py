@@ -12,10 +12,10 @@ import logging
 import sqlite3
 import threading
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
 
 from rex.identity import validate_user_id
 from rex.runtime_paths import household_data_path
