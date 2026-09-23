@@ -569,7 +569,8 @@ class Assistant:
     # ------------------------------------------------------------------
 
     def _history_key(self, user_id: str) -> str:
-        return user_id if self._conversation_id is None else f"{user_id}\0{self._conversation_id}"
+        conversation_id = getattr(self, "_conversation_id", None)
+        return user_id if conversation_id is None else f"{user_id}\0{conversation_id}"
 
     def _load_persisted_history(self, user_id: str) -> list[ConversationTurn]:
         """Load the most recent persisted turns for *user_id* (empty when no store)."""
@@ -577,7 +578,11 @@ class Assistant:
         if store is None:
             return []
         try:
-            stored = store.load_history(user_id, limit=50, conversation_id=self._conversation_id)
+            stored = store.load_history(
+                user_id,
+                limit=50,
+                conversation_id=getattr(self, "_conversation_id", None),
+            )
             return [ConversationTurn(speaker=row["role"], text=row["content"]) for row in stored]
         except Exception as exc:
             logger.warning("Failed to load history for user %s: %s", user_id, exc)
