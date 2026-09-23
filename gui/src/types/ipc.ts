@@ -689,6 +689,7 @@ export interface SetupCompletePayload {
   password: string
   llm_provider: string
   llm_api_key?: string
+  openai_base_url?: string
   tts_provider: string
   tts_voice_id: string
   microphone_device_index: number | null

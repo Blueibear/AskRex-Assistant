@@ -125,6 +125,52 @@ def test_household_voice_choices_persist_to_canonical_runtime_config(
     assert config["runtime"]["background_voice_enabled"] is True
 
 
+def test_lmstudio_provider_persists_as_openai_runtime_with_base_url(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    captured, _ = _install_setup_fakes(monkeypatch)
+
+    rex_setup_bridge._handle_complete(
+        {
+            "username": "james",
+            "password": "securepass1",  # pragma: allowlist secret
+            "llm_provider": "lmstudio",
+            "openai_base_url": "http://127.0.0.1:1234/v1",
+            "tts_provider": "none",
+            "ha_base_url": "",
+            "ha_token": "",
+        }
+    )
+
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+    config = captured["config"]
+    assert config["models"]["llm_provider"] == "openai"
+    assert config["openai"]["base_url"] == "http://127.0.0.1:1234/v1"
+    assert config["openai"]["model"] == "gpt-4o"
+
+
+def test_lmstudio_provider_without_base_url_fails_validation(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _install_setup_fakes(monkeypatch)
+
+    rex_setup_bridge._handle_complete(
+        {
+            "username": "james",
+            "password": "securepass1",  # pragma: allowlist secret
+            "llm_provider": "lmstudio",
+            "openai_base_url": "",
+            "tts_provider": "none",
+            "ha_base_url": "",
+            "ha_token": "",
+        }
+    )
+
+    response = json.loads(capsys.readouterr().out)
+    assert response["ok"] is False
+    assert "LM Studio" in response["error"]
+
+
 def test_voice_config_replaces_stale_keyword_and_paths_for_builtin_selection() -> None:
     config: dict[str, Any] = {
         "wakeword": {

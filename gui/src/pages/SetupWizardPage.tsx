@@ -14,6 +14,7 @@ interface SetupData {
   password: string
   llmProvider: string
   llmApiKey: string
+  openaiBaseUrl: string
   ttsProvider: string
   ttsVoiceId: string
   microphoneDeviceIndex: number | null
@@ -125,6 +126,7 @@ function StepAccount({ data, onChange }: StepProps): React.ReactElement {
 
 function StepLLM({ data, onChange }: StepProps): React.ReactElement {
   const needsKey = ['openai', 'openrouter', 'anthropic'].includes(data.llmProvider)
+  const isLmStudio = data.llmProvider === 'lmstudio'
   return (
     <div className="space-y-4">
       <p className="text-text-secondary text-sm">
@@ -141,9 +143,28 @@ function StepLLM({ data, onChange }: StepProps): React.ReactElement {
           <option value="openai">OpenAI</option>
           <option value="openrouter">OpenRouter</option>
           <option value="anthropic">Anthropic</option>
+          <option value="lmstudio">LM Studio (OpenAI-compatible)</option>
           <option value="ollama">Ollama (custom URL)</option>
         </select>
       </div>
+      {isLmStudio && (
+        <div>
+          <label className="block text-sm font-medium text-text-primary mb-1">
+            LM Studio Base URL
+          </label>
+          <input
+            type="text"
+            value={data.openaiBaseUrl}
+            onChange={(event) => onChange('openaiBaseUrl', event.target.value)}
+            className={inputClass}
+            placeholder="http://127.0.0.1:1234/v1"
+          />
+          <p className="text-text-muted text-xs mt-1">
+            Rex talks to LM Studio through its OpenAI-compatible local server. Start LM Studio's
+            local server and enter its address here, e.g. http://127.0.0.1:1234/v1.
+          </p>
+        </div>
+      )}
       {needsKey && (
         <div>
           <label className="block text-sm font-medium text-text-primary mb-1">API Key</label>
@@ -698,6 +719,7 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
     password: '',
     llmProvider: 'local',
     llmApiKey: '',
+    openaiBaseUrl: 'http://127.0.0.1:1234/v1',
     ttsProvider: 'edge',
     ttsVoiceId: 'en-US-AriaNeural',
     microphoneDeviceIndex: null,
@@ -1097,6 +1119,9 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
     if (step === 0) {
       if (!data.username.trim()) return 'Username is required.'
       if (data.password.length < 8) return 'Password must be at least 8 characters.'
+    }
+    if (step === 1 && data.llmProvider === 'lmstudio' && !data.openaiBaseUrl.trim()) {
+      return 'LM Studio base URL is required.'
     }
     if (step === 5 && !data.wakeWordId) return 'Choose a wake word.'
     if (step === 6 && !data.roomName.trim()) return 'Room is required.'

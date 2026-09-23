@@ -13,9 +13,13 @@ Supported commands:
     -> {"ok": true} | {"ok": false, "error": "..."}
 
   {"command": "complete", "username": "...", "password": "...",
-   "llm_provider": "...", "llm_api_key": "...", "tts_provider": "...",
-   "ha_base_url": "...", "ha_token": "..."}
+   "llm_provider": "...", "llm_api_key": "...", "openai_base_url": "...",
+   "tts_provider": "...", "ha_base_url": "...", "ha_token": "..."}
     -> {"ok": true, "user_id": "..."} | {"ok": false, "error": "..."}
+
+  llm_provider "lmstudio" selects Rex's existing OpenAI-compatible runtime
+  path (config `models.llm_provider = "openai"` plus `openai.base_url` set
+  to the supplied `openai_base_url`, e.g. http://127.0.0.1:1234/v1).
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ class SetupChoices:
     password: str
     llm_provider: str
     llm_api_key: str
+    openai_base_url: str
     tts_provider: str
     tts_voice_id: str
     microphone_device_index: Any
@@ -167,6 +172,7 @@ def _parse_setup_choices(payload: dict[str, Any]) -> SetupChoices:
         password=str(payload.get("password") or ""),
         llm_provider=str(payload.get("llm_provider") or "local").strip(),
         llm_api_key=str(payload.get("llm_api_key") or "").strip(),
+        openai_base_url=str(payload.get("openai_base_url") or "").strip(),
         tts_provider=str(payload.get("tts_provider") or "none").strip(),
         tts_voice_id=str(payload.get("tts_voice_id") or "").strip(),
         microphone_device_index=payload.get("microphone_device_index"),
@@ -184,8 +190,17 @@ def _parse_setup_choices(payload: dict[str, Any]) -> SetupChoices:
 def _validate_setup_choices(choices: SetupChoices) -> str | None:
     if not choices.username or not choices.password:
         return "username and password are required"
-    if choices.llm_provider not in {"local", "openai", "openrouter", "anthropic", "ollama"}:
+    if choices.llm_provider not in {
+        "local",
+        "openai",
+        "openrouter",
+        "anthropic",
+        "ollama",
+        "lmstudio",
+    }:
         return "unsupported LLM provider"
+    if choices.llm_provider == "lmstudio" and not choices.openai_base_url:
+        return "LM Studio requires a base URL"
     return None
 
 
@@ -197,6 +212,7 @@ def _build_setup_secrets(choices: SetupChoices) -> dict[str, str]:
         return secrets_to_store
     logical_name = {
         "openai": "OPENAI_API_KEY",
+        "lmstudio": "OPENAI_API_KEY",
         "openrouter": "OPENROUTER_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
         "ollama": "OLLAMA_API_KEY",
@@ -208,14 +224,24 @@ def _build_setup_secrets(choices: SetupChoices) -> dict[str, str]:
 
 
 def _apply_model_config(config: dict[str, Any], choices: SetupChoices) -> None:
-    runtime_provider = "transformers" if choices.llm_provider == "local" else choices.llm_provider
+    if choices.llm_provider == "local":
+        runtime_provider = "transformers"
+    elif choices.llm_provider == "lmstudio":
+        # LM Studio has no separate runtime provider: it is Rex's existing
+        # OpenAI-compatible path, selected only by a configured base URL.
+        runtime_provider = "openai"
+    else:
+        runtime_provider = choices.llm_provider
     models = config.setdefault("models", {})
     models["llm_provider"] = runtime_provider
     models["tts_provider"] = choices.tts_provider
     if choices.tts_voice_id:
         models["tts_voice"] = choices.tts_voice_id
-    if choices.llm_provider == "openai":
-        config.setdefault("openai", {}).setdefault("model", "gpt-4o")
+    if choices.llm_provider in {"openai", "lmstudio"}:
+        openai_config = config.setdefault("openai", {})
+        openai_config.setdefault("model", "gpt-4o")
+        if choices.llm_provider == "lmstudio" and choices.openai_base_url:
+            openai_config["base_url"] = choices.openai_base_url
     elif choices.llm_provider == "openrouter":
         openrouter = config.setdefault("openrouter", {})
         openrouter.setdefault("model", "openai/gpt-4o")

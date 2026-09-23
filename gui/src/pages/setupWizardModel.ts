@@ -5,6 +5,7 @@ export interface SetupFormData {
   password: string
   llmProvider: string
   llmApiKey: string
+  openaiBaseUrl?: string
   ttsProvider: string
   ttsVoiceId?: string
   microphoneDeviceIndex?: number | null
@@ -169,6 +170,10 @@ export function buildSetupSubmission(
 
   if (data.llmApiKey) {
     submission.llm_api_key = data.llmApiKey
+  }
+
+  if (data.llmProvider === 'lmstudio' && data.openaiBaseUrl?.trim()) {
+    submission.openai_base_url = data.openaiBaseUrl.trim()
   }
 
   if (deferHA || options?.deferHomeAssistant === false) {

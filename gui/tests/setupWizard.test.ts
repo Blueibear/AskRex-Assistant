@@ -72,6 +72,37 @@ describe('setupWizardModel', () => {
       expect(result.llm_api_key).toBeUndefined()
     })
 
+    it('includes openai_base_url when LM Studio is selected', () => {
+      const result = buildSetupSubmission({
+        username: 'frank',
+        password: 'pass1234', // pragma: allowlist secret
+        llmProvider: 'lmstudio',
+        llmApiKey: '',
+        openaiBaseUrl: 'http://127.0.0.1:1234/v1',
+        ttsProvider: 'none',
+        haBaseUrl: '',
+        haToken: ''
+      })
+
+      expect(result.llm_provider).toBe('lmstudio')
+      expect(result.openai_base_url).toBe('http://127.0.0.1:1234/v1')
+    })
+
+    it('does not include openai_base_url for other providers', () => {
+      const result = buildSetupSubmission({
+        username: 'grace',
+        password: 'pass1234', // pragma: allowlist secret
+        llmProvider: 'openai',
+        llmApiKey: '',
+        openaiBaseUrl: 'http://127.0.0.1:1234/v1',
+        ttsProvider: 'none',
+        haBaseUrl: '',
+        haToken: ''
+      })
+
+      expect(result.openai_base_url).toBeUndefined()
+    })
+
     it('respects deferHomeAssistant=false explicitly', () => {
       const result = buildSetupSubmission(
         {
@@ -98,6 +129,26 @@ describe('setupWizardModel', () => {
       expect(pageSource).toContain('Do this later')
       expect(pageSource).toContain('void handleSubmit(true)')
       expect(pageSource).not.toContain('setDeferHomeAssistant')
+    })
+  })
+
+  describe('LM Studio first-run provider choice', () => {
+    const pagePath = fileURLToPath(new URL('../src/pages/SetupWizardPage.tsx', import.meta.url))
+    const pageSource = readFileSync(pagePath, 'utf8')
+
+    it('offers an explicit LM Studio option distinct from Local/Ollama', () => {
+      expect(pageSource).toContain('<option value="lmstudio">LM Studio (OpenAI-compatible)</option>')
+    })
+
+    it('collects the LM Studio base URL only when LM Studio is selected', () => {
+      expect(pageSource).toContain("const isLmStudio = data.llmProvider === 'lmstudio'")
+      expect(pageSource).toContain('LM Studio Base URL')
+      expect(pageSource).toContain('http://127.0.0.1:1234/v1')
+    })
+
+    it('requires the LM Studio base URL before advancing past the AI step', () => {
+      expect(pageSource).toContain("data.llmProvider === 'lmstudio' && !data.openaiBaseUrl.trim()")
+      expect(pageSource).toContain('LM Studio base URL is required.')
     })
   })
 })
