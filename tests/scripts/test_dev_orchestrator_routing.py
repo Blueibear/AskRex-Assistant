@@ -237,7 +237,7 @@ def test_codex_runner_pipe_failure_resets_windows_sandbox_before_retry(monkeypat
     assert resets == [True]
 
 
-def test_windows_runner_recovery_resets_current_and_legacy_helpers(monkeypatch) -> None:
+def test_windows_runner_recovery_restarts_managed_sandbox_service(monkeypatch) -> None:
     from scripts.dev_orchestrator import runner
 
     calls: list[tuple[str, ...]] = []
@@ -251,6 +251,41 @@ def test_windows_runner_recovery_resets_current_and_legacy_helpers(monkeypatch) 
         "run",
         lambda command, **_kwargs: calls.append(tuple(command)) or Completed(),
     )
+    monkeypatch.setattr(runner.time, "sleep", lambda _seconds: None)
+
+    assert runner.recover_codex_windows_terminal_runner() is True
+    assert ("taskkill", "/IM", "codex-command-runner.exe", "/F") in calls
+    service_calls = [
+        call
+        for call in calls
+        if call[:4] == ("powershell.exe", "-NoProfile", "-NonInteractive", "-Command")
+    ]
+    assert len(service_calls) == 1
+    assert "CodexSandboxService.OpenAI.Codex" in service_calls[0][4]
+    assert "Start-Service" in service_calls[0][4]
+    assert ("taskkill", "/IM", "codex-windows-sandbox-service.exe", "/F") not in calls
+
+
+def test_windows_runner_recovery_falls_back_to_legacy_helper(monkeypatch) -> None:
+    from scripts.dev_orchestrator import runner
+
+    calls: list[tuple[str, ...]] = []
+
+    class Completed:
+        def __init__(self, returncode: int) -> None:
+            self.returncode = returncode
+
+    def fake_run(command, **_kwargs):
+        call = tuple(command)
+        calls.append(call)
+        if call[0] == "powershell.exe":
+            return Completed(1)
+        if call == ("taskkill", "/IM", "codex-windows-sandbox-service.exe", "/F"):
+            return Completed(0)
+        return Completed(1)
+
+    monkeypatch.setattr(runner.os, "name", "nt")
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
     monkeypatch.setattr(runner.time, "sleep", lambda _seconds: None)
 
     assert runner.recover_codex_windows_terminal_runner() is True

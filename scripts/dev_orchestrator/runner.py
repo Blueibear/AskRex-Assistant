@@ -27,7 +27,7 @@ from .handoff import (
 )
 from .lifecycle import ControlPlaneLock
 from .paths import validate_runtime_paths
-from .schema import allowed_outcomes_for_phase, validate_agent_result, validate_phase_outcome
+from .schema import allowed_outcomes_for_phase, validate_agent_result
 from .types import AgentResult
 
 _clone_scratch_repo = _scratch._clone_scratch_repo
@@ -405,19 +405,65 @@ def is_transient_runner_failure(text: str) -> bool:
     )
 
 
-def recover_codex_windows_terminal_runner() -> bool:
-    """Reset stale Codex Windows command-runner helpers after a runner-pipe startup failure."""
+_CODEX_WINDOWS_SANDBOX_SERVICE = "CodexSandboxService.OpenAI.Codex"
+
+
+def _restart_codex_windows_sandbox_service() -> bool:
+    """Restart the packaged Codex sandbox Windows service and wait until it is ready."""
     if os.name != "nt":
         return False
-    recovered = False
-    for image_name in ("codex-command-runner.exe", "codex-windows-sandbox-service.exe"):
+    script = (
+        "$ErrorActionPreference='Stop';"
+        f"$name='{_CODEX_WINDOWS_SANDBOX_SERVICE}';"
+        "$service=Get-Service -Name $name -ErrorAction SilentlyContinue;"
+        "if ($null -eq $service) { exit 3 };"
+        "if ($service.Status -ne 'Stopped') {"
+        "Stop-Service -Name $name -Force;"
+        "$service=Get-Service -Name $name;"
+        "$service.WaitForStatus('Stopped',[TimeSpan]::FromSeconds(5));"
+        "};"
+        "Start-Service -Name $name;"
+        "$service=Get-Service -Name $name;"
+        "$service.WaitForStatus('Running',[TimeSpan]::FromSeconds(5));"
+    )
+    try:
         completed = subprocess.run(
-            ["taskkill", "/IM", image_name, "/F"],
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=12,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
+
+
+def recover_codex_windows_terminal_runner() -> bool:
+    """Reset stale Codex Windows runner state after a runner-pipe startup failure."""
+    if os.name != "nt":
+        return False
+
+    recovered = False
+    completed = subprocess.run(
+        ["taskkill", "/IM", "codex-command-runner.exe", "/F"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    recovered = completed.returncode == 0
+
+    service_restarted = _restart_codex_windows_sandbox_service()
+    recovered = service_restarted or recovered
+    if not service_restarted:
+        completed = subprocess.run(
+            ["taskkill", "/IM", "codex-windows-sandbox-service.exe", "/F"],
             capture_output=True,
             text=True,
             check=False,
         )
         recovered = completed.returncode == 0 or recovered
+
     time.sleep(0.25)
     return recovered
 
