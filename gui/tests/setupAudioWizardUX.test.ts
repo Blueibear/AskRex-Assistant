@@ -22,9 +22,9 @@ describe('US-125 setup audio wizard UX', () => {
   })
 
   it('uses the grouped physical microphone inventory while leaving speaker compatibility intact', () => {
-    expect(pageSource).toContain('result.microphones ?? result.devices.filter')
+    expect(pageSource).toMatch(/result\.microphones\s*\?\?\s*result\.devices\.filter/)
     expect(pageSource).toContain('const speakerDevices = audioDevices.filter')
-    expect(pageSource).toContain('setMicrophoneDevices(result.microphones')
+    expect(pageSource).toMatch(/setMicrophoneDevices\(\s*result\.microphones/)
   })
 
   it('explains that Windows host-API aliases are grouped without changing the runtime choice', () => {
