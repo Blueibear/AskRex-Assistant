@@ -156,40 +156,39 @@ def _device_hostapi_name(device: dict, hostapis: list[dict]) -> str:
     return name or "Unknown audio API"
 
 
-def build_microphone_picker_devices(
+def _build_device_picker_choices(
+    resolved_devices: list[dict],
+    resolved_hostapis: list[dict],
     *,
-    devices: list[dict] | None = None,
-    hostapis: list[dict] | None = None,
+    channel_field: str,
+    exclude_name_re: re.Pattern[str] | None = None,
 ) -> list[dict[str, object]]:
-    """Build physical-microphone choices without changing PortAudio IDs.
+    """Shared duplicate-safe picker logic for input/output device choices.
 
-    Windows commonly exposes one physical microphone through several
-    PortAudio host APIs (MME, DirectSound, WASAPI, WDM-KS) using the same
-    or a near-identical name. PortAudio does not expose a stable physical
-    device identifier, so a shared name string is never sufficient proof
-    that two entries are the same hardware: distinct devices can coincide
-    on a name, including one occurrence apiece on different host APIs.
-    Collapsing entries on that unproven assumption would silently remove a
-    distinct canonical PortAudio index from the picker.
+    PortAudio does not expose a stable physical-device identifier, so a
+    shared name string is never sufficient proof that two entries are the
+    same hardware: distinct devices can coincide on a name, including one
+    occurrence apiece on different host APIs. Collapsing entries on that
+    unproven assumption would silently remove a distinct canonical
+    PortAudio index from the picker.
 
     Every eligible device therefore keeps its own choice and its own exact
     canonical index; no entries are ever merged. When a normalized name
     repeats (whether on the same host API or across different host APIs),
     each occurrence is instead labeled with its host API and a stable
     per-host position so the entries stay distinguishable without hiding
-    any canonical index. Explicit system-audio loopbacks are not
-    microphone choices.
+    any canonical index.
     """
-    resolved_devices, resolved_hostapis = _load_audio_inventory(devices, hostapis)
-
     eligible: list[tuple[int, dict, str, str]] = []
     name_counts: dict[str, int] = {}
     for index, device in enumerate(resolved_devices):
-        if int(device.get("max_input_channels", 0) or 0) < 1:
+        if int(device.get(channel_field, 0) or 0) < 1:
             continue
         name = str(device.get("name", "")).strip()
         normalized_name = _normalize_device_name(name)
-        if not normalized_name or _LOOPBACK_INPUT_NAME_RE.search(name):
+        if not normalized_name:
+            continue
+        if exclude_name_re is not None and exclude_name_re.search(name):
             continue
         hostapi_name = _device_hostapi_name(device, resolved_hostapis)
         eligible.append((index, device, normalized_name, hostapi_name))
@@ -217,6 +216,48 @@ def build_microphone_picker_devices(
         )
 
     return sorted(choices, key=lambda choice: str(choice["name"]).casefold())
+
+
+def build_microphone_picker_devices(
+    *,
+    devices: list[dict] | None = None,
+    hostapis: list[dict] | None = None,
+) -> list[dict[str, object]]:
+    """Build physical-microphone choices without changing PortAudio IDs.
+
+    Windows commonly exposes one physical microphone through several
+    PortAudio host APIs (MME, DirectSound, WASAPI, WDM-KS) using the same
+    or a near-identical name; see `_build_device_picker_choices` for why
+    that never justifies merging canonical indices. Explicit system-audio
+    loopbacks are not microphone choices.
+    """
+    resolved_devices, resolved_hostapis = _load_audio_inventory(devices, hostapis)
+    return _build_device_picker_choices(
+        resolved_devices,
+        resolved_hostapis,
+        channel_field="max_input_channels",
+        exclude_name_re=_LOOPBACK_INPUT_NAME_RE,
+    )
+
+
+def build_speaker_picker_devices(
+    *,
+    devices: list[dict] | None = None,
+    hostapis: list[dict] | None = None,
+) -> list[dict[str, object]]:
+    """Build physical-speaker/output choices without changing PortAudio IDs.
+
+    Windows commonly exposes one physical speaker/headphone output through
+    several PortAudio host APIs (MME, DirectSound, WASAPI, WDM-KS) using
+    the same or a near-identical name; see `_build_device_picker_choices`
+    for why that never justifies merging canonical indices (TEST-003).
+    """
+    resolved_devices, resolved_hostapis = _load_audio_inventory(devices, hostapis)
+    return _build_device_picker_choices(
+        resolved_devices,
+        resolved_hostapis,
+        channel_field="max_output_channels",
+    )
 
 
 def _input_device_candidate_score(

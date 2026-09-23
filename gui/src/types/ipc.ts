@@ -679,6 +679,7 @@ export interface SetupAudioDevicesResponse {
   ok: boolean
   devices: SetupAudioDevice[]
   microphones?: SetupAudioDevice[]
+  speakers?: SetupAudioDevice[]
   error?: string
 }
 

@@ -389,6 +389,19 @@ def test_audio_devices_returns_sanitized_portaudio_inventory(
             }
         ],
     )
+    monkeypatch.setattr(
+        "rex.audio_config.build_speaker_picker_devices",
+        lambda *, devices: [
+            {
+                "index": 1,
+                "name": "Desk Speakers",
+                "max_input_channels": 0,
+                "max_output_channels": 2,
+                "host_api": "Windows WASAPI",
+                "alias_count": 1,
+            }
+        ],
+    )
 
     rex_setup_bridge._handle_audio_devices()
 
@@ -414,6 +427,16 @@ def test_audio_devices_returns_sanitized_portaudio_inventory(
                 "name": "USB Microphone",
                 "max_input_channels": 1,
                 "max_output_channels": 0,
+                "host_api": "Windows WASAPI",
+                "alias_count": 1,
+            }
+        ],
+        "speakers": [
+            {
+                "index": 1,
+                "name": "Desk Speakers",
+                "max_input_channels": 0,
+                "max_output_channels": 2,
                 "host_api": "Windows WASAPI",
                 "alias_count": 1,
             }

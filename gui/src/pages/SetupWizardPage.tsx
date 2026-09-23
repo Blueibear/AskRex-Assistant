@@ -386,6 +386,10 @@ function StepSpeaker({
           ))}
         </select>
       </div>
+      <p className="text-text-muted text-xs">
+        Entries sharing a name are labeled with their Windows audio API so each stays a distinct,
+        individually selectable speaker. The selected choice keeps the tested voice-runtime device.
+      </p>
       {inventoryError && <p className="text-red-400 text-sm">{inventoryError}</p>}
       <button
         type="button"
@@ -742,8 +746,8 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
   const [submitting, setSubmitting] = useState(false)
   const [setupPersisted, setSetupPersisted] = useState(false)
   const [setupRuntimeWarning, setSetupRuntimeWarning] = useState('')
-  const [audioDevices, setAudioDevices] = useState<SetupAudioDevice[]>([])
   const [microphoneDevices, setMicrophoneDevices] = useState<SetupAudioDevice[]>([])
+  const [speakerDevices, setSpeakerDevices] = useState<SetupAudioDevice[]>([])
   const [audioDevicesLoading, setAudioDevicesLoading] = useState(true)
   const [audioDevicesError, setAudioDevicesError] = useState('')
   const [microphoneTesting, setMicrophoneTesting] = useState(false)
@@ -829,20 +833,22 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
         if (cancelled) return
         if (!result.ok) {
           setAudioDevicesError(result.error ?? 'Unable to enumerate audio devices.')
-          setAudioDevices([])
           setMicrophoneDevices([])
+          setSpeakerDevices([])
           return
         }
-        setAudioDevices(result.devices)
         setMicrophoneDevices(
           result.microphones ?? result.devices.filter((device) => device.max_input_channels > 0)
+        )
+        setSpeakerDevices(
+          result.speakers ?? result.devices.filter((device) => device.max_output_channels > 0)
         )
         setAudioDevicesError('')
       } catch {
         if (!cancelled) {
           setAudioDevicesError('Unable to enumerate audio devices.')
-          setAudioDevices([])
           setMicrophoneDevices([])
+          setSpeakerDevices([])
         }
       } finally {
         if (!cancelled) setAudioDevicesLoading(false)
@@ -961,8 +967,6 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
       cancelled = true
     }
   }, [data.wakeWordId, wakeWordsLoading])
-
-  const speakerDevices = audioDevices.filter((device) => device.max_output_channels > 0)
 
   const resetLmStudioModelDiscovery = (): void => {
     lmStudioDiscoveryRequestGateRef.current.invalidate()

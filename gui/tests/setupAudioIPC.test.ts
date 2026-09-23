@@ -38,6 +38,7 @@ describe('US-125 typed setup audio IPC boundary', () => {
       'export interface SetupAudioDevicesResponse',
       'devices: SetupAudioDevice[]',
       'microphones?: SetupAudioDevice[]',
+      'speakers?: SetupAudioDevice[]',
       'export interface SetupAudioTestResponse',
       'getSetupAudioDevices: () => Promise<SetupAudioDevicesResponse>',
       "testSetupAudioDevice: (kind: 'microphone' | 'speaker', deviceIndex: number) => Promise<SetupAudioTestResponse>"

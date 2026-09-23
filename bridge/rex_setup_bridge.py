@@ -124,7 +124,11 @@ def _handle_status() -> None:
 
 def _handle_audio_devices() -> None:
     from rex.assistant_errors import AudioDeviceError
-    from rex.audio_config import build_microphone_picker_devices, list_devices
+    from rex.audio_config import (
+        build_microphone_picker_devices,
+        build_speaker_picker_devices,
+        list_devices,
+    )
 
     try:
         raw_devices = list_devices()
@@ -143,10 +147,20 @@ def _handle_audio_devices() -> None:
     ]
     try:
         microphones = build_microphone_picker_devices(devices=raw_devices)
+        speakers = build_speaker_picker_devices(devices=raw_devices)
     except AudioDeviceError as exc:
         sys.stdout.write(json.dumps({"ok": False, "error": str(exc)}))
         return
-    sys.stdout.write(json.dumps({"ok": True, "devices": devices, "microphones": microphones}))
+    sys.stdout.write(
+        json.dumps(
+            {
+                "ok": True,
+                "devices": devices,
+                "microphones": microphones,
+                "speakers": speakers,
+            }
+        )
+    )
 
 
 def _handle_test_audio_device(payload: dict[str, Any]) -> None:

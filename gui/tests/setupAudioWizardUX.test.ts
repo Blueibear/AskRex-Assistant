@@ -21,16 +21,20 @@ describe('US-125 setup audio wizard UX', () => {
     expect(pageSource).not.toContain('type="number"')
   })
 
-  it('uses the grouped physical microphone inventory while leaving speaker compatibility intact', () => {
+  it('uses the grouped physical microphone and speaker inventory instead of a raw name-only list', () => {
     expect(pageSource).toMatch(/result\.microphones\s*\?\?\s*result\.devices\.filter/)
-    expect(pageSource).toContain('const speakerDevices = audioDevices.filter')
+    expect(pageSource).toMatch(/result\.speakers\s*\?\?\s*result\.devices\.filter/)
     expect(pageSource).toMatch(/setMicrophoneDevices\(\s*result\.microphones/)
+    expect(pageSource).toMatch(/setSpeakerDevices\(\s*result\.speakers/)
   })
 
   it('explains that Windows host-API duplicates are labeled without changing the runtime choice', () => {
-    expect(pageSource).toContain(
-      'Entries sharing a name are labeled with their Windows audio API so each stays a distinct'
+    const duplicateLabelOccurrences = pageSource.match(
+      /Entries sharing a name are labeled with their Windows audio API so each stays a distinct/g
     )
+    expect(duplicateLabelOccurrences).toHaveLength(2)
+    expect(pageSource).toContain('individually selectable microphone')
+    expect(pageSource).toContain('individually selectable speaker')
     expect(pageSource).toContain('keeps the tested voice-runtime device.')
   })
 

@@ -233,6 +233,139 @@ def test_microphone_picker_keeps_distinct_canonical_devices_on_cross_host_name_c
     assert {choice["index"] for choice in choices} == {0, 1, 2}
 
 
+def test_speaker_picker_labels_host_api_duplicates_without_merging_canonical_indices():
+    """Distinct output-capable PortAudio entries that share a name must stay
+    separately selectable: a shared name is not proof of shared physical
+    identity, so the picker must never collapse them into one preferred
+    alias that hides the other canonical indices (see TEST-003)."""
+    choices = audio_config.build_speaker_picker_devices(
+        devices=[
+            {"name": "USB Speakers", "max_output_channels": 2, "hostapi": 0},
+            {"name": "USB Speakers", "max_output_channels": 2, "hostapi": 1},
+            {"name": "USB Speakers", "max_output_channels": 2, "hostapi": 2},
+            {"name": "Headphones", "max_output_channels": 2, "hostapi": 2},
+            {"name": "Microphone Array", "max_input_channels": 2, "hostapi": 2},
+        ],
+        hostapis=[
+            {"name": "MME"},
+            {"name": "Windows DirectSound"},
+            {"name": "Windows WASAPI"},
+        ],
+    )
+
+    assert choices == [
+        {
+            "index": 3,
+            "name": "Headphones",
+            "max_input_channels": 0,
+            "max_output_channels": 2,
+            "host_api": "Windows WASAPI",
+            "alias_count": 1,
+        },
+        {
+            "index": 0,
+            "name": "USB Speakers (MME 1)",
+            "max_input_channels": 0,
+            "max_output_channels": 2,
+            "host_api": "MME",
+            "alias_count": 1,
+        },
+        {
+            "index": 1,
+            "name": "USB Speakers (Windows DirectSound 1)",
+            "max_input_channels": 0,
+            "max_output_channels": 2,
+            "host_api": "Windows DirectSound",
+            "alias_count": 1,
+        },
+        {
+            "index": 2,
+            "name": "USB Speakers (Windows WASAPI 1)",
+            "max_input_channels": 0,
+            "max_output_channels": 2,
+            "host_api": "Windows WASAPI",
+            "alias_count": 1,
+        },
+    ]
+    # All three canonical PortAudio indices remain independently selectable
+    # rather than being collapsed into one preferred alias. The input-only
+    # device is excluded, and it does not participate in name grouping.
+    assert {choice["index"] for choice in choices} == {0, 1, 2, 3}
+
+
+def test_speaker_picker_preserves_both_indices_for_identical_names_on_different_host_apis():
+    """Two physically distinct speakers can coincidentally report an
+    identical driver name while each appearing exactly once on a different
+    host API; each canonical index must remain its own choice (TEST-003)."""
+    choices = audio_config.build_speaker_picker_devices(
+        devices=[
+            {"name": "USB Speakers", "max_output_channels": 2, "hostapi": 0},
+            {"name": "USB Speakers", "max_output_channels": 2, "hostapi": 1},
+        ],
+        hostapis=[{"name": "MME"}, {"name": "Windows WASAPI"}],
+    )
+
+    assert [choice["index"] for choice in choices] == [0, 1]
+    assert [choice["name"] for choice in choices] == [
+        "USB Speakers (MME 1)",
+        "USB Speakers (Windows WASAPI 1)",
+    ]
+    assert [choice["alias_count"] for choice in choices] == [1, 1]
+    assert {choice["index"] for choice in choices} == {0, 1}
+
+
+def test_speaker_picker_labels_same_host_name_conflicts_without_deduplicating():
+    choices = audio_config.build_speaker_picker_devices(
+        devices=[
+            {"name": "USB Speakers", "max_output_channels": 2, "hostapi": 0},
+            {"name": "USB Speakers", "max_output_channels": 2, "hostapi": 0},
+        ],
+        hostapis=[{"name": "Windows WASAPI"}],
+    )
+
+    assert [choice["index"] for choice in choices] == [0, 1]
+    assert [choice["name"] for choice in choices] == [
+        "USB Speakers (Windows WASAPI 1)",
+        "USB Speakers (Windows WASAPI 2)",
+    ]
+
+
+def test_speaker_picker_excludes_input_only_devices_and_keeps_input_output_devices():
+    choices = audio_config.build_speaker_picker_devices(
+        devices=[
+            {"name": "Mic Only", "max_input_channels": 1, "max_output_channels": 0, "hostapi": 0},
+            {
+                "name": "Headset",
+                "max_input_channels": 1,
+                "max_output_channels": 2,
+                "hostapi": 0,
+            },
+        ],
+        hostapis=[{"name": "Windows WASAPI"}],
+    )
+
+    assert [choice["index"] for choice in choices] == [1]
+    assert choices[0]["name"] == "Headset"
+    assert choices[0]["max_input_channels"] == 1
+    assert choices[0]["max_output_channels"] == 2
+
+
+def test_speaker_picker_choice_persists_its_canonical_portaudio_index():
+    choice = audio_config.build_speaker_picker_devices(
+        devices=[
+            {"name": "USB Speakers", "max_output_channels": 2, "hostapi": 0},
+            {"name": "USB Speakers", "max_output_channels": 2, "hostapi": 1},
+        ],
+        hostapis=[{"name": "Windows WASAPI"}, {"name": "Windows DirectSound"}],
+    )[0]
+
+    config: dict[str, object] = {}
+    audio_config.set_selected_output_device_index(config, choice["index"])
+
+    assert choice["index"] == 1
+    assert config == {"audio": {"output_device_index": 1}}
+
+
 def test_microphone_picker_choice_persists_its_canonical_portaudio_index():
     choice = audio_config.build_microphone_picker_devices(
         devices=[
