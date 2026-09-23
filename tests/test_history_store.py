@@ -145,10 +145,13 @@ def test_canonical_conversations_are_persisted_and_isolated(store: HistoryStore)
     first = store.create_conversation("alice", "First")
     second = store.create_conversation("alice", "Second")
     store.save_turn("alice", "user", "first message", _ts(), conversation_id=first["id"])
+    store.save_turn("alice", "assistant", "first reply", _ts(), conversation_id=first["id"])
     store.save_turn("alice", "user", "second message", _ts(), conversation_id=second["id"])
 
     assert {row["title"] for row in store.list_conversations("alice")} == {"First", "Second"}
-    assert [row["content"] for row in store.load_history("alice", conversation_id=first["id"])] == ["first message"]
+    # Reopening the first canonical ID restores its complete transcript, so
+    # continuing that conversation cannot leak the selected second thread.
+    assert [row["content"] for row in store.load_history("alice", conversation_id=first["id"])] == ["first message", "first reply"]
     assert [row["content"] for row in store.load_history("alice", conversation_id=second["id"])] == ["second message"]
     assert store.list_conversations("bob") == []
 
@@ -163,3 +166,13 @@ def test_conversation_rename_and_archive_hide_only_that_conversation(store: Hist
     assert renamed["title"] == "Renamed"
     assert [row["id"] for row in store.list_conversations("alice")] == [first["id"]]
     assert {row["id"] for row in store.list_conversations("alice", include_archived=True)} == {first["id"], second["id"]}
+
+
+def test_archived_or_foreign_conversation_cannot_receive_new_turns(store: HistoryStore) -> None:
+    conversation = store.create_conversation("alice", "Private")
+    store.archive_conversation("alice", conversation["id"])
+
+    with pytest.raises(KeyError, match="Conversation not found"):
+        store.save_turn("alice", "user", "after archive", _ts(), conversation_id=conversation["id"])
+    with pytest.raises(KeyError, match="Conversation not found"):
+        store.save_turn("bob", "user", "foreign", _ts(), conversation_id=conversation["id"])

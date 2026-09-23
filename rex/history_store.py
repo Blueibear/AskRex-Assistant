@@ -113,6 +113,13 @@ class HistoryStore:
         ts = timestamp.astimezone(UTC).isoformat()
         with self._lock:
             with self._connect() as conn:
+                if conversation_id is not None:
+                    conversation = conn.execute(
+                        "SELECT 1 FROM conversations WHERE id = ? AND user_id = ? AND archived_at IS NULL",
+                        (conversation_id, user_id),
+                    ).fetchone()
+                    if conversation is None:
+                        raise KeyError("Conversation not found")
                 conn.execute(
                     "INSERT INTO turns (user_id, role, content, timestamp, conversation_id) VALUES (?, ?, ?, ?, ?)",
                     (user_id, role, content, ts, conversation_id),
