@@ -6,6 +6,13 @@ app.setAppPath(guiDir);
 require(path.join(guiDir, 'dist-electron', 'main', 'index.js'));
 
 const streamTokens = ['Alpha', ' Beta', ' Gamma'];
+const conversation = {
+  id: '11111111-1111-4111-8111-111111111111',
+  title: 'Electron verification conversation',
+  created_at: '2026-01-01T00:00:00+00:00',
+  updated_at: '2026-01-01T00:00:00+00:00',
+  archived_at: null
+};
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -16,8 +23,21 @@ function registerDeterministicAppHandlers() {
   ipcMain.handle('rex:getSetupStatus', async () => ({ ok: true, needs_setup: false }));
   ipcMain.removeHandler('rex:getStatus');
   ipcMain.handle('rex:getStatus', async () => ({ ok: true, status: 'ready' }));
+  ipcMain.removeHandler('rex:getUnreadNotificationCount');
+  ipcMain.handle('rex:getUnreadNotificationCount', async () => 0);
+  ipcMain.removeHandler('rex:getProfile');
+  ipcMain.handle('rex:getProfile', async () => ({ ok: true }));
+  ipcMain.removeHandler('rex:conversation');
+  ipcMain.handle('rex:conversation', async (_event, action) => {
+    if (action === 'list') return [conversation];
+    if (action === 'open') return { conversation, messages: [] };
+    throw new Error('Unexpected deterministic conversation action: ' + action);
+  });
   ipcMain.removeHandler('rex:startChatStream');
-  ipcMain.handle('rex:startChatStream', async (event, { message, streamId }) => {
+  ipcMain.handle('rex:startChatStream', async (event, { message, streamId, conversationId }) => {
+    if (conversationId !== conversation.id) {
+      throw new Error('Chat did not continue the selected canonical conversation');
+    }
     process.stdout.write(JSON.stringify({ handler: 'rex:startChatStream', message }) + '\n');
     for (const token of streamTokens) {
       await sleep(240);
