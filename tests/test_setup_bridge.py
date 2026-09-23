@@ -134,6 +134,18 @@ def test_microphone_picker_canonical_index_is_persisted_without_name_remapping()
     assert config["audio"]["input_device_index"] == 17
 
 
+def test_speaker_picker_canonical_index_is_persisted_without_name_remapping() -> None:
+    """Mirrors the microphone canonical-index test for speakers (TEST-003):
+    the exact PortAudio output index a user selected from the grouped picker
+    must reach config unchanged, never a re-derived/name-matched index."""
+    choices = rex_setup_bridge._parse_setup_choices({"speaker_device_index": 23})
+    config: dict[str, Any] = {}
+
+    rex_setup_bridge._apply_voice_config(config, choices)
+
+    assert config["audio"]["output_device_index"] == 23
+
+
 def test_lmstudio_provider_persists_as_openai_runtime_with_base_url_and_model(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
