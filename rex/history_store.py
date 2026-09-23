@@ -12,8 +12,10 @@ import logging
 import sqlite3
 import threading
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Iterator
 
 from rex.identity import validate_user_id
 from rex.runtime_paths import household_data_path
@@ -67,7 +69,7 @@ class HistoryStore:
         self._db_path = Path(db_path) if db_path is not None else household_data_path("history.db")
         self._lock = threading.Lock()
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(_CREATE_TABLE_SQL)
             conn.execute(_CREATE_INDEX_SQL)
             conn.execute(_CREATE_CONVERSATIONS_SQL)
@@ -88,6 +90,16 @@ class HistoryStore:
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
+
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        """Commit or roll back a transaction, then always close its database handle."""
+        conn = self._connect()
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def _migrate_legacy_turns(self, conn: sqlite3.Connection) -> None:
         """Expose pre-conversation history through one canonical thread per user.
@@ -150,7 +162,7 @@ class HistoryStore:
             conversation_id = _conversation_id(conversation_id)
         ts = timestamp.astimezone(UTC).isoformat()
         with self._lock:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 if conversation_id is not None:
                     conversation = conn.execute(
                         "SELECT 1 FROM conversations WHERE id = ? AND user_id = ? AND archived_at IS NULL",
@@ -183,7 +195,7 @@ class HistoryStore:
         if conversation_id is not None:
             conversation_id = _conversation_id(conversation_id)
         with self._lock:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 cursor = conn.execute(
                     """
                     SELECT id, user_id, role, content, timestamp
@@ -206,7 +218,7 @@ class HistoryStore:
         conversation_id = str(uuid.uuid4())
         title = title.strip()[:120] or "New conversation"
         with self._lock:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 conn.execute(
                     "INSERT INTO conversations (id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
                     (conversation_id, user_id, title, now, now),
@@ -217,7 +229,7 @@ class HistoryStore:
         user_id = validate_user_id(user_id)
         archived_clause = "" if include_archived else "AND archived_at IS NULL"
         with self._lock:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 self._migrate_legacy_turns(conn)
                 rows = conn.execute(
                     f"SELECT id, title, created_at, updated_at, archived_at FROM conversations WHERE user_id = ? {archived_clause} ORDER BY updated_at DESC, id DESC",
@@ -233,7 +245,7 @@ class HistoryStore:
             raise ValueError("Conversation title is required")
         now = datetime.now(UTC).isoformat()
         with self._lock:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 cursor = conn.execute("UPDATE conversations SET title = ?, updated_at = ? WHERE id = ? AND user_id = ? AND archived_at IS NULL", (title, now, conversation_id, user_id))
                 if cursor.rowcount != 1:
                     raise KeyError("Conversation not found")
@@ -244,7 +256,7 @@ class HistoryStore:
         conversation_id = _conversation_id(conversation_id)
         now = datetime.now(UTC).isoformat()
         with self._lock:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 cursor = conn.execute("UPDATE conversations SET archived_at = ?, updated_at = ? WHERE id = ? AND user_id = ? AND archived_at IS NULL", (now, now, conversation_id, user_id))
                 if cursor.rowcount != 1:
                     raise KeyError("Conversation not found")
@@ -257,7 +269,7 @@ class HistoryStore:
         """
         user_id = validate_user_id(user_id)
         with self._lock:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 conn.execute("DELETE FROM turns WHERE user_id = ?", (user_id,))
 
     def prune(self, user_id: str, keep_days: int = 30) -> int:
@@ -276,7 +288,7 @@ class HistoryStore:
         cutoff = datetime.now(UTC) - timedelta(days=keep_days)
         cutoff_ts = cutoff.isoformat()
         with self._lock:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 cursor = conn.execute(
                     "DELETE FROM turns WHERE user_id = ? AND timestamp < ?",
                     (user_id, cutoff_ts),
