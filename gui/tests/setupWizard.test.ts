@@ -103,6 +103,53 @@ describe('setupWizardModel', () => {
       expect(result.openai_base_url).toBeUndefined()
     })
 
+    it('includes openai_model when LM Studio is selected and a model is set', () => {
+      const result = buildSetupSubmission({
+        username: 'heidi',
+        password: 'pass1234', // pragma: allowlist secret
+        llmProvider: 'lmstudio',
+        llmApiKey: '',
+        openaiBaseUrl: 'http://127.0.0.1:1234/v1',
+        openaiModel: 'openai/gpt-oss-20b',
+        ttsProvider: 'none',
+        haBaseUrl: '',
+        haToken: ''
+      })
+
+      expect(result.openai_model).toBe('openai/gpt-oss-20b')
+    })
+
+    it('does not include openai_model when it is blank', () => {
+      const result = buildSetupSubmission({
+        username: 'ivan',
+        password: 'pass1234', // pragma: allowlist secret
+        llmProvider: 'lmstudio',
+        llmApiKey: '',
+        openaiBaseUrl: 'http://127.0.0.1:1234/v1',
+        openaiModel: '   ',
+        ttsProvider: 'none',
+        haBaseUrl: '',
+        haToken: ''
+      })
+
+      expect(result.openai_model).toBeUndefined()
+    })
+
+    it('does not include openai_model for other providers', () => {
+      const result = buildSetupSubmission({
+        username: 'judy',
+        password: 'pass1234', // pragma: allowlist secret
+        llmProvider: 'openai',
+        llmApiKey: '',
+        openaiModel: 'gpt-4o',
+        ttsProvider: 'none',
+        haBaseUrl: '',
+        haToken: ''
+      })
+
+      expect(result.openai_model).toBeUndefined()
+    })
+
     it('respects deferHomeAssistant=false explicitly', () => {
       const result = buildSetupSubmission(
         {
@@ -147,8 +194,46 @@ describe('setupWizardModel', () => {
     })
 
     it('requires the LM Studio base URL before advancing past the AI step', () => {
-      expect(pageSource).toContain("data.llmProvider === 'lmstudio' && !data.openaiBaseUrl.trim()")
-      expect(pageSource).toContain('LM Studio base URL is required.')
+      expect(pageSource).toContain("if (!data.openaiBaseUrl.trim()) return 'LM Studio base URL is required.'")
+    })
+
+    it('offers explicit model discovery and requires a model before advancing (TEST-001)', () => {
+      expect(pageSource).toContain('LM Studio Model')
+      expect(pageSource).toContain('Discover LM Studio Models')
+      expect(pageSource).toContain('onClick={onDiscoverModels}')
+      expect(pageSource).toContain('<ModelDiscoveryResults')
+      expect(pageSource).toContain("if (!data.openaiModel.trim())")
+      expect(pageSource).toContain('Choose or enter the LM Studio model to use.')
+    })
+
+    it('never seeds a default LM Studio model value that could be silently submitted', () => {
+      expect(pageSource).toContain("openaiModel: ''")
+    })
+
+    it('resets prior model discovery results when the base URL or provider changes', () => {
+      const handlerStart = pageSource.indexOf('const handleChange = (field: keyof SetupData')
+      const handlerEnd = pageSource.indexOf('\n  }', handlerStart)
+      const handlerSource = pageSource.slice(handlerStart, handlerEnd)
+      expect(handlerSource).toContain("field === 'openaiBaseUrl' || field === 'llmProvider'")
+      expect(handlerSource).toContain('resetLmStudioModelDiscovery()')
+    })
+  })
+
+  describe('LM Studio setup-safe model discovery wiring (TEST-001)', () => {
+    const pagePath = fileURLToPath(new URL('../src/pages/SetupWizardPage.tsx', import.meta.url))
+    const pageSource = readFileSync(pagePath, 'utf8')
+
+    it('calls the pre-auth setup-safe discovery IPC, not the identity-bound settings one', () => {
+      expect(pageSource).toContain("window.rex.discoverSetupAiModels('lmstudio', endpoint)")
+      expect(pageSource).not.toContain('window.rex.discoverAiModels(')
+    })
+
+    it('ignores an older discovery completion after a newer request starts', () => {
+      const handlerStart = pageSource.indexOf('const handleDiscoverLmStudioModels')
+      const handlerEnd = pageSource.indexOf('\n  }', handlerStart)
+      const handlerSource = pageSource.slice(handlerStart, handlerEnd)
+      expect(handlerSource).toContain('lmStudioDiscoveryRequestGateRef.current.begin()')
+      expect(handlerSource).toContain('lmStudioDiscoveryRequestGateRef.current.isCurrent(requestId)')
     })
   })
 })

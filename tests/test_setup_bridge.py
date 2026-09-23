@@ -125,7 +125,7 @@ def test_household_voice_choices_persist_to_canonical_runtime_config(
     assert config["runtime"]["background_voice_enabled"] is True
 
 
-def test_lmstudio_provider_persists_as_openai_runtime_with_base_url(
+def test_lmstudio_provider_persists_as_openai_runtime_with_base_url_and_model(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     captured, _ = _install_setup_fakes(monkeypatch)
@@ -136,6 +136,7 @@ def test_lmstudio_provider_persists_as_openai_runtime_with_base_url(
             "password": "securepass1",  # pragma: allowlist secret
             "llm_provider": "lmstudio",
             "openai_base_url": "http://127.0.0.1:1234/v1",
+            "openai_model": "openai/gpt-oss-20b",
             "tts_provider": "none",
             "ha_base_url": "",
             "ha_token": "",
@@ -146,7 +147,7 @@ def test_lmstudio_provider_persists_as_openai_runtime_with_base_url(
     config = captured["config"]
     assert config["models"]["llm_provider"] == "openai"
     assert config["openai"]["base_url"] == "http://127.0.0.1:1234/v1"
-    assert config["openai"]["model"] == "gpt-4o"
+    assert config["openai"]["model"] == "openai/gpt-oss-20b"
 
 
 def test_lmstudio_provider_without_base_url_fails_validation(
@@ -160,6 +161,7 @@ def test_lmstudio_provider_without_base_url_fails_validation(
             "password": "securepass1",  # pragma: allowlist secret
             "llm_provider": "lmstudio",
             "openai_base_url": "",
+            "openai_model": "openai/gpt-oss-20b",
             "tts_provider": "none",
             "ha_base_url": "",
             "ha_token": "",
@@ -169,6 +171,55 @@ def test_lmstudio_provider_without_base_url_fails_validation(
     response = json.loads(capsys.readouterr().out)
     assert response["ok"] is False
     assert "LM Studio" in response["error"]
+
+
+def test_lmstudio_provider_without_model_fails_validation_instead_of_defaulting(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """TEST-001: an untouched/missing LM Studio model must never silently
+    persist the unrelated official-OpenAI default `gpt-4o`."""
+    captured, _ = _install_setup_fakes(monkeypatch)
+
+    rex_setup_bridge._handle_complete(
+        {
+            "username": "james",
+            "password": "securepass1",  # pragma: allowlist secret
+            "llm_provider": "lmstudio",
+            "openai_base_url": "http://127.0.0.1:1234/v1",
+            "openai_model": "",
+            "tts_provider": "none",
+            "ha_base_url": "",
+            "ha_token": "",
+        }
+    )
+
+    response = json.loads(capsys.readouterr().out)
+    assert response["ok"] is False
+    assert "LM Studio" in response["error"]
+    assert "model" in response["error"].lower()
+    assert "config" not in captured
+
+
+def test_openai_provider_still_defaults_model_without_lmstudio_override(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Cloud OpenAI setup behavior is unchanged: it keeps the gpt-4o default."""
+    captured, _ = _install_setup_fakes(monkeypatch)
+
+    rex_setup_bridge._handle_complete(
+        {
+            "username": "james",
+            "password": "securepass1",  # pragma: allowlist secret
+            "llm_provider": "openai",
+            "llm_api_key": "sk-test",  # pragma: allowlist secret
+            "tts_provider": "none",
+            "ha_base_url": "",
+            "ha_token": "",
+        }
+    )
+
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+    assert captured["config"]["openai"]["model"] == "gpt-4o"
 
 
 def test_voice_config_replaces_stale_keyword_and_paths_for_builtin_selection() -> None:

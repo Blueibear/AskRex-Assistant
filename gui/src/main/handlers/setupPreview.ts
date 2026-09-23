@@ -1,7 +1,14 @@
 import { ipcMain } from 'electron'
 import { spawn } from 'child_process'
-import type { Settings, WakeWordInfo, WakeWordStatus } from '../../types/ipc'
+import type {
+  ModelDiscoveryProvider,
+  ModelDiscoveryResponse,
+  Settings,
+  WakeWordInfo,
+  WakeWordStatus
+} from '../../types/ipc'
 import { bridgeSpawnOptions, resolveBridgePath, resolvePythonCommand } from '../bridgeResolver'
+import { discoverAiModelsAtEndpoint } from '../modelDiscovery'
 import { buildWakeWordStatus } from '../voiceSettings'
 
 const SETUP_PREVIEW_CHANNELS = [
@@ -9,7 +16,8 @@ const SETUP_PREVIEW_CHANNELS = [
   'rex:previewVoice',
   'rex:listWakeWords',
   'rex:previewWakeWordSample',
-  'rex:getSetupWakeWordStatus'
+  'rex:getSetupWakeWordStatus',
+  'rex:discoverSetupAiModels'
 ] as const
 
 const setupVoiceInventory = new Map<string, Set<string>>()
@@ -185,6 +193,20 @@ export function registerSetupPreviewHandlers(): void {
     }
     return buildWakeWordStatus(setupWakeWordSettings(selectedWakeWord))
   })
+
+  ipcMain.handle(
+    'rex:discoverSetupAiModels',
+    async (
+      _event,
+      provider: ModelDiscoveryProvider | string,
+      endpoint: string
+    ): Promise<ModelDiscoveryResponse> => {
+      if (provider !== 'ollama' && provider !== 'lmstudio') {
+        return { ok: false, models: [], error: 'Unsupported model discovery provider' }
+      }
+      return discoverAiModelsAtEndpoint(provider, typeof endpoint === 'string' ? endpoint : '')
+    }
+  )
 }
 
 export function unregisterSetupPreviewHandlers(): void {

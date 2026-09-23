@@ -690,6 +690,7 @@ export interface SetupCompletePayload {
   llm_provider: string
   llm_api_key?: string
   openai_base_url?: string
+  openai_model?: string
   tts_provider: string
   tts_voice_id: string
   microphone_device_index: number | null
@@ -1011,6 +1012,10 @@ export interface RexAPI {
   getSetupStatus: () => Promise<SetupStatusResponse>
   getSetupAudioDevices: () => Promise<SetupAudioDevicesResponse>
   testSetupAudioDevice: (kind: 'microphone' | 'speaker', deviceIndex: number) => Promise<SetupAudioTestResponse>
+  discoverSetupAiModels: (
+    provider: ModelDiscoveryProvider,
+    endpoint: string
+  ) => Promise<ModelDiscoveryResponse>
   completeSetup: (payload: SetupCompletePayload) => Promise<SetupCompleteResponse>
   createPairingChallenge: (scopes: string[]) => Promise<PairingResponse>
   listPendingPairings: () => Promise<PairingResponse>

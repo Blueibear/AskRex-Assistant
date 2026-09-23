@@ -214,6 +214,8 @@ Electron autonomy mode uses `models.autonomy_mode` as its only persisted authori
 
 Electron local-model discovery is user-initiated main-process IPC over the provider endpoint already stored in canonical runtime config. The renderer may request only the supported discovery kind (`ollama` or `lmstudio`), not an arbitrary fetch URL. Ollama discovery uses configured `ollama.base_url`; LM Studio remains Rex's existing OpenAI-compatible runtime path and discovery uses configured `openai.base_url`. Keep loading, error, successful-empty, and discovered-model states distinct, and never present placeholder/example model names as discovered availability.
 
+First-run setup has no persisted household config to read an endpoint from, so its pre-auth `rex:discoverSetupAiModels` preview IPC (registered by `registerSetupPreviewHandlers()`, never identity-bound) accepts the discovery kind plus the endpoint the wizard already collected, and shares the same bounded `discoverAiModelsAtEndpoint()` validation/parsing core as the post-setup Settings path. Selecting LM Studio in setup requires an explicit discovered-or-typed model; setup must never silently persist the unrelated official-OpenAI default model for a local LM Studio endpoint (TEST-001).
+
 Core config, `.env`, profiles, and persistent data paths must resolve
 through `rex.runtime_paths`, not the process working directory. Electron must
 launch every Python bridge with `bridgeSpawnOptions()` so development uses the

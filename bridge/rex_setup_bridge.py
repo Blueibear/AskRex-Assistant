@@ -14,12 +14,16 @@ Supported commands:
 
   {"command": "complete", "username": "...", "password": "...",
    "llm_provider": "...", "llm_api_key": "...", "openai_base_url": "...",
-   "tts_provider": "...", "ha_base_url": "...", "ha_token": "..."}
+   "openai_model": "...", "tts_provider": "...", "ha_base_url": "...",
+   "ha_token": "..."}
     -> {"ok": true, "user_id": "..."} | {"ok": false, "error": "..."}
 
   llm_provider "lmstudio" selects Rex's existing OpenAI-compatible runtime
   path (config `models.llm_provider = "openai"` plus `openai.base_url` set
-  to the supplied `openai_base_url`, e.g. http://127.0.0.1:1234/v1).
+  to the supplied `openai_base_url`, e.g. http://127.0.0.1:1234/v1). LM
+  Studio also requires an explicit `openai_model` (discovered from the
+  configured endpoint's `/v1/models` or typed manually) so setup never
+  silently persists the unrelated official-OpenAI default model.
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ class SetupChoices:
     llm_provider: str
     llm_api_key: str
     openai_base_url: str
+    openai_model: str
     tts_provider: str
     tts_voice_id: str
     microphone_device_index: Any
@@ -173,6 +178,7 @@ def _parse_setup_choices(payload: dict[str, Any]) -> SetupChoices:
         llm_provider=str(payload.get("llm_provider") or "local").strip(),
         llm_api_key=str(payload.get("llm_api_key") or "").strip(),
         openai_base_url=str(payload.get("openai_base_url") or "").strip(),
+        openai_model=str(payload.get("openai_model") or "").strip(),
         tts_provider=str(payload.get("tts_provider") or "none").strip(),
         tts_voice_id=str(payload.get("tts_voice_id") or "").strip(),
         microphone_device_index=payload.get("microphone_device_index"),
@@ -201,6 +207,8 @@ def _validate_setup_choices(choices: SetupChoices) -> str | None:
         return "unsupported LLM provider"
     if choices.llm_provider == "lmstudio" and not choices.openai_base_url:
         return "LM Studio requires a base URL"
+    if choices.llm_provider == "lmstudio" and not choices.openai_model:
+        return "LM Studio requires a model. Discover it from the configured endpoint or enter it manually."
     return None
 
 
@@ -239,7 +247,13 @@ def _apply_model_config(config: dict[str, Any], choices: SetupChoices) -> None:
         models["tts_voice"] = choices.tts_voice_id
     if choices.llm_provider in {"openai", "lmstudio"}:
         openai_config = config.setdefault("openai", {})
-        openai_config.setdefault("model", "gpt-4o")
+        if choices.llm_provider == "lmstudio" and choices.openai_model:
+            # LM Studio serves whatever model is actually loaded locally, so
+            # its explicit discovered/typed model always wins over the
+            # unrelated official-OpenAI default (TEST-001).
+            openai_config["model"] = choices.openai_model
+        else:
+            openai_config.setdefault("model", "gpt-4o")
         if choices.llm_provider == "lmstudio" and choices.openai_base_url:
             openai_config["base_url"] = choices.openai_base_url
     elif choices.llm_provider == "openrouter":

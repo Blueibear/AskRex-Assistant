@@ -491,6 +491,11 @@ const rexAPI = {
     deviceIndex: number
   ): Promise<SetupAudioTestResponse> =>
     ipcRenderer.invoke('rex:testSetupAudioDevice', kind, deviceIndex),
+  discoverSetupAiModels: (
+    provider: ModelDiscoveryProvider,
+    endpoint: string
+  ): Promise<ModelDiscoveryResponse> =>
+    ipcRenderer.invoke('rex:discoverSetupAiModels', provider, endpoint),
   completeSetup: (payload: SetupCompletePayload): Promise<SetupCompleteResponse> =>
     ipcRenderer.invoke('rex:completeSetup', payload),
   createPairingChallenge: (scopes: string[]): Promise<PairingResponse> =>

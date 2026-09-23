@@ -8,6 +8,8 @@ import {
   type VoiceVerificationStage,
   type VoiceVerificationState
 } from './setupWizardModel'
+import { ModelDiscoveryResults, type ModelDiscoveryStatus } from './settings/ModelDiscoveryResults'
+import { ModelDiscoveryRequestGate } from '../types/modelDiscoveryRequestGate'
 
 interface SetupData {
   username: string
@@ -15,6 +17,7 @@ interface SetupData {
   llmProvider: string
   llmApiKey: string
   openaiBaseUrl: string
+  openaiModel: string
   ttsProvider: string
   ttsVoiceId: string
   microphoneDeviceIndex: number | null
@@ -32,6 +35,13 @@ type SetupValue = string | boolean | number | null
 interface StepProps {
   data: SetupData
   onChange: (field: keyof SetupData, value: SetupValue) => void
+}
+
+interface LlmStepProps extends StepProps {
+  modelDiscoveryStatus: ModelDiscoveryStatus
+  discoveredModels: string[]
+  modelDiscoveryError: string
+  onDiscoverModels: () => void
 }
 
 interface AudioStepProps {
@@ -124,7 +134,14 @@ function StepAccount({ data, onChange }: StepProps): React.ReactElement {
   )
 }
 
-function StepLLM({ data, onChange }: StepProps): React.ReactElement {
+function StepLLM({
+  data,
+  onChange,
+  modelDiscoveryStatus,
+  discoveredModels,
+  modelDiscoveryError,
+  onDiscoverModels
+}: LlmStepProps): React.ReactElement {
   const needsKey = ['openai', 'openrouter', 'anthropic'].includes(data.llmProvider)
   const isLmStudio = data.llmProvider === 'lmstudio'
   return (
@@ -163,6 +180,40 @@ function StepLLM({ data, onChange }: StepProps): React.ReactElement {
             Rex talks to LM Studio through its OpenAI-compatible local server. Start LM Studio's
             local server and enter its address here, e.g. http://127.0.0.1:1234/v1.
           </p>
+        </div>
+      )}
+      {isLmStudio && (
+        <div>
+          <label className="block text-sm font-medium text-text-primary mb-1">
+            LM Studio Model
+          </label>
+          <input
+            type="text"
+            value={data.openaiModel}
+            onChange={(event) => onChange('openaiModel', event.target.value)}
+            className={inputClass}
+            placeholder="e.g. openai/gpt-oss-20b"
+          />
+          <p className="text-text-muted text-xs mt-1">
+            Rex needs the exact model ID LM Studio is currently serving. Discover it from the
+            base URL above, or type it exactly as shown in LM Studio's server tab.
+          </p>
+          <button
+            type="button"
+            onClick={onDiscoverModels}
+            disabled={!data.openaiBaseUrl.trim() || modelDiscoveryStatus === 'loading'}
+            className="mt-2 rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm font-medium text-text-primary transition-colors hover:border-accent/60 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Discover LM Studio Models
+          </button>
+          <ModelDiscoveryResults
+            providerLabel="LM Studio"
+            status={modelDiscoveryStatus}
+            models={discoveredModels}
+            selectedModel={data.openaiModel}
+            error={modelDiscoveryError}
+            onSelect={(model) => onChange('openaiModel', model)}
+          />
         </div>
       )}
       {needsKey && (
@@ -714,12 +765,18 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
   const [voiceVerification, setVoiceVerification] = useState(createVoiceVerificationState())
   const verificationVoiceActiveRef = useRef(false)
   const turnStatusCleanupRef = useRef<(() => void) | null>(null)
+  const [lmStudioModelDiscoveryStatus, setLmStudioModelDiscoveryStatus] =
+    useState<ModelDiscoveryStatus>('idle')
+  const [lmStudioDiscoveredModels, setLmStudioDiscoveredModels] = useState<string[]>([])
+  const [lmStudioModelDiscoveryError, setLmStudioModelDiscoveryError] = useState('')
+  const lmStudioDiscoveryRequestGateRef = useRef(new ModelDiscoveryRequestGate())
   const [data, setData] = useState<SetupData>({
     username: '',
     password: '',
     llmProvider: 'local',
     llmApiKey: '',
     openaiBaseUrl: 'http://127.0.0.1:1234/v1',
+    openaiModel: '',
     ttsProvider: 'edge',
     ttsVoiceId: 'en-US-AriaNeural',
     microphoneDeviceIndex: null,
@@ -898,9 +955,43 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
   const microphoneDevices = audioDevices.filter((device) => device.max_input_channels > 0)
   const speakerDevices = audioDevices.filter((device) => device.max_output_channels > 0)
 
+  const resetLmStudioModelDiscovery = (): void => {
+    lmStudioDiscoveryRequestGateRef.current.invalidate()
+    setLmStudioModelDiscoveryStatus('idle')
+    setLmStudioDiscoveredModels([])
+    setLmStudioModelDiscoveryError('')
+  }
+
   const handleChange = (field: keyof SetupData, value: SetupValue): void => {
+    if (field === 'openaiBaseUrl' || field === 'llmProvider') {
+      resetLmStudioModelDiscovery()
+    }
     setData((previous) => ({ ...previous, [field]: value }))
     setError('')
+  }
+
+  const handleDiscoverLmStudioModels = async (): Promise<void> => {
+    const endpoint = data.openaiBaseUrl.trim()
+    if (!endpoint) return
+    const requestId = lmStudioDiscoveryRequestGateRef.current.begin()
+    setLmStudioModelDiscoveryStatus('loading')
+    setLmStudioDiscoveredModels([])
+    setLmStudioModelDiscoveryError('')
+    try {
+      const result = await window.rex.discoverSetupAiModels('lmstudio', endpoint)
+      if (!lmStudioDiscoveryRequestGateRef.current.isCurrent(requestId)) return
+      if (result.ok) {
+        setLmStudioDiscoveredModels(result.models)
+        setLmStudioModelDiscoveryStatus('success')
+        return
+      }
+      setLmStudioModelDiscoveryError(result.error ?? 'Model discovery failed')
+      setLmStudioModelDiscoveryStatus('error')
+    } catch {
+      if (!lmStudioDiscoveryRequestGateRef.current.isCurrent(requestId)) return
+      setLmStudioModelDiscoveryError('Model discovery could not be completed')
+      setLmStudioModelDiscoveryStatus('error')
+    }
   }
 
   const handleMicrophoneDeviceChange = (deviceIndex: number | null): void => {
@@ -1120,8 +1211,11 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
       if (!data.username.trim()) return 'Username is required.'
       if (data.password.length < 8) return 'Password must be at least 8 characters.'
     }
-    if (step === 1 && data.llmProvider === 'lmstudio' && !data.openaiBaseUrl.trim()) {
-      return 'LM Studio base URL is required.'
+    if (step === 1 && data.llmProvider === 'lmstudio') {
+      if (!data.openaiBaseUrl.trim()) return 'LM Studio base URL is required.'
+      if (!data.openaiModel.trim()) {
+        return 'Choose or enter the LM Studio model to use.'
+      }
     }
     if (step === 5 && !data.wakeWordId) return 'Choose a wake word.'
     if (step === 6 && !data.roomName.trim()) return 'Room is required.'
@@ -1178,7 +1272,16 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
       case 0:
         return <StepAccount data={data} onChange={handleChange} />
       case 1:
-        return <StepLLM data={data} onChange={handleChange} />
+        return (
+          <StepLLM
+            data={data}
+            onChange={handleChange}
+            modelDiscoveryStatus={lmStudioModelDiscoveryStatus}
+            discoveredModels={lmStudioDiscoveredModels}
+            modelDiscoveryError={lmStudioModelDiscoveryError}
+            onDiscoverModels={() => void handleDiscoverLmStudioModels()}
+          />
+        )
       case 2:
         return (
           <StepVoice
