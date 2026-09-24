@@ -314,8 +314,8 @@ def test_speaker_picker_preserves_both_indices_for_identical_names_on_different_
     assert {choice["index"] for choice in choices} == {0, 1}
 
 
-def test_speaker_picker_does_not_apply_microphone_truncated_mme_alias_labels():
-    """TEST-011's microphone-only alias aid must not change speakers."""
+def test_speaker_picker_explains_unambiguous_truncated_mme_aliases_without_merging():
+    """TEST-003: output aliases are understandable but retain every index."""
     choices = audio_config.build_speaker_picker_devices(
         devices=[
             {
@@ -328,16 +328,60 @@ def test_speaker_picker_does_not_apply_microphone_truncated_mme_alias_labels():
                 "max_output_channels": 2,
                 "hostapi": 1,
             },
+            {
+                "name": "Speakers (Studio Monitor Series)",
+                "max_output_channels": 2,
+                "hostapi": 2,
+            },
         ],
-        hostapis=[{"name": "MME"}, {"name": "Windows DirectSound"}],
+        hostapis=[
+            {"name": "MME"},
+            {"name": "Windows DirectSound"},
+            {"name": "Windows WASAPI"},
+        ],
     )
 
-    assert [choice["index"] for choice in choices] == [0, 1]
+    assert [choice["index"] for choice in choices] == [0, 1, 2]
     assert [choice["name"] for choice in choices] == [
-        "Speakers (Studio Monitor Seri",
-        "Speakers (Studio Monitor Series)",
+        "Speakers (Studio Monitor Series) (MME output, possible shortened-name "
+        "alias of 2 same-named host-API entries; separate device 1)",
+        "Speakers (Studio Monitor Series) (Windows DirectSound 1)",
+        "Speakers (Studio Monitor Series) (Windows WASAPI 1)",
     ]
-    assert all("shortened-name" not in str(choice["name"]) for choice in choices)
+    assert {choice["index"] for choice in choices} == {0, 1, 2}
+
+
+def test_speaker_picker_leaves_ambiguous_truncated_mme_alias_distinct():
+    choices = audio_config.build_speaker_picker_devices(
+        devices=[
+            {
+                "name": "Speakers (Living Room Device",
+                "max_output_channels": 2,
+                "hostapi": 0,
+            },
+            {
+                "name": "Speakers (Living Room Device A)",
+                "max_output_channels": 2,
+                "hostapi": 1,
+            },
+            {
+                "name": "Speakers (Living Room Device B)",
+                "max_output_channels": 2,
+                "hostapi": 2,
+            },
+        ],
+        hostapis=[
+            {"name": "MME"},
+            {"name": "Windows DirectSound"},
+            {"name": "Windows WASAPI"},
+        ],
+    )
+
+    assert [choice["index"] for choice in choices] == [0, 1, 2]
+    assert choices[0]["name"] == (
+        "Speakers (Living Room Device (MME output, shortened name is ambiguous; separate device)"
+    )
+    assert {choice["index"] for choice in choices} == {0, 1, 2}
 
 
 def test_speaker_picker_labels_same_host_name_conflicts_without_deduplicating():

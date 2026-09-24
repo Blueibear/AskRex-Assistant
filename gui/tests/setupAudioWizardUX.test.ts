@@ -37,6 +37,12 @@ describe('US-125 setup audio wizard UX', () => {
     expect(pageSource).toContain('keeps the tested voice-runtime device.')
   })
 
+  it('explains that shortened MME speaker aliases remain distinct runtime choices', () => {
+    expect(pageSource).toContain('A shortened MME output may show a possible full-name alias')
+    expect(pageSource).toContain('individually selectable speaker')
+    expect(pageSource).toContain('keeps the tested voice-runtime device.')
+  })
+
   it('starts first-run verification from the persisted canonical microphone index, not a display-name remap', () => {
     expect(pageSource).not.toContain('microphoneLabel ? { microphoneLabel } : undefined')
   })

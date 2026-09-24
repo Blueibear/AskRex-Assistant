@@ -198,6 +198,7 @@ def _build_device_picker_choices(
     channel_field: str,
     exclude_name_re: re.Pattern[str] | None = None,
     clarify_truncated_mme_aliases: bool = False,
+    mme_alias_kind: str = "device",
 ) -> list[dict[str, object]]:
     """Shared duplicate-safe picker logic for input/output device choices.
 
@@ -237,9 +238,8 @@ def _build_device_picker_choices(
     position_counts: dict[tuple[str, str], int] = {}
     for index, device, normalized_name, hostapi_name in eligible:
         name = str(device.get("name", "")).strip()
-        # Shortened-name correlation is a microphone-only presentation aid.
-        # Speakers retain their published duplicate-label behavior unless a
-        # future output-specific policy explicitly opts in.
+        # Shortened-name correlation is presentation-only evidence. It is
+        # enabled independently for microphone and speaker pickers.
         matched_names = (
             _truncated_mme_name_candidates(normalized_name, hostapi_name, eligible)
             if clarify_truncated_mme_aliases
@@ -256,11 +256,11 @@ def _build_device_picker_choices(
                 else ""
             )
             label = (
-                f"{matched_full_name} (MME input, possible shortened-name alias"
+                f"{matched_full_name} (MME {mme_alias_kind}, possible shortened-name alias"
                 f"{collision_detail}; separate device {position_counts[position_key]})"
             )
         elif clarify_truncated_mme_aliases and distinct_matched_names:
-            label = f"{name} (MME input, shortened name is ambiguous; separate device)"
+            label = f"{name} (MME {mme_alias_kind}, shortened name is ambiguous; separate device)"
         elif name_counts[normalized_name] > 1:
             position_key = (normalized_name, hostapi_name.casefold())
             position_counts[position_key] = position_counts.get(position_key, 0) + 1
@@ -301,6 +301,7 @@ def build_microphone_picker_devices(
         channel_field="max_input_channels",
         exclude_name_re=_LOOPBACK_INPUT_NAME_RE,
         clarify_truncated_mme_aliases=True,
+        mme_alias_kind="input",
     )
 
 
@@ -321,6 +322,8 @@ def build_speaker_picker_devices(
         resolved_devices,
         resolved_hostapis,
         channel_field="max_output_channels",
+        clarify_truncated_mme_aliases=True,
+        mme_alias_kind="output",
     )
 
 

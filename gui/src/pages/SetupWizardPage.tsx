@@ -388,8 +388,9 @@ function StepSpeaker({
         </select>
       </div>
       <p className="text-text-muted text-xs">
-        Entries sharing a name are labeled with their Windows audio API so each stays a distinct,
-        individually selectable speaker. The selected choice keeps the tested voice-runtime device.
+        A shortened MME output may show a possible full-name alias. This is not proof of device
+        identity: every entry remains a distinct, individually selectable speaker. The selected
+        choice keeps the tested voice-runtime device.
       </p>
       {inventoryError && <p className="text-red-400 text-sm">{inventoryError}</p>}
       <button
