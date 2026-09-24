@@ -12,7 +12,11 @@ import pytest
 
 from rex.mobile_api import attachments as attachment_module
 from rex.mobile_api.errors import MobileApiError
-from rex.mobile_api.routes.attachments import _UPLOAD_READ_CHUNK_BYTES, _read_attachment_limited
+from rex.mobile_api.routes.attachments import (
+    _MULTIPART_OVERHEAD_BYTES,
+    _UPLOAD_READ_CHUNK_BYTES,
+    _read_attachment_limited,
+)
 from tests.mobile_api.conftest import (
     auth_header,
     chat_payload,
@@ -42,6 +46,41 @@ def _upload(client, headers, conversation_id, data=b"private note", filename="no
 
 
 class TestMobileAttachments:
+    def test_lengthless_oversized_multipart_is_rejected_during_route_parsing(
+        self, client, services
+    ) -> None:
+        """A chunked request must hit the route ceiling before form access completes."""
+        _, headers = _authed(client)
+        services.config.max_attachment_bytes = 32
+        boundary = "askrex-test-boundary"
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="conversation_id"\r\n\r\n'
+            f"{uuid.uuid4()}\r\n"
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="attachment"; filename="note.txt"\r\n'
+            "Content-Type: text/plain\r\n\r\n"
+        ).encode("ascii") + (b"x" * (services.config.max_attachment_bytes + _MULTIPART_OVERHEAD_BYTES)) + (
+            f"\r\n--{boundary}--\r\n"
+        ).encode("ascii")
+
+        response = client.open(
+            "/mobile/attachments",
+            method="POST",
+            headers={
+                **headers,
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+            },
+            environ_overrides={
+                "CONTENT_LENGTH": "",
+                "wsgi.input": io.BytesIO(body),
+                "wsgi.input_terminated": True,
+            },
+        )
+
+        assert response.status_code == 413
+        assert response.get_json()["error"]["code"] == "PAYLOAD_TOO_LARGE"
+
     def test_lengthless_upload_stream_is_read_in_bounded_chunks(self) -> None:
         class BoundedStream:
             def __init__(self) -> None:

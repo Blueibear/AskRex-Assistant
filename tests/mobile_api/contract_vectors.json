@@ -1,5 +1,5 @@
 {
-  "contract_version": "2026-08-02.323.4",
+  "contract_version": "2026-09-24.323.5",
   "api_version": "1.0",
   "statuses": {
     "normal_chat": "completed",
@@ -96,7 +96,8 @@
         "device": "iphone",
         "location_hint": "home",
         "response_preference": "brief"
-      }
+      },
+      "attachment_ids": []
     },
     "chat_response": {
       "request_id": "9a2b1c3d-4444-4444-8444-444444444444",
@@ -104,7 +105,26 @@
       "conversation_id": "5f8f1f2a-2222-4222-8222-222222222222",
       "response": "The downstairs lights are off.",
       "status": "completed",
-      "events": []
+      "events": [],
+      "attachments": []
+    },
+    "attachments": {
+      "upload_path": "/mobile/attachments",
+      "upload_fields": [
+        "conversation_id",
+        "attachment"
+      ],
+      "upload_response": {
+        "request_id": "9a2b1c3d-4444-4444-8444-444444444444",
+        "status": "ready",
+        "attachment": {
+          "attachment_id": "5f8f1f2a-3333-4333-8333-333333333333",
+          "conversation_id": "5f8f1f2a-2222-4222-8222-222222222222",
+          "filename": "note.txt",
+          "media_type": "text/plain",
+          "size_bytes": 12
+        }
+      }
     },
     "sse": {
       "content_type": "text/event-stream",

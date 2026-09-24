@@ -91,6 +91,24 @@ class TestVectorHygiene:
         assert vectors["http"]["chat_response"]["status"] == "completed"
         assert vectors["websocket"]["message_done"]["status"] == "completed"
 
+    def test_attachment_contract_is_explicit_and_content_free(self, vectors) -> None:
+        attachment = vectors["http"]["attachments"]["upload_response"]["attachment"]
+        assert vectors["http"]["attachments"]["upload_path"] == "/mobile/attachments"
+        assert vectors["http"]["attachments"]["upload_fields"] == [
+            "conversation_id",
+            "attachment",
+        ]
+        assert set(attachment) == {
+            "attachment_id",
+            "conversation_id",
+            "filename",
+            "media_type",
+            "size_bytes",
+        }
+        assert "path" not in attachment
+        assert vectors["http"]["chat_request"]["attachment_ids"] == []
+        assert vectors["http"]["chat_response"]["attachments"] == []
+
     def test_close_codes(self, vectors) -> None:
         from rex.mobile_api import websocket as ws
 

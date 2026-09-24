@@ -15,6 +15,10 @@ from rex.mobile_api.errors import MobileApiError
 from rex.mobile_api.services import MobileApiServices
 
 _UPLOAD_READ_CHUNK_BYTES = 64 * 1024
+# The request budget permits multipart headers and the required conversation
+# field without allowing an unbounded parser read before the file-part limit
+# is enforced.
+_MULTIPART_OVERHEAD_BYTES = 128 * 1024
 
 
 def _read_attachment_limited(stream: Any, max_bytes: int) -> bytes:
@@ -48,9 +52,13 @@ def build_attachments_blueprint(services: MobileApiServices, limiter: Any) -> Bl
     def upload_attachment() -> Any:
         if not request.content_type or "multipart/form-data" not in request.content_type:
             raise MobileApiError(merr.INVALID_MEDIA, "Content-Type must be multipart/form-data.", 415)
-        if request.content_length is not None and request.content_length > (
-            services.config.max_attachment_bytes + 128 * 1024
-        ):
+        multipart_max_bytes = services.config.max_attachment_bytes + _MULTIPART_OVERHEAD_BYTES
+        # This must be set before touching request.form or request.files.
+        # In particular, a chunked request has no Content-Length, so the
+        # explicit preflight below is insufficient by itself. Werkzeug applies
+        # this per-request ceiling while it parses the multipart stream.
+        request.max_content_length = multipart_max_bytes
+        if request.content_length is not None and request.content_length > multipart_max_bytes:
             raise MobileApiError(merr.PAYLOAD_TOO_LARGE, "The attachment is too large.", 413)
         if (
             set(request.form) != {"conversation_id"}
