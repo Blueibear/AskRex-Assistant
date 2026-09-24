@@ -314,6 +314,32 @@ def test_speaker_picker_preserves_both_indices_for_identical_names_on_different_
     assert {choice["index"] for choice in choices} == {0, 1}
 
 
+def test_speaker_picker_does_not_apply_microphone_truncated_mme_alias_labels():
+    """TEST-011's microphone-only alias aid must not change speakers."""
+    choices = audio_config.build_speaker_picker_devices(
+        devices=[
+            {
+                "name": "Speakers (Studio Monitor Seri",
+                "max_output_channels": 2,
+                "hostapi": 0,
+            },
+            {
+                "name": "Speakers (Studio Monitor Series)",
+                "max_output_channels": 2,
+                "hostapi": 1,
+            },
+        ],
+        hostapis=[{"name": "MME"}, {"name": "Windows DirectSound"}],
+    )
+
+    assert [choice["index"] for choice in choices] == [0, 1]
+    assert [choice["name"] for choice in choices] == [
+        "Speakers (Studio Monitor Seri",
+        "Speakers (Studio Monitor Series)",
+    ]
+    assert all("shortened-name" not in str(choice["name"]) for choice in choices)
+
+
 def test_speaker_picker_labels_same_host_name_conflicts_without_deduplicating():
     choices = audio_config.build_speaker_picker_devices(
         devices=[

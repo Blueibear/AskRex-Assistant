@@ -237,8 +237,13 @@ def _build_device_picker_choices(
     position_counts: dict[tuple[str, str], int] = {}
     for index, device, normalized_name, hostapi_name in eligible:
         name = str(device.get("name", "")).strip()
-        matched_names = _truncated_mme_name_candidates(
-            normalized_name, hostapi_name, eligible
+        # Shortened-name correlation is a microphone-only presentation aid.
+        # Speakers retain their published duplicate-label behavior unless a
+        # future output-specific policy explicitly opts in.
+        matched_names = (
+            _truncated_mme_name_candidates(normalized_name, hostapi_name, eligible)
+            if clarify_truncated_mme_aliases
+            else []
         )
         distinct_matched_names = set(matched_names)
         if clarify_truncated_mme_aliases and len(distinct_matched_names) == 1:
@@ -256,16 +261,6 @@ def _build_device_picker_choices(
             )
         elif clarify_truncated_mme_aliases and distinct_matched_names:
             label = f"{name} (MME input, shortened name is ambiguous; separate device)"
-        elif len(distinct_matched_names) == 1:
-            matched_full_name = next(iter(distinct_matched_names))
-            position_key = (normalized_name, matched_full_name.casefold())
-            position_counts[position_key] = position_counts.get(position_key, 0) + 1
-            label = (
-                f"{matched_full_name} (MME shortened-name hint "
-                f"{position_counts[position_key]})"
-            )
-        elif distinct_matched_names:
-            label = f"{name} (MME shortened-name hint ambiguous)"
         elif name_counts[normalized_name] > 1:
             position_key = (normalized_name, hostapi_name.casefold())
             position_counts[position_key] = position_counts.get(position_key, 0) + 1
