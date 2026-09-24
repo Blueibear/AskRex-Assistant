@@ -110,6 +110,21 @@ class TestMobileAttachments:
         )
         assert response.status_code == 403
 
+    def test_rejects_repeated_conversation_id_field(self, client) -> None:
+        """Repeated multipart fields must not select an arbitrary conversation."""
+        _, headers = _authed(client)
+        response = client.post(
+            "/mobile/attachments",
+            headers=headers,
+            data={
+                "conversation_id": [str(uuid.uuid4()), str(uuid.uuid4())],
+                "attachment": (io.BytesIO(b"private note"), "note.txt", "text/plain"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert response.status_code == 400
+        assert response.get_json()["error"]["code"] == "BAD_REQUEST"
+
     def test_ingests_private_attachment_and_returns_safe_provenance(self, client) -> None:
         _, headers = _authed(client)
         conversation_id = str(uuid.uuid4())

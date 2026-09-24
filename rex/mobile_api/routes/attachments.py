@@ -62,6 +62,7 @@ def build_attachments_blueprint(services: MobileApiServices, limiter: Any) -> Bl
             raise MobileApiError(merr.PAYLOAD_TOO_LARGE, "The attachment is too large.", 413)
         if (
             set(request.form) != {"conversation_id"}
+            or len(request.form.getlist("conversation_id")) != 1
             or set(request.files) != {"attachment"}
             or len(request.files.getlist("attachment")) != 1
         ):
