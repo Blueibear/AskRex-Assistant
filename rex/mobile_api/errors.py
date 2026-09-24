@@ -92,6 +92,11 @@ class MobileApiError(Exception):
         self.code = code
         self.message = message
         self.http_status = http_status
+        # ``http_status`` is the canonical internal name.  Preserve the
+        # conventional exception attribute too, so callers that need to
+        # distinguish expected API failures do not depend on implementation
+        # details of this envelope class.
+        self.status_code = http_status
         self.retryable = retryable
         self.details = details
 
