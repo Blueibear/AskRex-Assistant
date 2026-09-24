@@ -5,9 +5,23 @@ import { describe, expect, it } from 'vitest'
 
 const repoRoot = resolve(import.meta.dirname, '..', '..')
 const guiRoot = resolve(repoRoot, 'gui')
+const expectedWindowsIconSizes = [16, 24, 32, 48, 64, 128, 256]
+
+type IconProvenance = {
+  product: string
+  artwork: string
+  canonicalArtwork: string
+  canonicalArtworkSha256: string
+  windowsIcon: string
+  windowsIconSha256: string
+}
+
+function sha256(path: string): string {
+  return createHash('sha256').update(readFileSync(path)).digest('hex')
+}
 
 describe('Windows application icon packaging', () => {
-  it('uses the shipped high-resolution AskRex ICO for the Windows executable and installer', () => {
+  it('uses the documented AskRex artwork ICO for the Windows executable and installer', () => {
     const packageJson = JSON.parse(
       readFileSync(resolve(guiRoot, 'package.json'), 'utf8')
     ) as { build: { win: { icon: string } } }
@@ -16,17 +30,24 @@ describe('Windows application icon packaging', () => {
     const executableIcon = resolve(guiRoot, packageJson.build.win.icon)
     expect(existsSync(executableIcon)).toBe(true)
 
+    const provenance = JSON.parse(
+      readFileSync(resolve(guiRoot, 'src/assets/icon-provenance.json'), 'utf8')
+    ) as IconProvenance
     const iconBytes = readFileSync(executableIcon)
     const entryCount = iconBytes.readUInt16LE(4)
     const sizes = Array.from({ length: entryCount }, (_, index) => {
       const offset = 6 + index * 16
-      return {
-        width: iconBytes[offset] === 0 ? 256 : iconBytes[offset],
-        height: iconBytes[offset + 1] === 0 ? 256 : iconBytes[offset + 1]
-      }
+      const width = iconBytes[offset] === 0 ? 256 : iconBytes[offset]
+      const height = iconBytes[offset + 1] === 0 ? 256 : iconBytes[offset + 1]
+      expect(width).toBe(height)
+      return width
     })
 
-    expect(sizes).toContainEqual({ width: 256, height: 256 })
+    expect(provenance.product).toBe('AskRex')
+    expect(provenance.artwork).toContain('raptor')
+    expect(provenance.windowsIcon).toBe(packageJson.build.win.icon.replace('src/assets/', ''))
+    expect(sha256(executableIcon)).toBe(provenance.windowsIconSha256)
+    expect(sizes).toEqual(expectedWindowsIconSizes)
   })
 
   it('ships the same high-resolution icon for the installed window', () => {
@@ -35,8 +56,14 @@ describe('Windows application icon packaging', () => {
     const windowSource = readFileSync(resolve(guiRoot, 'src/main/window.ts'), 'utf8')
 
     expect(existsSync(installedWindowIcon)).toBe(true)
-    expect(createHash('sha256').update(readFileSync(installedWindowIcon)).digest('hex')).toBe(
-      createHash('sha256').update(readFileSync(executableIcon)).digest('hex')
+    const provenance = JSON.parse(
+      readFileSync(resolve(guiRoot, 'src/assets/icon-provenance.json'), 'utf8')
+    ) as IconProvenance
+
+    expect(sha256(installedWindowIcon)).toBe(provenance.windowsIconSha256)
+    expect(sha256(executableIcon)).toBe(provenance.windowsIconSha256)
+    expect(sha256(resolve(guiRoot, 'src/assets', provenance.canonicalArtwork))).toBe(
+      provenance.canonicalArtworkSha256
     )
     expect(windowSource).toContain("join(process.resourcesPath, 'assets', 'brand', 'icon.ico')")
   })
