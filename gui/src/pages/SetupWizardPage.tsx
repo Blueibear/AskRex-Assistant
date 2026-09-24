@@ -331,9 +331,9 @@ function StepMicrophone({
         </select>
       </div>
       <p className="text-text-muted text-xs">
-        Windows MME names can show a full-name hint when their shortened name has one possible
-        match. This is not proof of device identity: every entry remains a distinct, individually
-        selectable microphone. The selected choice keeps the tested voice-runtime device.
+        An MME input can show a possible full-name alias when Windows shortens its name. This is
+        not proof of device identity: every entry remains a distinct, individually selectable
+        microphone. The selected choice keeps the tested voice-runtime device.
       </p>
       {inventoryError && <p className="text-red-400 text-sm">{inventoryError}</p>}
       <button

@@ -393,10 +393,13 @@ def test_audio_devices_returns_sanitized_portaudio_inventory(
         lambda *, devices: [
             {
                 "index": 0,
-                "name": "USB Microphone Full Name (MME shortened-name hint 1)",
+                "name": (
+                    "USB Microphone Full Name (MME input, possible shortened-name "
+                    "alias; separate device 1)"
+                ),
                 "max_input_channels": 1,
                 "max_output_channels": 0,
-                "host_api": "Windows WASAPI",
+                "host_api": "MME",
                 "alias_count": 1,
             }
         ],
@@ -422,7 +425,7 @@ def test_audio_devices_returns_sanitized_portaudio_inventory(
         "devices": [
             {
                 "index": 0,
-                "name": "USB Microphone Full Name (MME shortened-name hint 1)",
+                "name": "USB Microphone",
                 "max_input_channels": 1,
                 "max_output_channels": 0,
             },
@@ -436,10 +439,13 @@ def test_audio_devices_returns_sanitized_portaudio_inventory(
         "microphones": [
             {
                 "index": 0,
-                "name": "USB Microphone",
+                "name": (
+                    "USB Microphone Full Name (MME input, possible shortened-name "
+                    "alias; separate device 1)"
+                ),
                 "max_input_channels": 1,
                 "max_output_channels": 0,
-                "host_api": "Windows WASAPI",
+                "host_api": "MME",
                 "alias_count": 1,
             }
         ],

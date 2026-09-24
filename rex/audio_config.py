@@ -160,27 +160,27 @@ def _truncated_mme_name_candidates(
     normalized_name: str,
     hostapi_name: str,
     eligible: list[tuple[int, dict, str, str]],
-) -> set[str]:
+) -> list[str]:
     """Return possible full names for a truncated Windows MME entry.
 
     Some Windows MME device names are cut off by PortAudio while the same
     driver exposes a complete name through another host API.  A prefix match
     is presentation evidence only, not proof of physical identity.  It is
-    safe to expand that presentation hint only when it has exactly one full
-    normalized-name candidate. This is deliberately a *hint*, not an identity
-    assertion: PortAudio offers no physical-device identifier. All underlying
-    indices remain separate.
+    The caller must present the result as a possible alias, never as identity:
+    PortAudio offers no physical-device identifier.  Keeping one item per
+    host-API occurrence also lets the label explain a same-name collision
+    without silently treating it as one physical device.
     """
     if _normalize_device_name(hostapi_name) != "mme" or len(normalized_name) < 12:
-        return set()
+        return []
 
-    return {
+    return [
         str(device.get("name", "")).strip()
         for _, device, candidate_name, candidate_hostapi in eligible
         if _normalize_device_name(candidate_hostapi) != "mme"
         and candidate_name.startswith(normalized_name)
         and candidate_name != normalized_name
-    }
+    ]
 
 
 def _build_device_picker_choices(
@@ -189,6 +189,7 @@ def _build_device_picker_choices(
     *,
     channel_field: str,
     exclude_name_re: re.Pattern[str] | None = None,
+    clarify_truncated_mme_aliases: bool = False,
 ) -> list[dict[str, object]]:
     """Shared duplicate-safe picker logic for input/output device choices.
 
@@ -231,15 +232,31 @@ def _build_device_picker_choices(
         matched_names = _truncated_mme_name_candidates(
             normalized_name, hostapi_name, eligible
         )
-        if len(matched_names) == 1:
-            matched_full_name = next(iter(matched_names))
+        distinct_matched_names = set(matched_names)
+        if clarify_truncated_mme_aliases and len(distinct_matched_names) == 1:
+            matched_full_name = next(iter(distinct_matched_names))
+            position_key = (normalized_name, matched_full_name.casefold())
+            position_counts[position_key] = position_counts.get(position_key, 0) + 1
+            collision_detail = (
+                f" of {len(matched_names)} same-named host-API entries"
+                if len(matched_names) > 1
+                else ""
+            )
+            label = (
+                f"{matched_full_name} (MME input, possible shortened-name alias"
+                f"{collision_detail}; separate device {position_counts[position_key]})"
+            )
+        elif clarify_truncated_mme_aliases and distinct_matched_names:
+            label = f"{name} (MME input, shortened name is ambiguous; separate device)"
+        elif len(distinct_matched_names) == 1:
+            matched_full_name = next(iter(distinct_matched_names))
             position_key = (normalized_name, matched_full_name.casefold())
             position_counts[position_key] = position_counts.get(position_key, 0) + 1
             label = (
                 f"{matched_full_name} (MME shortened-name hint "
                 f"{position_counts[position_key]})"
             )
-        elif matched_names:
+        elif distinct_matched_names:
             label = f"{name} (MME shortened-name hint ambiguous)"
         elif name_counts[normalized_name] > 1:
             position_key = (normalized_name, hostapi_name.casefold())
@@ -280,6 +297,7 @@ def build_microphone_picker_devices(
         resolved_hostapis,
         channel_field="max_input_channels",
         exclude_name_re=_LOOPBACK_INPUT_NAME_RE,
+        clarify_truncated_mme_aliases=True,
     )
 
 

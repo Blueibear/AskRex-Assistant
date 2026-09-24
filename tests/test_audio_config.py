@@ -418,7 +418,8 @@ def test_microphone_picker_expands_only_unambiguous_truncated_mme_name_matches()
     assert {choice["index"] for choice in choices} == {0, 1, 2, 3}
     assert (
         choices[0]["name"]
-        == "Microphone (C922 Pro Stream Webcam) (MME shortened-name hint 1)"
+        == "Microphone (C922 Pro Stream Webcam) (MME input, possible shortened-name "
+        "alias of 3 same-named host-API entries; separate device 1)"
     )
     assert [choice["name"] for choice in choices[1:]] == [
         "Microphone (C922 Pro Stream Webcam) (Windows DirectSound 1)",
@@ -445,7 +446,7 @@ def test_microphone_picker_does_not_expand_ambiguous_truncated_mme_name_match():
     assert {choice["index"] for choice in choices} == {0, 1, 2}
     assert (
         choices[0]["name"]
-        == "Microphone (Studio (MME shortened-name hint ambiguous)"
+        == "Microphone (Studio (MME input, shortened name is ambiguous; separate device)"
     )
 
 
@@ -469,10 +470,36 @@ def test_microphone_picker_keeps_same_name_collision_as_separate_shortened_name_
     )
 
     assert {choice["index"] for choice in choices} == {0, 1, 2}
-    assert choices[0]["name"] == "Microphone (USB Capture Pro) (MME shortened-name hint 1)"
+    assert choices[0]["name"] == (
+        "Microphone (USB Capture Pro) (MME input, possible shortened-name alias "
+        "of 2 same-named host-API entries; separate device 1)"
+    )
     assert [choice["name"] for choice in choices[1:]] == [
         "Microphone (USB Capture Pro) (Windows DirectSound 1)",
         "Microphone (USB Capture Pro) (Windows WASAPI 1)",
+    ]
+
+
+def test_microphone_picker_gives_repeated_truncated_mme_aliases_stable_separate_labels():
+    choices = audio_config.build_microphone_picker_devices(
+        devices=[
+            {"name": "Headset Microphone (Bose Flex S", "max_input_channels": 1, "hostapi": 0},
+            {"name": "Headset Microphone (Bose Flex S", "max_input_channels": 1, "hostapi": 0},
+            {
+                "name": "Headset Microphone (Bose Flex SoundLink)",
+                "max_input_channels": 1,
+                "hostapi": 1,
+            },
+        ],
+        hostapis=[{"name": "MME"}, {"name": "Windows DirectSound"}],
+    )
+
+    assert {choice["index"] for choice in choices} == {0, 1, 2}
+    assert [choice["name"] for choice in choices[:2]] == [
+        "Headset Microphone (Bose Flex SoundLink) (MME input, possible shortened-name "
+        "alias; separate device 1)",
+        "Headset Microphone (Bose Flex SoundLink) (MME input, possible shortened-name "
+        "alias; separate device 2)",
     ]
 
 
