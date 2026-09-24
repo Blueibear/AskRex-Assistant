@@ -494,14 +494,17 @@ def test_microphone_picker_gives_repeated_truncated_mme_aliases_stable_separate_
         hostapis=[{"name": "MME"}, {"name": "Windows DirectSound"}],
     )
 
-    assert [choice["index"] for choice in choices] == [0, 1, 2]
-    assert [choice["name"] for choice in choices[:2]] == [
+    by_index = {choice["index"]: choice["name"] for choice in choices}
+    assert by_index[0] == (
         "Headset Microphone (Bose Flex SoundLink) (MME input, possible shortened-name "
-        "alias; separate device 1)",
+        "alias; separate device 1)"
+    )
+    assert by_index[1] == (
         "Headset Microphone (Bose Flex SoundLink) (MME input, possible shortened-name "
-        "alias; separate device 2)",
-    ]
-    assert choices[2]["name"] == "Headset Microphone (Bose Flex SoundLink)"
+        "alias; separate device 2)"
+    )
+    assert by_index[2] == "Headset Microphone (Bose Flex SoundLink)"
+    assert {choice["index"] for choice in choices} == {0, 1, 2}
 
 
 def test_main_updates_json_config(monkeypatch, tmp_path):
