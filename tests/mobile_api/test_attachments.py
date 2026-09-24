@@ -13,7 +13,6 @@ import pytest
 from rex.mobile_api import attachments as attachment_module
 from rex.mobile_api.errors import MobileApiError
 from rex.mobile_api.routes.attachments import _UPLOAD_READ_CHUNK_BYTES, _read_attachment_limited
-
 from tests.mobile_api.conftest import (
     auth_header,
     chat_payload,
