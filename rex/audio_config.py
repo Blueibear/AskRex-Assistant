@@ -190,6 +190,7 @@ def _build_device_picker_choices(
     channel_field: str,
     exclude_name_re: re.Pattern[str] | None = None,
     clarify_truncated_mme_aliases: bool = False,
+    stable_index_order: bool = False,
 ) -> list[dict[str, object]]:
     """Shared duplicate-safe picker logic for input/output device choices.
 
@@ -275,6 +276,12 @@ def _build_device_picker_choices(
             }
         )
 
+    if stable_index_order:
+        # Alphabetical sorting can separate a repeated truncated MME alias
+        # from its stable "separate device N" sequence when its expanded full
+        # name sorts before the alias labels. Index ordering is deterministic
+        # and makes the display order agree with setup's persisted value.
+        return sorted(choices, key=lambda choice: int(choice["index"]))
     return sorted(choices, key=lambda choice: str(choice["name"]).casefold())
 
 
@@ -298,6 +305,7 @@ def build_microphone_picker_devices(
         channel_field="max_input_channels",
         exclude_name_re=_LOOPBACK_INPUT_NAME_RE,
         clarify_truncated_mme_aliases=True,
+        stable_index_order=True,
     )
 
 
