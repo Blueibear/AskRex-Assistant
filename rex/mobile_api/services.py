@@ -17,8 +17,8 @@ from datetime import datetime
 from pathlib import Path
 
 from rex.config import MobileApiConfig
-from rex.mobile_api.auth import load_jwt_secret
 from rex.mobile_api.attachments import MobileAttachmentStore
+from rex.mobile_api.auth import load_jwt_secret
 from rex.mobile_api.chat import MobileChatService
 from rex.mobile_api.db import default_users_db_path
 from rex.mobile_api.idempotency import MobileMessageStore
