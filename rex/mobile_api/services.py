@@ -18,6 +18,7 @@ from pathlib import Path
 
 from rex.config import MobileApiConfig
 from rex.mobile_api.auth import load_jwt_secret
+from rex.mobile_api.attachments import MobileAttachmentStore
 from rex.mobile_api.chat import MobileChatService
 from rex.mobile_api.db import default_users_db_path
 from rex.mobile_api.idempotency import MobileMessageStore
@@ -76,6 +77,7 @@ class MobileApiServices:
     jwt_secret: str
     session_store: MobileSessionStore
     message_store: MobileMessageStore
+    attachment_store: MobileAttachmentStore
     pairing_authority: PairingAuthority
     strong_auth_authority: StrongAuthAuthority
     chat_service: MobileChatService
@@ -157,6 +159,10 @@ class MobileApiServices:
             jwt_secret=secret,
             session_store=store,
             message_store=messages,
+            attachment_store=MobileAttachmentStore(
+                resolved_db_path,
+                retention_seconds=cfg.attachment_retention_seconds,
+            ),
             pairing_authority=PairingAuthority(
                 resolved_db_path,
                 clock=clock,

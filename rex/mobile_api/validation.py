@@ -44,6 +44,7 @@ _ALLOWED_CHAT_FIELDS = {
     "mode",
     "client_context",
     "strong_auth_approval_id",
+    "attachment_ids",
 }
 
 
@@ -187,6 +188,7 @@ class ChatRequest:
     mode: str = _CHAT_MODE
     client_context: dict[str, str] = field(default_factory=dict)
     strong_auth_approval_id: str | None = None
+    attachment_ids: tuple[str, ...] = ()
 
     def semantic_fields(self) -> dict[str, Any]:
         """Return the semantic execution fields used for the request hash."""
@@ -198,6 +200,7 @@ class ChatRequest:
             "mode": self.mode,
             "client_context": self.client_context,
             "strong_auth_approval_id": self.strong_auth_approval_id,
+            "attachment_ids": list(self.attachment_ids),
         }
 
 
@@ -285,6 +288,21 @@ def parse_chat_payload(payload: dict[str, Any]) -> ChatRequest:
             )
         approval_id = approval_id.strip()
 
+    attachment_ids_raw = payload.get("attachment_ids", [])
+    if not isinstance(attachment_ids_raw, list) or len(attachment_ids_raw) > 5:
+        raise MobileApiError(merr.BAD_REQUEST, "Field 'attachment_ids' is invalid.", 400)
+    attachment_ids: list[str] = []
+    for value in attachment_ids_raw:
+        if not isinstance(value, str):
+            raise MobileApiError(merr.BAD_REQUEST, "Field 'attachment_ids' is invalid.", 400)
+        try:
+            attachment_id = str(uuid.UUID(value))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise MobileApiError(merr.BAD_REQUEST, "Field 'attachment_ids' is invalid.", 400) from exc
+        if attachment_id in attachment_ids:
+            raise MobileApiError(merr.BAD_REQUEST, "Field 'attachment_ids' contains duplicates.", 400)
+        attachment_ids.append(attachment_id)
+
     return ChatRequest(
         message_id=_require_uuid_field(payload, "message_id"),
         conversation_id=_require_uuid_field(payload, "conversation_id"),
@@ -293,6 +311,7 @@ def parse_chat_payload(payload: dict[str, Any]) -> ChatRequest:
         mode=mode,
         client_context=_parse_client_context(payload),
         strong_auth_approval_id=approval_id,
+        attachment_ids=tuple(attachment_ids),
     )
 
 

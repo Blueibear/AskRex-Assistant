@@ -159,6 +159,24 @@ def migrate_users_db(db_path: Path | str) -> None:
             ON mobile_message_requests(created_at)
             """)
         conn.execute("""
+            CREATE TABLE IF NOT EXISTS mobile_conversation_attachments (
+                attachment_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                device_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                media_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                storage_name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            )
+            """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_mobile_conversation_attachments_owner
+            ON mobile_conversation_attachments(user_id, device_id, conversation_id, expires_at)
+            """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS mobile_pairing_authority (
                 singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
                 desktop_id TEXT UNIQUE NOT NULL,

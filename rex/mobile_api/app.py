@@ -18,6 +18,7 @@ from rex.mobile_api.db import migrate_users_db
 from rex.mobile_api.errors import install_mobile_error_handlers
 from rex.mobile_api.routes import (
     build_auth_blueprint,
+    build_attachments_blueprint,
     build_chat_blueprint,
     build_home_blueprint,
     build_pairing_blueprint,
@@ -149,6 +150,7 @@ def create_mobile_app(
     app.register_blueprint(build_strong_auth_blueprint(services))
     app.register_blueprint(build_home_blueprint(services))
     app.register_blueprint(build_chat_blueprint(services, limiter))
+    app.register_blueprint(build_attachments_blueprint(services, limiter))
     app.register_blueprint(build_voice_blueprint(services, limiter))
     app.register_blueprint(build_settings_blueprint(services))
     app.register_blueprint(build_scaffolds_blueprint(services))

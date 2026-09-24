@@ -1,0 +1,139 @@
+"""US-086 slice (a): authenticated temporary mobile chat attachments."""
+
+from __future__ import annotations
+
+import io
+import os
+import uuid
+
+from tests.mobile_api.conftest import (
+    auth_header,
+    chat_payload,
+    create_user,
+    paired_login_tokens,
+)
+
+
+def _authed(client, username="james", password="pw-123456"):
+    user_id = create_user(username, password)
+    tokens = paired_login_tokens(
+        client, username, password, scopes=["chat.send", "attachments.upload"]
+    )
+    return user_id, auth_header(tokens["access_token"])
+
+
+def _upload(client, headers, conversation_id, data=b"private note", filename="note.txt"):
+    return client.post(
+        "/mobile/attachments",
+        headers=headers,
+        data={
+            "conversation_id": conversation_id,
+            "attachment": (io.BytesIO(data), filename, "application/octet-stream"),
+        },
+        content_type="multipart/form-data",
+    )
+
+
+class TestMobileAttachments:
+    def test_requires_attachment_scope_before_file_processing(self, client) -> None:
+        create_user("james", "pw-123456")
+        tokens = paired_login_tokens(client, "james", "pw-123456", scopes=["chat.send"])
+        response = _upload(
+            client,
+            auth_header(tokens["access_token"]),
+            str(uuid.uuid4()),
+        )
+        assert response.status_code == 403
+
+    def test_ingests_private_attachment_and_returns_safe_provenance(self, client) -> None:
+        _, headers = _authed(client)
+        conversation_id = str(uuid.uuid4())
+        response = _upload(client, headers, conversation_id, filename=r"C:\private\note.txt")
+        assert response.status_code == 201, response.get_json()
+        body = response.get_json()
+        assert body["status"] == "ready"
+        assert body["attachment"] == {
+            "attachment_id": body["attachment"]["attachment_id"],
+            "conversation_id": conversation_id,
+            "filename": "C_private_note.txt",
+            "media_type": "text/plain",
+            "size_bytes": 12,
+        }
+        assert "path" not in repr(body).lower()
+
+    def test_declared_mime_and_extension_do_not_grant_type_authority(self, client) -> None:
+        _, headers = _authed(client)
+        response = _upload(
+            client, headers, str(uuid.uuid4()), data=b"GIF89a" + b"x" * 10, filename="safe.pdf"
+        )
+        assert response.status_code == 415
+        assert response.get_json()["error"]["code"] == "INVALID_MEDIA"
+
+    def test_attachment_reference_is_bound_to_owner_device_and_conversation(
+        self, client, fake_chat_service
+    ) -> None:
+        _, headers_a = _authed(client, "james", "pw-123456")
+        _, headers_b = _authed(client, "cole", "pw-abcdef")
+        conversation_id = str(uuid.uuid4())
+        uploaded = _upload(client, headers_a, conversation_id).get_json()["attachment"]
+
+        valid = chat_payload(
+            conversation_id=conversation_id,
+            attachment_ids=[uploaded["attachment_id"]],
+        )
+        response = client.post("/mobile/chat", headers=headers_a, json=valid)
+        assert response.status_code == 200, response.get_json()
+        assert response.get_json()["attachments"] == [uploaded]
+        assert fake_chat_service.calls[-1][0] == valid["message"]
+
+        wrong_user = client.post("/mobile/chat", headers=headers_b, json=valid)
+        assert wrong_user.status_code == 403
+        wrong_conversation = client.post(
+            "/mobile/chat",
+            headers=headers_a,
+            json=chat_payload(attachment_ids=[uploaded["attachment_id"]]),
+        )
+        assert wrong_conversation.status_code == 403
+
+    def test_attachment_count_and_temp_expiry_cleanup(self, client, services) -> None:
+        _, headers = _authed(client)
+        conversation_id = str(uuid.uuid4())
+        services.config.max_attachments_per_conversation = 1
+        first = _upload(client, headers, conversation_id)
+        assert first.status_code == 201
+        assert _upload(client, headers, conversation_id).status_code == 413
+        attachment_id = first.get_json()["attachment"]["attachment_id"]
+        storage = services.attachment_store.storage_root / f"{attachment_id}.bin"
+        assert storage.exists()
+        from datetime import timedelta
+
+        services.attachment_store.retention_seconds = 1
+        services.attachment_store.create(
+            user_id="unused",
+            device_id="unused",
+            conversation_id=str(uuid.uuid4()),
+            filename="new.txt",
+            data=b"new",
+            max_per_conversation=5,
+        )
+        # Force expiry without exposing content or relying on client fields.
+        from rex.mobile_api.db import connect
+
+        conn = connect(services.db_path)
+        try:
+            conn.execute(
+                "UPDATE mobile_conversation_attachments SET expires_at = ? WHERE attachment_id = ?",
+                (
+                    (services.attachment_store._now() - timedelta(seconds=1)).isoformat(),
+                    attachment_id,
+                ),
+            )
+        finally:
+            conn.close()
+        services.attachment_store.validate_references(
+            user_id="unused",
+            device_id="unused",
+            conversation_id=str(uuid.uuid4()),
+            attachment_ids=(),
+        )
+        assert not os.path.exists(storage)

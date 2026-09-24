@@ -275,6 +275,11 @@ class MobileApiConfig(BaseModel):
     max_json_bytes: int = 1_048_576
     max_audio_bytes: int = 15_728_640
     max_audio_seconds: int = 60
+    # Per-turn attachments are deliberately smaller and shorter-lived than
+    # voice uploads. They are not durable documents or background context.
+    max_attachment_bytes: int = 10_485_760
+    max_attachments_per_conversation: int = 5
+    attachment_retention_seconds: int = 3_600
     rate_limit_default: str = "60 per minute"
     rate_limit_login: str = "10 per minute"
     rate_limit_refresh: str = "30 per minute"
@@ -315,6 +320,9 @@ class MobileApiConfig(BaseModel):
         "max_json_bytes",
         "max_audio_bytes",
         "max_audio_seconds",
+        "max_attachment_bytes",
+        "max_attachments_per_conversation",
+        "attachment_retention_seconds",
         "idempotency_retention_hours",
     )
     @classmethod

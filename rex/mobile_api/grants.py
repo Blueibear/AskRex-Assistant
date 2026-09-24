@@ -27,6 +27,7 @@ ALLOWED_SCOPES: frozenset[str] = frozenset(
     {
         "chat.send",
         "chat.history.read",
+        "attachments.upload",
         "voice.use",
         "home.read",
         "home.control",
@@ -42,6 +43,7 @@ ALLOWED_SCOPES: frozenset[str] = frozenset(
 ACTION_SCOPES: frozenset[str] = frozenset(
     {
         "chat.send",
+        "attachments.upload",
         "voice.use",
         "home.control",
         "tasks.write",

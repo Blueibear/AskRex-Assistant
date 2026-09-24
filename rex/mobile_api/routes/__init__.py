@@ -4,6 +4,7 @@ Each module exposes a ``build_*_blueprint`` factory so every app instance
 gets independent, injectable views (no module-global request state).
 """
 
+from rex.mobile_api.routes.attachments import build_attachments_blueprint
 from rex.mobile_api.routes.auth import build_auth_blueprint
 from rex.mobile_api.routes.chat import build_chat_blueprint
 from rex.mobile_api.routes.home import build_home_blueprint
@@ -15,6 +16,7 @@ from rex.mobile_api.routes.strong_auth import build_strong_auth_blueprint
 from rex.mobile_api.routes.voice import build_voice_blueprint
 
 __all__ = [
+    "build_attachments_blueprint",
     "build_auth_blueprint",
     "build_chat_blueprint",
     "build_home_blueprint",

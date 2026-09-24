@@ -20,6 +20,7 @@ ROUTE_SCOPES = MappingProxyType(
         "chat.send": "chat.send",
         "chat.stream": "chat.send",
         "chat.websocket": "chat.send",
+        "attachments.upload": "attachments.upload",
         "voice.upload": "voice.use",
         "tts.playback": "voice.use",
         "home.read": "home.read",

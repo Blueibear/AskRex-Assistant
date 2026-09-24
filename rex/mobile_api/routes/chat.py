@@ -122,6 +122,16 @@ def build_chat_blueprint(services: MobileApiServices, limiter: Any) -> Blueprint
             # Exact duplicate: replay the stored terminal result, no execution.
             stored = json.loads(reservation.response_json or "{}")
             return jsonify(stored), 200
+        try:
+            attachments = services.attachment_store.validate_references(
+                user_id=principal.user_id,
+                device_id=principal.paired_device_id,
+                conversation_id=chat_request.conversation_id,
+                attachment_ids=chat_request.attachment_ids,
+            )
+        except MobileApiError as exc:
+            services.message_store.fail(principal.user_id, chat_request.message_id, exc.code)
+            raise
 
         def authorization_check() -> None:
             revalidate_principal(
@@ -169,6 +179,7 @@ def build_chat_blueprint(services: MobileApiServices, limiter: Any) -> Blueprint
             "response": completion,
             "status": STATUS_COMPLETED,
             "events": status_events,
+            "attachments": [attachment.public_dict() for attachment in attachments],
         }
         # Persist the terminal result before responding so a retry replays
         # exactly what this client received.
@@ -203,6 +214,16 @@ def build_chat_blueprint(services: MobileApiServices, limiter: Any) -> Blueprint
                 status=str(stored.get("status", STATUS_COMPLETED)),
             )
             return _sse_response(iter([mev.format_sse(replay)]))
+        try:
+            attachments = services.attachment_store.validate_references(
+                user_id=principal.user_id,
+                device_id=principal.paired_device_id,
+                conversation_id=chat_request.conversation_id,
+                attachment_ids=chat_request.attachment_ids,
+            )
+        except MobileApiError as exc:
+            services.message_store.fail(principal.user_id, chat_request.message_id, exc.code)
+            raise
 
         user_id = principal.user_id
         message_id = chat_request.message_id
@@ -305,6 +326,7 @@ def build_chat_blueprint(services: MobileApiServices, limiter: Any) -> Blueprint
                     "response": full_content,
                     "status": STATUS_COMPLETED,
                     "events": [],
+                    "attachments": [attachment.public_dict() for attachment in attachments],
                 }
                 # Terminal result is stored before message_done is emitted.
                 store.complete(user_id, message_id, json.dumps(body, ensure_ascii=True))
