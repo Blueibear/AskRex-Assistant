@@ -14,6 +14,20 @@ from rex.mobile_api.authorization import ROUTE_SCOPES
 from rex.mobile_api.errors import MobileApiError
 from rex.mobile_api.services import MobileApiServices
 
+_UPLOAD_READ_CHUNK_BYTES = 64 * 1024
+
+
+def _read_attachment_limited(stream: Any, max_bytes: int) -> bytes:
+    """Read a multipart part incrementally without trusting Content-Length."""
+    data = bytearray()
+    while True:
+        chunk = stream.read(_UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            return bytes(data)
+        if len(data) + len(chunk) > max_bytes:
+            raise MobileApiError(merr.PAYLOAD_TOO_LARGE, "The attachment is too large.", 413)
+        data.extend(chunk)
+
 
 def _conversation_id() -> str:
     value = request.form.get("conversation_id")
@@ -52,7 +66,7 @@ def build_attachments_blueprint(services: MobileApiServices, limiter: Any) -> Bl
         part = request.files.get("attachment")
         if part is None or not part.filename:
             raise MobileApiError(merr.BAD_REQUEST, "One attachment file is required.", 400)
-        data = bytes(part.read())
+        data = _read_attachment_limited(part.stream, services.config.max_attachment_bytes)
         if not data:
             raise MobileApiError(merr.INVALID_MEDIA, "The attachment is empty.", 415)
         if len(data) > services.config.max_attachment_bytes:

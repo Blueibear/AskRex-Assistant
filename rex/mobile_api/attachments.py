@@ -130,6 +130,8 @@ class MobileAttachmentStore:
         storage_name = f"{attachment_id}.bin"
         expires_at = now + timedelta(seconds=self.retention_seconds)
         conn = connect(self.db_path)
+        path: Path | None = None
+        metadata_persisted = False
         try:
             conn.execute("BEGIN IMMEDIATE")
             self._cleanup_expired(conn, now)
@@ -172,11 +174,20 @@ class MobileAttachmentStore:
                 ),
             )
             conn.execute("COMMIT")
+            metadata_persisted = True
         except Exception:
             try:
                 conn.execute("ROLLBACK")
             except Exception:
                 pass
+            # Content is authorized only by its metadata row.  If inserting
+            # or committing that row fails, do not leave an unreachable file
+            # containing private upload data behind.
+            if path is not None and not metadata_persisted:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
             raise
         finally:
             conn.close()

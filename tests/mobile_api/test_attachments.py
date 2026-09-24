@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import io
 import os
+import sqlite3
 import uuid
+
+import pytest
+
+from rex.mobile_api import attachments as attachment_module
+from rex.mobile_api.errors import MobileApiError
+from rex.mobile_api.routes.attachments import _UPLOAD_READ_CHUNK_BYTES, _read_attachment_limited
 
 from tests.mobile_api.conftest import (
     auth_header,
@@ -35,6 +42,25 @@ def _upload(client, headers, conversation_id, data=b"private note", filename="no
 
 
 class TestMobileAttachments:
+    def test_lengthless_upload_stream_is_read_in_bounded_chunks(self) -> None:
+        class BoundedStream:
+            def __init__(self) -> None:
+                self.remaining = _UPLOAD_READ_CHUNK_BYTES * 2
+                self.read_sizes: list[int] = []
+
+            def read(self, size: int) -> bytes:
+                self.read_sizes.append(size)
+                if not self.remaining:
+                    return b""
+                self.remaining -= size
+                return b"x" * size
+
+        stream = BoundedStream()
+        with pytest.raises(MobileApiError) as error:
+            _read_attachment_limited(stream, _UPLOAD_READ_CHUNK_BYTES + 1)
+        assert error.value.status_code == 413
+        assert stream.read_sizes == [_UPLOAD_READ_CHUNK_BYTES, _UPLOAD_READ_CHUNK_BYTES]
+
     def test_requires_attachment_scope_before_file_processing(self, client) -> None:
         create_user("james", "pw-123456")
         tokens = paired_login_tokens(client, "james", "pw-123456", scopes=["chat.send"])
@@ -137,3 +163,36 @@ class TestMobileAttachments:
             attachment_ids=(),
         )
         assert not os.path.exists(storage)
+
+    def test_metadata_persistence_failure_removes_created_attachment_file(
+        self, services, monkeypatch
+    ) -> None:
+        real_connect = attachment_module.connect
+
+        class InsertFailingConnection:
+            def __init__(self, connection) -> None:
+                self.connection = connection
+
+            def execute(self, sql, *args):
+                if sql.lstrip().startswith("INSERT INTO mobile_conversation_attachments"):
+                    raise sqlite3.DatabaseError("forced metadata failure")
+                return self.connection.execute(sql, *args)
+
+            def close(self) -> None:
+                self.connection.close()
+
+        monkeypatch.setattr(
+            attachment_module,
+            "connect",
+            lambda path: InsertFailingConnection(real_connect(path)),
+        )
+        with pytest.raises(sqlite3.DatabaseError, match="forced metadata failure"):
+            services.attachment_store.create(
+                user_id="james",
+                device_id="device",
+                conversation_id=str(uuid.uuid4()),
+                filename="note.txt",
+                data=b"private note",
+                max_per_conversation=5,
+            )
+        assert list(services.attachment_store.storage_root.iterdir()) == []
