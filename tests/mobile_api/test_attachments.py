@@ -6,6 +6,7 @@ import io
 import os
 import sqlite3
 import uuid
+from datetime import timedelta
 
 import pytest
 
@@ -131,8 +132,6 @@ class TestMobileAttachments:
         attachment_id = first.get_json()["attachment"]["attachment_id"]
         storage = services.attachment_store.storage_root / f"{attachment_id}.bin"
         assert storage.exists()
-        from datetime import timedelta
-
         services.attachment_store.retention_seconds = 1
         services.attachment_store.create(
             user_id="unused",
