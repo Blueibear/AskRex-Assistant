@@ -48,7 +48,7 @@ function promptForActiveUser(knownUserIds: string[]): string | null {
 }
 
 app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('com.rex-ai.rex-gui')
+  electronApp.setAppUserModelId('com.askrex.app')
   writeElectronSessionStart()
 
   app.on('browser-window-created', (_, window) => {
