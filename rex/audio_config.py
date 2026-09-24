@@ -167,7 +167,9 @@ def _truncated_mme_name_candidates(
     driver exposes a complete name through another host API.  A prefix match
     is presentation evidence only, not proof of physical identity.  It is
     safe to expand that presentation hint only when it has exactly one full
-    normalized-name candidate.  All underlying indices remain separate.
+    normalized-name candidate. This is deliberately a *hint*, not an identity
+    assertion: PortAudio offers no physical-device identifier. All underlying
+    indices remain separate.
     """
     if _normalize_device_name(hostapi_name) != "mme" or len(normalized_name) < 12:
         return set()
@@ -234,11 +236,11 @@ def _build_device_picker_choices(
             position_key = (normalized_name, matched_full_name.casefold())
             position_counts[position_key] = position_counts.get(position_key, 0) + 1
             label = (
-                f"{matched_full_name} (MME truncated-name match "
+                f"{matched_full_name} (MME shortened-name hint "
                 f"{position_counts[position_key]})"
             )
         elif matched_names:
-            label = f"{name} (MME truncated-name match ambiguous)"
+            label = f"{name} (MME shortened-name hint ambiguous)"
         elif name_counts[normalized_name] > 1:
             position_key = (normalized_name, hostapi_name.casefold())
             position_counts[position_key] = position_counts.get(position_key, 0) + 1

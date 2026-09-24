@@ -418,7 +418,7 @@ def test_microphone_picker_expands_only_unambiguous_truncated_mme_name_matches()
     assert {choice["index"] for choice in choices} == {0, 1, 2, 3}
     assert (
         choices[0]["name"]
-        == "Microphone (C922 Pro Stream Webcam) (MME truncated-name match 1)"
+        == "Microphone (C922 Pro Stream Webcam) (MME shortened-name hint 1)"
     )
     assert [choice["name"] for choice in choices[1:]] == [
         "Microphone (C922 Pro Stream Webcam) (Windows DirectSound 1)",
@@ -445,8 +445,35 @@ def test_microphone_picker_does_not_expand_ambiguous_truncated_mme_name_match():
     assert {choice["index"] for choice in choices} == {0, 1, 2}
     assert (
         choices[0]["name"]
-        == "Microphone (Studio (MME truncated-name match ambiguous)"
+        == "Microphone (Studio (MME shortened-name hint ambiguous)"
     )
+
+
+def test_microphone_picker_keeps_same_name_collision_as_separate_shortened_name_hint():
+    """A matching full name is only a display hint, even when it repeats.
+
+    The MME entry must retain its canonical index and cannot be presented as
+    proof that it is either of two distinct same-named host-API devices.
+    """
+    choices = audio_config.build_microphone_picker_devices(
+        devices=[
+            {"name": "Microphone (USB Capture", "max_input_channels": 1, "hostapi": 0},
+            {"name": "Microphone (USB Capture Pro)", "max_input_channels": 1, "hostapi": 1},
+            {"name": "Microphone (USB Capture Pro)", "max_input_channels": 1, "hostapi": 2},
+        ],
+        hostapis=[
+            {"name": "MME"},
+            {"name": "Windows DirectSound"},
+            {"name": "Windows WASAPI"},
+        ],
+    )
+
+    assert {choice["index"] for choice in choices} == {0, 1, 2}
+    assert choices[0]["name"] == "Microphone (USB Capture Pro) (MME shortened-name hint 1)"
+    assert [choice["name"] for choice in choices[1:]] == [
+        "Microphone (USB Capture Pro) (Windows DirectSound 1)",
+        "Microphone (USB Capture Pro) (Windows WASAPI 1)",
+    ]
 
 
 def test_main_updates_json_config(monkeypatch, tmp_path):
