@@ -201,7 +201,8 @@ class MobileAttachmentStore:
             found: list[Attachment] = []
             for attachment_id in attachment_ids:
                 row = conn.execute(
-                    "SELECT attachment_id, conversation_id, filename, media_type, size_bytes "
+                    "SELECT attachment_id, conversation_id, filename, media_type, size_bytes, "
+                    "storage_name "
                     "FROM mobile_conversation_attachments WHERE attachment_id = ? AND user_id = ? "
                     "AND device_id = ? AND conversation_id = ?",
                     (attachment_id, user_id, device_id, conversation_id),
