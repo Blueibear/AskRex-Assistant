@@ -462,6 +462,63 @@ def test_audio_devices_returns_sanitized_portaudio_inventory(
     }
 
 
+def test_audio_devices_keeps_a_clarified_mme_alias_and_canonical_index(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The setup bridge must pass presentation-only alias labels through unchanged."""
+    monkeypatch.setattr(
+        "rex.audio_config.list_devices",
+        lambda: [
+            {
+                "name": "Microphone (C922 Pro Stream Web",
+                "max_input_channels": 1,
+                "max_output_channels": 0,
+            },
+            {
+                "name": "Microphone (C922 Pro Stream Webcam)",
+                "max_input_channels": 1,
+                "max_output_channels": 0,
+            },
+        ],
+    )
+    microphones = [
+        {
+            "index": 4,
+            "name": (
+                "Microphone (C922 Pro Stream Webcam) (MME input, possible shortened-name "
+                "alias; separate device 1)"
+            ),
+            "max_input_channels": 1,
+            "max_output_channels": 0,
+            "host_api": "MME",
+            "alias_count": 1,
+        },
+        {
+            "index": 7,
+            "name": "Microphone (C922 Pro Stream Webcam)",
+            "max_input_channels": 1,
+            "max_output_channels": 0,
+            "host_api": "Windows DirectSound",
+            "alias_count": 1,
+        },
+    ]
+    monkeypatch.setattr(
+        "rex.audio_config.build_microphone_picker_devices",
+        lambda *, devices: microphones,
+    )
+    monkeypatch.setattr(
+        "rex.audio_config.build_speaker_picker_devices",
+        lambda *, devices: [],
+    )
+
+    rex_setup_bridge._handle_audio_devices()
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["microphones"] == microphones
+    assert [choice["index"] for choice in result["microphones"]] == [4, 7]
+    assert "possible shortened-name alias" in result["microphones"][0]["name"]
+
+
 @pytest.mark.parametrize(
     ("kind", "expected_probe"),
     [("microphone", "input"), ("speaker", "output")],

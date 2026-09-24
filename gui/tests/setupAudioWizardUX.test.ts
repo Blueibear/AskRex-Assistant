@@ -28,9 +28,9 @@ describe('US-125 setup audio wizard UX', () => {
     expect(pageSource).toMatch(/setSpeakerDevices\(\s*result\.speakers/)
   })
 
-  it('explains that MME shortened-name hints remain distinct runtime choices', () => {
+  it('explains that only long MME shortened-name hints remain distinct runtime choices', () => {
     const duplicateLabelOccurrences = pageSource.match(
-      /An MME input can show a possible full-name alias when Windows shortens its name/g
+      /An MME input may show a possible full-name alias only when a long Windows name is/g
     )
     expect(duplicateLabelOccurrences).toHaveLength(1)
     expect(pageSource).toContain('individually selectable microphone')

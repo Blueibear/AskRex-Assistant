@@ -444,10 +444,9 @@ def test_microphone_picker_does_not_expand_ambiguous_truncated_mme_name_match():
     )
 
     assert {choice["index"] for choice in choices} == {0, 1, 2}
-    assert (
-        choices[0]["name"]
-        == "Microphone (Studio (MME input, shortened name is ambiguous; separate device)"
-    )
+    # A short shared prefix is not enough evidence that Windows truncated an
+    # MME endpoint. Do not make it look like either full-name microphone.
+    assert choices[0]["name"] == "Microphone (Studio"
 
 
 def test_microphone_picker_keeps_same_name_collision_as_separate_shortened_name_hint():
@@ -458,9 +457,21 @@ def test_microphone_picker_keeps_same_name_collision_as_separate_shortened_name_
     """
     choices = audio_config.build_microphone_picker_devices(
         devices=[
-            {"name": "Microphone (USB Capture", "max_input_channels": 1, "hostapi": 0},
-            {"name": "Microphone (USB Capture Pro)", "max_input_channels": 1, "hostapi": 1},
-            {"name": "Microphone (USB Capture Pro)", "max_input_channels": 1, "hostapi": 2},
+            {
+                "name": "Microphone (USB Capture Device Seri",
+                "max_input_channels": 1,
+                "hostapi": 0,
+            },
+            {
+                "name": "Microphone (USB Capture Device Series Pro)",
+                "max_input_channels": 1,
+                "hostapi": 1,
+            },
+            {
+                "name": "Microphone (USB Capture Device Series Pro)",
+                "max_input_channels": 1,
+                "hostapi": 2,
+            },
         ],
         hostapis=[
             {"name": "MME"},
@@ -471,12 +482,12 @@ def test_microphone_picker_keeps_same_name_collision_as_separate_shortened_name_
 
     assert {choice["index"] for choice in choices} == {0, 1, 2}
     assert choices[0]["name"] == (
-        "Microphone (USB Capture Pro) (MME input, possible shortened-name alias "
+        "Microphone (USB Capture Device Series Pro) (MME input, possible shortened-name alias "
         "of 2 same-named host-API entries; separate device 1)"
     )
     assert [choice["name"] for choice in choices[1:]] == [
-        "Microphone (USB Capture Pro) (Windows DirectSound 1)",
-        "Microphone (USB Capture Pro) (Windows WASAPI 1)",
+        "Microphone (USB Capture Device Series Pro) (Windows DirectSound 1)",
+        "Microphone (USB Capture Device Series Pro) (Windows WASAPI 1)",
     ]
 
 

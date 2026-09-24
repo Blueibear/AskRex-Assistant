@@ -100,6 +100,11 @@ _HOSTAPI_INPUT_PRIORITY = {
 }
 
 _LOOPBACK_INPUT_NAME_RE = re.compile(r"\b(?:loopback|stereo\s+mix|what\s+u\s+hear)\b", re.IGNORECASE)
+# MME sometimes truncates a long Windows endpoint name. A short shared
+# prefix, however, is common enough to be an unsafe alias signal. Keep this
+# deliberately above generic names such as "Microphone (Studio" while
+# admitting the Windows-reported C922 and Bose Flex truncations from TEST-011.
+_MINIMUM_MME_ALIAS_PREFIX_LENGTH = 24
 
 
 def _load_audio_inventory(
@@ -171,7 +176,10 @@ def _truncated_mme_name_candidates(
     host-API occurrence also lets the label explain a same-name collision
     without silently treating it as one physical device.
     """
-    if _normalize_device_name(hostapi_name) != "mme" or len(normalized_name) < 12:
+    if (
+        _normalize_device_name(hostapi_name) != "mme"
+        or len(normalized_name) < _MINIMUM_MME_ALIAS_PREFIX_LENGTH
+    ):
         return []
 
     return [
