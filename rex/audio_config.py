@@ -278,7 +278,13 @@ def _build_device_picker_choices(
             }
         )
 
-    return sorted(choices, key=lambda choice: str(choice["name"]).casefold())
+    # A device list may contain labels which compare equally after case
+    # normalization.  Keep the rendered order deterministic in that case
+    # without ever replacing the canonical PortAudio index used for playback.
+    return sorted(
+        choices,
+        key=lambda choice: (str(choice["name"]).casefold(), int(choice["index"])),
+    )
 
 
 def build_microphone_picker_devices(

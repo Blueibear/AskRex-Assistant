@@ -436,6 +436,24 @@ def test_speaker_picker_choice_persists_its_canonical_portaudio_index():
     assert config == {"audio": {"output_device_index": 1}}
 
 
+def test_speaker_picker_orders_display_choices_by_label_then_canonical_index():
+    """TEST-003: presentation order is stable without changing playback IDs."""
+    choices = audio_config.build_speaker_picker_devices(
+        devices=[
+            {"name": "Zulu Speakers", "max_output_channels": 2, "hostapi": 0},
+            {"name": "Alpha Speakers", "max_output_channels": 2, "hostapi": 1},
+            {"name": "Alpha Speakers", "max_output_channels": 2, "hostapi": 0},
+        ],
+        hostapis=[{"name": "MME"}, {"name": "Windows WASAPI"}],
+    )
+
+    assert [(choice["name"], choice["index"]) for choice in choices] == [
+        ("Alpha Speakers (MME 1)", 2),
+        ("Alpha Speakers (Windows WASAPI 1)", 1),
+        ("Zulu Speakers", 0),
+    ]
+
+
 def test_microphone_picker_choice_persists_its_canonical_portaudio_index():
     choice = audio_config.build_microphone_picker_devices(
         devices=[
