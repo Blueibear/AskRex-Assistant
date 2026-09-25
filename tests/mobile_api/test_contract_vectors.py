@@ -93,11 +93,17 @@ class TestVectorHygiene:
 
     def test_attachment_contract_is_explicit_and_content_free(self, vectors) -> None:
         attachment = vectors["http"]["attachments"]["upload_response"]["attachment"]
-        assert vectors["http"]["attachments"]["upload_path"] == "/mobile/attachments"
-        assert vectors["http"]["attachments"]["upload_fields"] == [
+        attachments = vectors["http"]["attachments"]
+        assert attachments["upload_path"] == "/mobile/attachments"
+        assert attachments["upload_fields"] == [
             "conversation_id",
             "attachment",
         ]
+        assert attachments["chat_attachment_ids_max_count"] == 5
+        assert attachments["chat_attachment_ids_overflow"] == {
+            "http_status": 413,
+            "error_code": "PAYLOAD_TOO_LARGE",
+        }
         assert set(attachment) == {
             "attachment_id",
             "conversation_id",

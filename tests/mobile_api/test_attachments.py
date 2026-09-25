@@ -48,6 +48,58 @@ def _upload(client, headers, conversation_id, data=b"private note", filename="no
 
 
 class TestMobileAttachments:
+    def test_chat_attachment_reference_count_overflow_is_payload_too_large(
+        self, client
+    ) -> None:
+        """HTTP count overflow has the documented 413/PAYLOAD_TOO_LARGE contract."""
+        _, headers = _authed(client)
+        response = client.post(
+            "/mobile/chat",
+            headers=headers,
+            json=chat_payload(attachment_ids=[str(uuid.uuid4()) for _ in range(6)]),
+        )
+
+        assert response.status_code == 413
+        assert response.get_json()["error"]["code"] == "PAYLOAD_TOO_LARGE"
+
+    def test_websocket_attachment_reference_count_overflow_is_payload_too_large(
+        self, client, services
+    ) -> None:
+        """WebSocket reports the same stable error code before chat execution."""
+        _, headers = _authed(client)
+        from rex.mobile_api.websocket import MobileWebSocketServer
+        from tests.mobile_api.test_chat_websocket import FakeWs
+
+        token = headers["Authorization"].removeprefix("Bearer ")
+        ws = FakeWs(
+            [
+                json.dumps(
+                    {
+                        "type": "auth",
+                        "access_token": token,
+                        "client": {
+                            "platform": "ios",
+                            "app_version": "0.1.0",
+                            "device_id": "dev-1",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "chat",
+                        **chat_payload(
+                            attachment_ids=[str(uuid.uuid4()) for _ in range(6)]
+                        ),
+                    }
+                ),
+            ]
+        )
+
+        MobileWebSocketServer(services).handle(ws, "10.0.0.1")
+
+        assert [event["type"] for event in ws.sent] == ["auth_ok", "error"]
+        assert ws.sent[-1]["code"] == "PAYLOAD_TOO_LARGE"
+
     def test_lengthless_oversized_multipart_is_rejected_during_route_parsing(
         self, client, services
     ) -> None:

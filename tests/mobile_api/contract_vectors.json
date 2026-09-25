@@ -1,5 +1,5 @@
 {
-  "contract_version": "2026-09-24.323.5",
+  "contract_version": "2026-09-25.323.6",
   "api_version": "1.0",
   "statuses": {
     "normal_chat": "completed",
@@ -110,6 +110,11 @@
     },
     "attachments": {
       "upload_path": "/mobile/attachments",
+      "chat_attachment_ids_max_count": 5,
+      "chat_attachment_ids_overflow": {
+        "http_status": 413,
+        "error_code": "PAYLOAD_TOO_LARGE"
+      },
       "upload_fields": [
         "conversation_id",
         "attachment"

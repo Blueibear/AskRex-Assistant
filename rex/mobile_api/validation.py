@@ -27,6 +27,7 @@ _MAX_CREDENTIAL_LENGTH = 512
 
 # Chat payload bounds (issue #323 Session 2).
 MAX_CHAT_MESSAGE_CHARS = 8_000
+MAX_CHAT_ATTACHMENT_IDS = 5
 _MAX_CLIENT_CONTEXT_KEYS = 16
 _MAX_CLIENT_CONTEXT_VALUE_CHARS = 256
 _CHAT_MODE = "mobile_text"
@@ -289,8 +290,14 @@ def parse_chat_payload(payload: dict[str, Any]) -> ChatRequest:
         approval_id = approval_id.strip()
 
     attachment_ids_raw = payload.get("attachment_ids", [])
-    if not isinstance(attachment_ids_raw, list) or len(attachment_ids_raw) > 5:
+    if not isinstance(attachment_ids_raw, list):
         raise MobileApiError(merr.BAD_REQUEST, "Field 'attachment_ids' is invalid.", 400)
+    if len(attachment_ids_raw) > MAX_CHAT_ATTACHMENT_IDS:
+        raise MobileApiError(
+            merr.PAYLOAD_TOO_LARGE,
+            "Too many attachment references for this message.",
+            413,
+        )
     attachment_ids: list[str] = []
     for value in attachment_ids_raw:
         if not isinstance(value, str):
@@ -316,6 +323,7 @@ def parse_chat_payload(payload: dict[str, Any]) -> ChatRequest:
 
 
 __all__ = [
+    "MAX_CHAT_ATTACHMENT_IDS",
     "MAX_CHAT_MESSAGE_CHARS",
     "ChatRequest",
     "parse_chat_payload",
