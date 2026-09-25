@@ -3123,6 +3123,18 @@ npx.cmd tsc --noEmit
 
 **Risk notes:** Treat uploaded documents and chat attachments as sensitive, untrusted content by default. Never equate "attached to this message" with consent to persist/index/share. Avoid parsing or indexing unsupported binary content without clear failure, and never allow document content or metadata to become an authority-bearing instruction channel.
 
+**Backend resolution 2026-09-25 (slice a only — authenticated per-turn attachment contract/backend ingestion):**
+
+Status: `fixed-needs-retest` for the backend ingestion slice; slices (b)-(f) (mobile composer UI, durable-promotion opt-in, indexing, search/delete/audit, cross-scope tests beyond attachment ingestion) remain not started and are out of scope for this slice.
+
+- `POST /mobile/attachments` (`rex/mobile_api/routes/attachments.py`) requires the authenticated mobile principal plus `attachments.upload` scope, re-validates the principal after reading the file body, binds the stored row to `(user_id, device_id, conversation_id)` from the validated session only (never request-supplied identity), and enforces `multipart/form-data` with exactly one `conversation_id` field and one `attachment` file part.
+- Upload bytes are read incrementally against `max_attachment_bytes` without trusting `Content-Length`, rejecting empty and oversized uploads (`413`/`415`) before persistence; `max_attachments_per_conversation` bounds per-conversation attachment count.
+- Filenames are sanitized (`sanitized_filename`) and content is validated by structural sniffing rather than a bare short signature: PNG chunk walking, JPEG segment walking, PDF trailer/xref resolution, and HEIC/BMFF box walking (`rex/mobile_api/attachments.py:80-267`).
+- `_cleanup_expired` (`rex/mobile_api/attachments.py:289-307`) preserves the expired metadata row as retryable cleanup state when `path.unlink` raises `OSError`, so private bytes cannot become orphaned/unreachable; the row is removed only after a successful unlink. A failed insert/commit during create() unlinks the just-written file so no unauthorized orphaned bytes are left behind either.
+- Response contract: `201` with `{"request_id", "status": "ready", "attachment": {"attachment_id", "conversation_id", "filename", "media_type", "size_bytes"}}`; this exact shape was published to the mobile mailbox contract before mobile depends on it (see coordination evidence).
+- Automated validation: `tests/mobile_api/test_attachments.py` covers scope enforcement, oversized/empty/malformed uploads, forged-signature rejection, owner/device/conversation binding, and reference-count overflow. Full validation-command output (`pytest`, ruff/diff-check equivalents) and the opening/final backend coordination-check output are supervisor-owned in this environment (no Bash/shell tool access here) and are requested via coordination message rather than fabricated in this note.
+- Pending: slices (b)-(f), plus any physical/live-device retest, remain outstanding and are not claimed here.
+
 ---
 
 ### US-087: Unify profile identity across voice, memory, shopping, and history
