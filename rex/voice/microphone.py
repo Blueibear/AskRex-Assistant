@@ -368,7 +368,7 @@ class AsyncMicrophone:
                 dtype="float32",
                 device=self._device_index,
                 blocking=True,
-            )
+            ).reshape(-1)
 
             end = time.perf_counter()
             _vl().logger.debug("MIC DEBUG: blocking sd.rec returned after %.3fs total", end - start)

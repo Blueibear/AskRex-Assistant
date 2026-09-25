@@ -13,10 +13,17 @@ from rex.assistant_errors import AudioDeviceError
 
 class _FakeSoundDevice:
     def __init__(
-        self, *, input_error: Exception | None = None, output_error: Exception | None = None
+        self,
+        *,
+        input_error: Exception | None = None,
+        output_error: Exception | None = None,
+        reject_target_rate: bool = False,
+        native_rate: float = 48000.0,
     ):
         self.input_error = input_error
         self.output_error = output_error
+        self.reject_target_rate = reject_target_rate
+        self.native_rate = native_rate
         self.input_devices: list[int] = []
         self.input_settings_checks: list[dict[str, object]] = []
         self.input_stream_options: list[dict[str, object]] = []
@@ -33,6 +40,10 @@ class _FakeSoundDevice:
                 "samplerate": samplerate,
             }
         )
+        assert channels == 1
+        assert dtype == "float32"
+        if self.reject_target_rate and float(samplerate) == 16000.0:
+            raise RuntimeError("Invalid sample rate")
 
     def InputStream(  # noqa: N802
         self,
@@ -44,6 +55,8 @@ class _FakeSoundDevice:
         blocksize: int,
     ) -> Any:
         assert blocksize == 0
+        assert channels == 1
+        assert dtype == "float32"
         self.input_devices.append(device)
         self.input_stream_options.append(
             {
@@ -112,6 +125,28 @@ def test_input_device_probe_opens_selected_portaudio_device_without_persisting(
     ]
     assert fake_sounddevice.input_stream_options == [
         {"samplerate": 16_000, "channels": 1, "dtype": "float32"}
+    ]
+
+
+def _native_rate_devices() -> list[dict[str, object]]:
+    devices = _devices()
+    devices[2] = {**devices[2], "default_samplerate": 48_000}
+    return devices
+
+
+def test_input_device_probe_accepts_native_rate_fallback_for_wasapi(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_sounddevice = _FakeSoundDevice(reject_target_rate=True, native_rate=48_000.0)
+    monkeypatch.setattr(audio_config, "list_devices", _native_rate_devices)
+    monkeypatch.setattr(audio_config, "_require_sounddevice", lambda: fake_sounddevice)
+    _forbid_persistence(monkeypatch)
+
+    audio_config.test_input_device(2)
+
+    assert fake_sounddevice.input_devices == [2]
+    assert fake_sounddevice.input_stream_options == [
+        {"samplerate": 48_000, "channels": 1, "dtype": "float32"}
     ]
 
 

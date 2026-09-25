@@ -485,7 +485,7 @@ def resolve_input_capture_rate(device_id: int, preferred_rate: int = 16_000) -> 
 
 
 def test_input_device(device_id: int) -> None:
-    """Functionally probe an input device without persisting a selection."""
+    """Probe the effective Rex capture path without persisting a selection."""
     devices = list_devices()
     if device_id < 0 or device_id >= len(devices):
         raise AudioDeviceError(f"Invalid input device ID: {device_id}")

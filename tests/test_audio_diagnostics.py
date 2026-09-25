@@ -116,6 +116,19 @@ def test_speaker_failure_emits_structured_actionable_diagnostic(caplog) -> None:
     assert record.user_message == diagnostic["user_message"]
 
 
+def test_voice_bridge_uses_canonical_nested_microphone_selection() -> None:
+    from types import SimpleNamespace
+
+    import rex_voice_bridge
+
+    settings = SimpleNamespace(
+        audio=SimpleNamespace(input_device=14),
+        input_device_index=99,
+    )
+
+    assert rex_voice_bridge._configured_input_device_index(settings) == 14
+
+
 def test_voice_bridge_preserves_actionable_audio_diagnostic(monkeypatch) -> None:
     import rex_voice_bridge
     from rex.audio_config import build_audio_device_diagnostic
