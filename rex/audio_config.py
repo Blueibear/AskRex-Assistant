@@ -244,8 +244,41 @@ def set_selected_output_device_index(config: dict, index: int | None) -> dict:
     return config
 
 
+def resolve_input_capture_rate(sounddevice, device_id: int | None, target_rate: int) -> float:
+    """Return a supported mono capture rate, preferring Rex's processing rate."""
+    if target_rate <= 0:
+        raise AudioDeviceError("Audio capture sample rate must be positive")
+
+    try:
+        sounddevice.check_input_settings(
+            device=device_id,
+            channels=1,
+            dtype="float32",
+            samplerate=target_rate,
+        )
+        return float(target_rate)
+    except Exception as target_error:
+        try:
+            info = sounddevice.query_devices(device_id, "input")
+            native_rate = float(info.get("default_samplerate", 0) or 0)
+            if native_rate <= 0:
+                raise AudioDeviceError("input device did not report a usable default sample rate")
+            sounddevice.check_input_settings(
+                device=device_id,
+                channels=1,
+                dtype="float32",
+                samplerate=native_rate,
+            )
+            return native_rate
+        except Exception as native_error:
+            raise AudioDeviceError(
+                f"Input device does not support Rex capture at {target_rate} Hz and native-rate fallback failed: "
+                f"{target_error}; {native_error}"
+            ) from native_error
+
+
 def test_input_device(device_id: int) -> None:
-    """Functionally probe an input device without persisting a selection."""
+    """Probe the effective Rex capture path without persisting a selection."""
     devices = list_devices()
     if device_id < 0 or device_id >= len(devices):
         raise AudioDeviceError(f"Invalid input device ID: {device_id}")
@@ -256,7 +289,14 @@ def test_input_device(device_id: int) -> None:
 
     try:
         sounddevice = _require_sounddevice()
-        with sounddevice.InputStream(device=device_id, blocksize=0):
+        capture_rate = resolve_input_capture_rate(sounddevice, device_id, 16000)
+        with sounddevice.InputStream(
+            device=device_id,
+            samplerate=capture_rate,
+            channels=1,
+            dtype="float32",
+            blocksize=0,
+        ):
             pass
     except Exception as exc:
         raise AudioDeviceError(f"Failed to open input device {device_id}: {exc}") from exc

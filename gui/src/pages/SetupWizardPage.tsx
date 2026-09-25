@@ -343,6 +343,8 @@ function StepWakeWord({
   onPreview,
   onWakeWordChange
 }: WakeWordStepProps): React.ReactElement {
+  const selectedWakeWord = wakeWords.find((wakeWord) => wakeWord.id === data.wakeWordId)
+
   return (
     <div className="space-y-4">
       <p className="text-text-secondary text-sm">
@@ -369,14 +371,18 @@ function StepWakeWord({
         </select>
       </div>
       {inventoryError && <p className="text-red-400 text-sm">{inventoryError}</p>}
-      <button
-        type="button"
-        onClick={onPreview}
-        disabled={previewing || loading || !data.wakeWordId}
-        className="px-3 py-2 rounded-lg bg-surface-raised text-text-primary text-sm disabled:opacity-50"
-      >
-        {previewing ? 'Playing wake-word sample…' : 'Preview wake-word sample'}
-      </button>
+      {selectedWakeWord?.has_sample === true ? (
+        <button
+          type="button"
+          onClick={onPreview}
+          disabled={previewing || loading || !data.wakeWordId}
+          className="px-3 py-2 rounded-lg bg-surface-raised text-text-primary text-sm disabled:opacity-50"
+        >
+          {previewing ? 'Playing wake-word sample…' : 'Preview wake-word sample'}
+        </button>
+      ) : data.wakeWordId ? (
+        <p className="text-text-muted text-xs">No preview recording is available for this wake word.</p>
+      ) : null}
       {samplePlayed && <p className="text-green-400 text-sm">Wake-word sample played</p>}
       {previewError && <p className="text-red-400 text-sm">{previewError}</p>}
       <p className="text-text-muted text-xs">
@@ -820,9 +826,15 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
         }
         const available = result.wake_words ?? []
         setWakeWords(available)
+        const hasDefaultRexWakeWord = available.some((wakeWord) => wakeWord.id === 'hey_rex')
+        if (!hasDefaultRexWakeWord) {
+          setWakeWordInventoryError(
+            'The default Hey Rex wake-word asset is not installed. Choose another supported wake word explicitly, or continue without voice and add/train Hey Rex later.'
+          )
+        }
         setData((previous) => {
           if (available.some((wakeWord) => wakeWord.id === previous.wakeWordId)) return previous
-          return { ...previous, wakeWordId: available[0]?.id ?? '' }
+          return { ...previous, wakeWordId: '' }
         })
       })
       .catch(() => {

@@ -151,6 +151,48 @@ def test_async_microphone_primes_overlapping_detection_buffer():
 
 
 @pytest.mark.unit
+def test_async_microphone_resamples_native_rate_capture(monkeypatch):
+    import rex.voice.microphone as microphone_module
+
+    class FakeSoundDevice:
+        def check_input_settings(self, *, device, channels, dtype, samplerate):
+            assert device == 14
+            assert channels == 1
+            assert dtype == "float32"
+            if float(samplerate) == 16000.0:
+                raise RuntimeError("Invalid sample rate")
+
+        def query_devices(self, device, kind):
+            assert device == 14
+            assert kind == "input"
+            return {"default_samplerate": 48000.0}
+
+        def rec(self, frames, *, samplerate, channels, dtype, device, blocking):
+            assert frames == 480
+            assert samplerate == 48000.0
+            assert channels == 1
+            assert dtype == "float32"
+            assert device == 14
+            assert blocking is True
+            return np.linspace(-0.5, 0.5, frames, dtype=np.float32).reshape(-1, 1)
+
+    monkeypatch.setattr(microphone_module, "_require_sounddevice", lambda: FakeSoundDevice())
+    mic = AsyncMicrophone(
+        sample_rate=16000,
+        detection_seconds=1.0,
+        capture_seconds=1.0,
+        device_index=14,
+    )
+
+    audio = asyncio.run(mic._record(0.01))
+
+    assert audio.dtype == np.float32
+    assert audio.shape == (160,)
+    assert audio[0] == pytest.approx(-0.5)
+    assert audio[-1] == pytest.approx(0.5)
+
+
+@pytest.mark.unit
 def test_async_microphone_adaptive_phrase_capture_extends_until_silence(monkeypatch):
     monkeypatch.setattr(_rvl.settings, "command_min_capture_seconds", 0.5, raising=False)
     monkeypatch.setattr(_rvl.settings, "command_max_capture_seconds", 2.0, raising=False)

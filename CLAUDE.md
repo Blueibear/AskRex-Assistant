@@ -71,6 +71,7 @@ Developer/operator source install: `pip install .`
 Current install/runtime compatibility policy:
 
 - End-user install path: packaged Windows Electron installer with managed Python 3.11 Voice runtime
+- The managed Voice runtime must bundle and isolated-import the supported wake-word stack (`openwakeword`, `scipy`, `onnxruntime`, and `sklearn`) in addition to STT/TTS audio dependencies; package verification must fail closed if any are missing.
 - Developer/operator install path: Python 3.11 and `pip install .`
 - The base install includes `tzdata` so IANA city/timezone tools work on Windows, where `zoneinfo` has no OS timezone database.
 - Full Windows GPU + TTS path: Python 3.11 with `requirements-gpu-cu124.txt`

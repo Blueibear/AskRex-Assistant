@@ -26,8 +26,17 @@ describe('US-125 setup wake-word UX', () => {
 
   it('previews a real wake-word sample without claiming detection', () => {
     expect(pageSource).toContain('window.rex.previewWakeWordSample(data.wakeWordId)')
+    expect(pageSource).toContain("selectedWakeWord?.has_sample === true")
+    expect(pageSource).toContain('No preview recording is available for this wake word.')
     expect(pageSource).toContain('Wake-word sample played')
     expect(pageSource).toContain('Actual wake detection is still required')
+  })
+
+  it('does not silently replace the default Hey Rex selection', () => {
+    expect(pageSource).toContain("wakeWord.id === 'hey_rex'")
+    expect(pageSource).toContain('The default Hey Rex wake-word asset is not installed.')
+    expect(pageSource).toContain("return { ...previous, wakeWordId: '' }")
+    expect(pageSource).not.toContain("wakeWordId: available[0]?.id ?? ''")
   })
 
   it('checks canonical readiness for the currently selected setup wake word', () => {
