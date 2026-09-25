@@ -18,8 +18,13 @@ class _DummySoundDevice:
             {"name": "Speaker", "max_input_channels": 0, "max_output_channels": 2},
         ]
 
-    def query_devices(self):
-        return self.devices
+    def query_devices(self, device=None, kind=None):
+        if device is None:
+            return self.devices
+        return {**self.devices[device], "default_samplerate": 48000.0}
+
+    def check_input_settings(self, **kwargs):
+        return None
 
     def InputStream(self, *args, **kwargs):  # noqa: N802 - mimic sounddevice API
         return _DummyStream()
