@@ -40,7 +40,7 @@ pip = "==26.1.2"
 werkzeug = "==3.1.6"
 jinja2 = "==3.1.6"
 # pillow >=11.2.0 fixes out-of-bounds write when loading PSD images
-pillow = "==12.1.1"
+pillow = "==12.3.0"
 urllib3 = "==2.7.0"
 certifi = "==2024.12.14"
 
