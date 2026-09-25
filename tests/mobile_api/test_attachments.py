@@ -137,11 +137,25 @@ class TestMobileAttachments:
         assert body["attachment"] == {
             "attachment_id": body["attachment"]["attachment_id"],
             "conversation_id": conversation_id,
-            "filename": "C_private_note.txt",
+            "filename": "note.txt",
             "media_type": "text/plain",
             "size_bytes": 12,
         }
         assert "path" not in repr(body).lower()
+
+    @pytest.mark.parametrize(
+        "submitted, expected",
+        [
+            (r"C:\\private\\reports\\note.txt", "note.txt"),
+            ("/private/reports/note.txt", "note.txt"),
+            ("report\x00.txt", "report_.txt"),
+        ],
+    )
+    def test_sanitized_filename_never_retains_client_directories(
+        self, submitted: str, expected: str
+    ) -> None:
+        """The public filename is a sanitized basename, not a client path."""
+        assert attachment_module.sanitized_filename(submitted) == expected
 
     def test_declared_mime_and_extension_do_not_grant_type_authority(self, client) -> None:
         _, headers = _authed(client)

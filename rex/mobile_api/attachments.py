@@ -44,7 +44,11 @@ def sanitized_filename(name: object) -> str:
     """Return presentation-safe basename, never a local client path."""
     if not isinstance(name, str):
         raise MobileApiError(merr.BAD_REQUEST, "Attachment filename is invalid.", 400)
-    cleaned = _FILENAME_CONTROL.sub("_", name).strip(" .")
+    # Multipart clients can submit either Windows or POSIX paths.  Drop every
+    # directory component before sanitizing the basename so response metadata
+    # never discloses the client's local directory names.
+    basename = name.replace("\\", "/").rsplit("/", 1)[-1]
+    cleaned = _FILENAME_CONTROL.sub("_", basename).strip(" .")
     if not cleaned or cleaned in {".", ".."} or len(cleaned) > MAX_FILENAME_CHARS:
         raise MobileApiError(merr.BAD_REQUEST, "Attachment filename is invalid.", 400)
     return cleaned
