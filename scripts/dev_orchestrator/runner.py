@@ -661,24 +661,54 @@ def _write_scratch_owner(scratch: Path, *, role: str, invocation_id: str, pre_he
 
 @contextmanager
 def _hide_scratch_git_metadata(scratch: Path):
+    """Hide real Git metadata while keeping the Windows Codex runner usable.
+
+    Codex 0.156.x on Windows can fail to create its terminal runner when a
+    cloned workspace has no .git entry at all. Keep the real metadata outside
+    the workspace and leave a gitfile that points at an intentionally empty,
+    non-repository directory. Git commands therefore fail closed while the
+    sandbox still sees the workspace shape it expects.
+    """
     git_dir = scratch / ".git"
     if not git_dir.is_dir():
         raise HandoffRequired("Codex scratch clone is missing Git metadata")
     hidden_git = scratch.parent / f".git-orchestrator-{uuid.uuid4().hex}"
+    placeholder_git = scratch.parent / f".git-codex-placeholder-{uuid.uuid4().hex}"
     os.replace(git_dir, hidden_git)
+    placeholder_git.mkdir()
+    marker = f"gitdir: {placeholder_git.as_posix()}\n"
+    git_dir.write_text(marker, encoding="utf-8")
     conflict = False
     try:
         yield hidden_git
     finally:
-        if git_dir.exists():
+        marker_intact = (
+            git_dir.is_file()
+            and git_dir.read_text(encoding="utf-8", errors="replace") == marker
+        )
+        placeholder_intact = placeholder_git.is_dir() and not any(placeholder_git.iterdir())
+        if not marker_intact or not placeholder_intact:
             conflict = True
-            quarantine = scratch.parent / f".git-codex-conflict-{uuid.uuid4().hex}"
-            os.replace(git_dir, quarantine)
+        if git_dir.exists():
+            if marker_intact:
+                git_dir.unlink()
+            else:
+                quarantine = scratch.parent / f".git-codex-conflict-{uuid.uuid4().hex}"
+                os.replace(git_dir, quarantine)
+        if placeholder_git.exists():
+            if placeholder_intact:
+                placeholder_git.rmdir()
+            else:
+                quarantine = (
+                    scratch.parent
+                    / f".git-codex-placeholder-conflict-{uuid.uuid4().hex}"
+                )
+                os.replace(placeholder_git, quarantine)
         if not hidden_git.exists():
             raise HandoffRequired("Codex scratch Git metadata was lost while hidden")
         os.replace(hidden_git, git_dir)
         if conflict:
-            raise HandoffRequired("Codex recreated hidden Git metadata")
+            raise HandoffRequired("Codex modified the hidden Git metadata guard")
 
 
 def _create_scratch_commit(scratch: Path, pre_head: str, invocation_id: str) -> str | None:

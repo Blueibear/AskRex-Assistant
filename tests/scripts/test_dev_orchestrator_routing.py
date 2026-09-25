@@ -856,7 +856,21 @@ def test_production_codex_fallback_publishes_only_scratch_patch(
         assert cwd.parent.parent.resolve() == (coord.parent / ".askrex-agent-scratch").resolve()
         assert command[command.index("-s") + 1] == "workspace-write"
         assert "--skip-git-repo-check" in command
-        assert not (cwd / ".git").exists()
+        git_marker = cwd / ".git"
+        assert git_marker.is_file()
+        marker = git_marker.read_text(encoding="utf-8")
+        assert marker.startswith("gitdir: ")
+        placeholder = Path(marker.removeprefix("gitdir: ").strip())
+        assert placeholder.is_dir()
+        assert list(placeholder.iterdir()) == []
+        blocked_git = sp.run(
+            ["git", "status", "--short"],
+            cwd=cwd,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert blocked_git.returncode != 0
         hidden_git = list(cwd.parent.glob(".git-orchestrator-*"))
         assert len(hidden_git) == 1
         assert hidden_git[0].is_dir()
