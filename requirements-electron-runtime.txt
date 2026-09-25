@@ -4,7 +4,7 @@ requests==2.34.2
 pydantic==2.13.4
 python-dotenv==1.2.2
 beautifulsoup4==4.15.0
-cryptography==49.0.0
+cryptography==50.0.0
 setuptools==83.0.0
 pillow==12.3.0
 idna==3.18
