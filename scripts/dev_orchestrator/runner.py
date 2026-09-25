@@ -486,6 +486,16 @@ def _claude_error_envelope(output: str) -> tuple[str, str] | None:
     return None
 
 
+def _bounded_failure_detail(text: str, limit: int = 4000) -> str:
+    """Keep both setup context and the terminal error from verbose CLI failures."""
+    if len(text) <= limit:
+        return text
+    marker = "\n... [failure detail truncated] ...\n"
+    head = min(1200, max((limit - len(marker)) // 3, 0))
+    tail = max(limit - len(marker) - head, 0)
+    return text[:head] + marker + (text[-tail:] if tail else "")
+
+
 def classify_cli_failure(text: str, returncode: int) -> str:
     normalized = text.lower()
     if (
@@ -503,6 +513,9 @@ def classify_cli_failure(text: str, returncode: int) -> str:
         or "not authenticated" in normalized
         or "authentication" in normalized
         or "authenticate" in normalized
+        or "unauthorized" in normalized
+        or "incorrect api key" in normalized
+        or "401 oauth" in normalized
     ):
         return "auth"
     if returncode == 124 or "timed out" in normalized or "timeout" in normalized:
@@ -683,8 +696,7 @@ def _hide_scratch_git_metadata(scratch: Path):
         yield hidden_git
     finally:
         marker_intact = (
-            git_dir.is_file()
-            and git_dir.read_text(encoding="utf-8", errors="replace") == marker
+            git_dir.is_file() and git_dir.read_text(encoding="utf-8", errors="replace") == marker
         )
         placeholder_intact = placeholder_git.is_dir() and not any(placeholder_git.iterdir())
         if not marker_intact or not placeholder_intact:
@@ -699,10 +711,7 @@ def _hide_scratch_git_metadata(scratch: Path):
             if placeholder_intact:
                 placeholder_git.rmdir()
             else:
-                quarantine = (
-                    scratch.parent
-                    / f".git-codex-placeholder-conflict-{uuid.uuid4().hex}"
-                )
+                quarantine = scratch.parent / f".git-codex-placeholder-conflict-{uuid.uuid4().hex}"
                 os.replace(placeholder_git, quarantine)
         if not hidden_git.exists():
             raise HandoffRequired("Codex scratch Git metadata was lost while hidden")
@@ -1095,7 +1104,7 @@ class CliAgentInvoker:
                             if self._production_executor:
                                 activity_file.unlink(missing_ok=True)
                             raise AgentInvocationError(
-                                "claude", kind, envelope_detail[:4000]
+                                "claude", kind, _bounded_failure_detail(envelope_detail)
                             )
                         try:
                             parsed = extract_agent_result(result.stdout)
@@ -1259,7 +1268,7 @@ class CliAgentInvoker:
             kind = classify_cli_failure(detail, result.returncode)
             if provider == "codex" and is_transient_runner_failure(detail):
                 recover_codex_windows_terminal_runner()
-            raise AgentInvocationError(provider, kind, detail[:4000])
+            raise AgentInvocationError(provider, kind, _bounded_failure_detail(detail))
 
         # Claude Code may report API failures as a JSON result envelope while
         # exiting with code 0. Treat those envelopes as invocation failures so
@@ -1269,7 +1278,7 @@ class CliAgentInvoker:
             envelope = _claude_error_envelope(result.stdout)
             if envelope is not None:
                 kind, envelope_detail = envelope
-                raise AgentInvocationError(provider, kind, envelope_detail[:4000])
+                raise AgentInvocationError(provider, kind, _bounded_failure_detail(envelope_detail))
 
         try:
             return extract_agent_result(result.stdout)

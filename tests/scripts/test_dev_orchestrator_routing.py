@@ -141,8 +141,14 @@ def test_review_prompt_keeps_validation_execution_outside_read_only_reviewer(
     assert "authoritative bounded review evidence" in prompt.lower()
     assert "current matching validation receipt" in prompt.lower()
     assert "do not demand unrelated gates" in prompt.lower()
-    assert "do not invoke terminal, shell, repository, web, or mcp tools during review" in prompt.lower()
-    assert "identify the missing evidence instead of trying to reconstruct it with a tool" in prompt.lower()
+    assert (
+        "do not invoke terminal, shell, repository, web, or mcp tools during review"
+        in prompt.lower()
+    )
+    assert (
+        "identify the missing evidence instead of trying to reconstruct it with a tool"
+        in prompt.lower()
+    )
     assert "do not rerun" in prompt.lower()
     assert "pytest" in prompt.lower()
     assert "read-only" in prompt.lower()
@@ -201,6 +207,24 @@ def test_auth_and_timeout_failures_are_distinct() -> None:
     )
     assert classify_cli_failure("process timed out", 124) == "timeout"
     assert classify_cli_failure("unexpected crash", 1) == "failed"
+
+
+def test_codex_unauthorized_api_key_is_classified_as_auth() -> None:
+    output = "unexpected status 401 Unauthorized: Incorrect API key provided"
+    assert classify_cli_failure(output, 1) == "auth"
+
+
+def test_failure_detail_preserves_terminal_error_after_long_preamble() -> None:
+    from scripts.dev_orchestrator import runner
+
+    preamble = "P" * 5000
+    terminal = "unexpected status 401 Unauthorized: Incorrect API key provided"
+    bounded = runner._bounded_failure_detail(preamble + "\n" + terminal)
+
+    assert len(bounded) <= 4000
+    assert bounded.startswith("P")
+    assert "failure detail truncated" in bounded
+    assert bounded.endswith(terminal)
 
 
 def test_runner_pipe_timeout_takes_precedence_over_incidental_auth_noise() -> None:
@@ -444,8 +468,6 @@ def test_implementation_falls_back_to_codex_when_claude_is_usage_limited(tmp_pat
     assert "workspace-local" in calls[1][-1]
 
 
-
-
 def test_implementation_falls_back_to_codex_on_claude_zero_exit_monthly_spend_limit(
     tmp_path: Path,
 ) -> None:
@@ -490,9 +512,7 @@ def test_implementation_falls_back_to_codex_on_claude_zero_exit_monthly_spend_li
             "",
         )
 
-    result = CliAgentInvoker(
-        config, execute=execute, allow_test_executor=True
-    ).implement(
+    result = CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
         "backend",
         WorkerState("backend"),
         TaskItem("B-SPEND-LIMIT", "Continue backend"),
