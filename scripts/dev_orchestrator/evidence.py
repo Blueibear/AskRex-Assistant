@@ -63,7 +63,8 @@ def _git(repo: Path, *args: str) -> str:
         return subprocess.check_output(
             ["git", *args],
             cwd=repo,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             stderr=subprocess.PIPE,
         )
     except (OSError, subprocess.CalledProcessError) as exc:

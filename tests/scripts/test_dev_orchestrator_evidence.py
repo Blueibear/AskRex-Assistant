@@ -7,12 +7,27 @@ from pathlib import Path
 
 import pytest
 
-from scripts.dev_orchestrator.evidence import EvidenceError, build_review_evidence
+from scripts.dev_orchestrator.evidence import EvidenceError, _git, build_review_evidence
 from scripts.dev_orchestrator.types import OrchestratorConfig, TaskItem, WorkerState
 from scripts.dev_orchestrator.validation import (
     load_validation_receipt,
     run_iteration_validation,
 )
+
+
+def test_git_evidence_forces_utf8_decoding(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_check_output(command, **kwargs):
+        captured.update(kwargs)
+        return "diff with unicode: → ✓"
+
+    monkeypatch.setattr(subprocess, "check_output", fake_check_output)
+
+    assert _git(tmp_path, "diff") == "diff with unicode: → ✓"
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"
+    assert "text" not in captured
 
 
 def _git_repo(path: Path) -> str:
