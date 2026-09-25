@@ -290,6 +290,7 @@ Capabilities response:
     "websocket_chat": true,
     "voice_upload": true,
     "tts": true,
+    "attachments": true,
     "live_voice": false,
     "notifications": false,
     "approvals": false,
@@ -298,7 +299,7 @@ Capabilities response:
 }
 ```
 
-Each feature is true only after its real backend path and automated tests exist. Configuration alone does not make a capability true.
+Each feature is true only after its real backend path and automated tests exist. Configuration alone does not make a capability true. `attachments` (US-086 slice) has no optional ML runtime dependency, so it is reported unconditionally true, like `authentication`.
 
 ### 6.3 Chat
 
@@ -321,11 +322,12 @@ Canonical chat request:
     "device": "iphone",
     "location_hint": "home",
     "response_preference": "brief"
-  }
+  },
+  "attachment_ids": []
 }
 ```
 
-No `user_id`, role, permissions, approval, or risk fields are accepted.
+No `user_id`, role, permissions, approval, or risk fields are accepted. `attachment_ids` is optional (default `[]`), holds at most 5 unique UUIDs (`PAYLOAD_TOO_LARGE` beyond that), and each ID must already belong to the authenticated user, the same paired device, and this exact `conversation_id` — see section 6.5.
 
 Non-streaming response:
 
@@ -336,9 +338,12 @@ Non-streaming response:
   "conversation_id": "<conversation-id>",
   "response": "The downstairs lights are off.",
   "status": "verified",
-  "events": []
+  "events": [],
+  "attachments": []
 }
 ```
+
+`attachments` mirrors the resolved `attachment_ids` as safe provenance metadata (section 6.5); it is empty when the request had none. The HTTP streaming and WebSocket terminal events carry the same `attachments` field.
 
 Normal conversational replies use `completed`. `verified` is reserved for externally verified results.
 
@@ -404,7 +409,42 @@ in `audio_url` describes the provider that actually synthesized the returned
 audio. `voice` may be an AskRex-owned alias (`majel`, `james`, `cole`) on the
 request side. See `docs/voice/S35_MOBILE_GATEWAY_SPEECH_CONTRACT.md`.
 
-### 6.5 Explicit scaffolds
+### 6.5 Attachments (US-086 slice)
+
+```text
+POST /mobile/attachments
+```
+
+Attachments are private, short-lived, per-conversation chat inputs. They are not indexed, promoted to memory, or injected into unrelated turns — that broader indexing/memory work remains a later US-086 slice.
+
+Upload requires Bearer authentication with the `attachments.upload` scope and `multipart/form-data` with exactly two parts:
+
+- `conversation_id`: required UUID form field (repeated fields are rejected);
+- `attachment`: required single file part.
+
+Limits (`mobile_api` config): `max_attachment_bytes` (default 10 MiB, enforced from a bounded incremental read — declared `Content-Length` is never trusted alone), `max_attachments_per_conversation` (default 5, `PAYLOAD_TOO_LARGE`), `attachment_retention_seconds` (default 3600; expired rows/bytes are cleaned up lazily on the next create/reference call).
+
+Content type is never taken from the client's declared MIME type or filename extension. It is sniffed from bounded, non-decoding structural validation of the bytes themselves (PNG chunk/CRC walking, JPEG segment framing, HEIC/HEIF BMFF box walking, PDF object/trailer/xref resolution, or else plain UTF-8 text); anything else, including a bare matching signature without a complete container, returns `INVALID_MEDIA` (415). The response filename is a sanitized basename only — client directory components are stripped and never echoed back.
+
+Upload response:
+
+```json
+{
+  "request_id": "<request-id>",
+  "status": "ready",
+  "attachment": {
+    "attachment_id": "<UUID>",
+    "conversation_id": "<conversation-id>",
+    "filename": "note.txt",
+    "media_type": "text/plain",
+    "size_bytes": 12
+  }
+}
+```
+
+To use an uploaded attachment, the client passes its `attachment_id` in the chat request's `attachment_ids` (section 6.3, at most 5 per message). The server re-validates that every referenced ID belongs to the authenticated user, the same paired device, this exact `conversation_id`, and has not expired, returning `FORBIDDEN` (403) otherwise — an attachment can never be referenced from a different conversation, device, or user than the one that uploaded it. Matching chat/SSE/WebSocket responses echo the same safe `attachment` metadata (never a filesystem path) in their `attachments` field.
+
+### 6.6 Explicit scaffolds
 
 Until their real ownership, permission, and persistence contracts are implemented, these routes return HTTP 501 with `NOT_IMPLEMENTED` and their capability remains false:
 

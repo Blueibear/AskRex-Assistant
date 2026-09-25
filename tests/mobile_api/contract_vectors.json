@@ -1,5 +1,5 @@
 {
-  "contract_version": "2026-09-25.323.6",
+  "contract_version": "2026-09-25.323.7",
   "api_version": "1.0",
   "statuses": {
     "normal_chat": "completed",
@@ -167,6 +167,7 @@
         "websocket_chat": true,
         "voice_upload": true,
         "tts": true,
+        "attachments": true,
         "live_voice": false,
         "notifications": false,
         "approvals": false,

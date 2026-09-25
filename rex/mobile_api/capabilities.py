@@ -12,6 +12,12 @@ upload, and TTS.  ``chat``/``chat_streaming`` are code-complete and tested;
 ``voice_upload`` requires Whisper + ffmpeg + a locally cached model;
 ``tts`` requires the configured engine's dependency.
 
+``attachments`` (US-086 slice) covers ``POST /mobile/attachments`` and the
+``attachment_ids``/``attachments`` chat fields.  It has no optional ML
+runtime dependency: private per-conversation storage is always available
+once the gateway process starts, so it is reported unconditionally true,
+like ``authentication``.
+
 ``live_voice``, ``notifications``, ``approvals``, and ``home_assistant``
 remain false: their complete server-authoritative mobile paths are not
 implemented.  A configured Home Assistant integration alone does not make
@@ -74,6 +80,7 @@ def resolve_features(services: MobileApiServices | None = None) -> dict[str, boo
         "websocket_chat": chat and bool(services and services.websocket_registered),
         "voice_upload": chat and voice_upload,
         "tts": tts,
+        "attachments": True,
         # Not implemented as complete server-authoritative mobile paths:
         "live_voice": False,
         "notifications": False,

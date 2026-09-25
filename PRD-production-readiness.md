@@ -3135,6 +3135,14 @@ Status: `fixed-needs-retest` for the backend ingestion slice; slices (b)-(f) (mo
 - Automated validation: `tests/mobile_api/test_attachments.py` covers scope enforcement, oversized/empty/malformed uploads, forged-signature rejection, owner/device/conversation binding, and reference-count overflow. Full validation-command output (`pytest`, ruff/diff-check equivalents) and the opening/final backend coordination-check output are supervisor-owned in this environment (no Bash/shell tool access here) and are requested via coordination message rather than fabricated in this note.
 - Pending: slices (b)-(f), plus any physical/live-device retest, remain outstanding and are not claimed here.
 
+**Backend follow-up 2026-09-25 (contract publication gap):** independent review found the implemented/tested `POST /mobile/attachments` slice had never been added to the canonical `docs/mobile/MOBILE_API_MASTER_SPEC.md` wire contract nor to the truthful `GET /mobile/capabilities` feature map, so mobile had no documented or capability-discoverable way to depend on it. Fixed in this pass:
+- `docs/mobile/MOBILE_API_MASTER_SPEC.md` §6.5 now documents the `POST /mobile/attachments` request/response shape, limits, and content-sniffing rule, and §6.3 documents the `attachment_ids`/`attachments` chat fields.
+- `rex/mobile_api/capabilities.py` now reports `"attachments": true` unconditionally (no optional runtime dependency, same as `authentication`), with regression coverage in `tests/mobile_api/test_status_capabilities.py` proving it stays true independent of chat/STT/TTS availability.
+- `tests/mobile_api/contract_vectors.json` (the cross-repo wire-contract fixture mirrored in the mobile repo) gains `"attachments": true` under `capabilities_response.features` and bumps `contract_version` to `2026-09-25.323.7`; `tests/mobile_api/test_contract_vectors.py::test_capabilities_conform_and_unimplemented_stay_false` already asserts the live response's feature-key set matches this fixture.
+- Root `CLAUDE.md`'s `rex/mobile_api/` package-structure summary now lists `attachments.py`/`routes/attachments.py`.
+- This updated contract-vector diff was sent to the mobile mailbox (see coordination evidence) before mobile is expected to depend on the new `attachments` capability flag.
+- Focused test execution for these changes is again supervisor-owned in this environment; no Bash/pytest run was performed by this worker.
+
 ---
 
 ### US-087: Unify profile identity across voice, memory, shopping, and history

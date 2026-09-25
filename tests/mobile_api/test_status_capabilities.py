@@ -48,6 +48,7 @@ class TestCapabilities:
             "websocket_chat",
             "voice_upload",
             "tts",
+            "attachments",
         ):
             assert features[name] is True, name
         for name in (
@@ -66,6 +67,7 @@ class TestCapabilities:
         assert features["voice_upload"] is False
         assert features["tts"] is False
         assert features["chat"] is True
+        assert features["attachments"] is True
 
     def test_chat_and_websocket_require_runtime_and_registration(
         self, client, services, fake_chat_service
@@ -75,6 +77,7 @@ class TestCapabilities:
         assert features["chat"] is False
         assert features["chat_streaming"] is False
         assert features["websocket_chat"] is False
+        assert features["attachments"] is True
 
         fake_chat_service.available = True
         services.websocket_registered = False
