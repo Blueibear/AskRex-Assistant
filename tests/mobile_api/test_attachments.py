@@ -88,6 +88,21 @@ def _valid_heic() -> bytes:
     return ftyp + _bmff_box(b"meta", b"\0\0\0\0" + handler)
 
 
+def _valid_pdf() -> bytes:
+    body = (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n"
+    )
+    xref_offset = len(body)
+    xref = (
+        b"xref\n0 3\n0000000000 65535 f \n0000000009 00000 n \n0000000063 00000 n \n"
+        b"trailer\n<< /Size 3 /Root 1 0 R >>\n"
+        b"startxref\n" + str(xref_offset).encode("ascii") + b"\n%%EOF"
+    )
+    return body + xref
+
+
 class TestMobileAttachments:
     def test_chat_attachment_reference_count_overflow_is_payload_too_large(
         self, client
@@ -264,12 +279,13 @@ class TestMobileAttachments:
             (_valid_png(), "image/png"),
             (_valid_jpeg(), "image/jpeg"),
             (_valid_heic(), "image/heic"),
+            (_valid_pdf(), "application/pdf"),
         ],
     )
     def test_image_content_requires_a_structurally_valid_container(
         self, data: bytes, media_type: str
     ) -> None:
-        """Image detection verifies bounded container structure, not a signature alone."""
+        """Content detection verifies bounded container structure, not a signature alone."""
         assert attachment_module.sniff_media_type(data) == media_type
 
     @pytest.mark.parametrize(
@@ -278,10 +294,23 @@ class TestMobileAttachments:
             b"\x89PNG\r\n\x1a\n" + b"not-a-png",
             b"\xff\xd8\xff" + b"not-a-jpeg",
             _bmff_box(b"ftyp", b"heic\0\0\0\0mif1") + b"truncated-meta",
+            b"%PDF-1.4\n" + b"not real PDF content\n" + b"%%EOF",
+            b"%PDF-1.4\n1 0 obj\n<< >>\nendobj\n%%EOF",
         ],
     )
     def test_image_signature_without_complete_structure_is_rejected(self, data: bytes) -> None:
         assert attachment_module.sniff_media_type(data) is None
+
+    def test_pdf_with_startxref_pointing_outside_the_file_is_rejected(self) -> None:
+        """A forged startxref offset must not be trusted without bounds checking."""
+        body = (
+            b"%PDF-1.4\n"
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+            b"2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n"
+            b"trailer\n<< /Size 3 /Root 1 0 R >>\n"
+        )
+        forged = body + b"startxref\n999999\n%%EOF"
+        assert attachment_module.sniff_media_type(forged) is None
 
     def test_attachment_reference_is_bound_to_owner_device_and_conversation(
         self, client, fake_chat_service
@@ -552,3 +581,63 @@ class TestMobileAttachments:
             attachment_ids=(),
         )
         assert not storage.exists()
+
+    def test_stuck_expired_row_does_not_block_active_quota(
+        self, services, monkeypatch
+    ) -> None:
+        """A retained expired retry row is not an active attachment for quota."""
+        conversation_id = str(uuid.uuid4())
+        attachment = services.attachment_store.create(
+            user_id="james",
+            device_id="device",
+            conversation_id=conversation_id,
+            filename="note.txt",
+            data=b"private note",
+            max_per_conversation=1,
+        )
+        storage = services.attachment_store.storage_root / f"{attachment.attachment_id}.bin"
+        from rex.mobile_api.db import connect
+
+        conn = connect(services.db_path)
+        try:
+            conn.execute(
+                "UPDATE mobile_conversation_attachments SET expires_at = ? WHERE attachment_id = ?",
+                (
+                    (services.attachment_store._now() - timedelta(seconds=1)).isoformat(),
+                    attachment.attachment_id,
+                ),
+            )
+        finally:
+            conn.close()
+
+        original_unlink = Path.unlink
+
+        def always_fail(path: Path, *args, **kwargs) -> None:
+            if path == storage:
+                raise PermissionError("forced unlink failure")
+            original_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", always_fail)
+
+        # The stuck expired row survives cleanup on every attempt, but it must
+        # not keep counting against the live per-conversation quota.
+        second = services.attachment_store.create(
+            user_id="james",
+            device_id="device",
+            conversation_id=conversation_id,
+            filename="second.txt",
+            data=b"second note",
+            max_per_conversation=1,
+        )
+        assert second.attachment_id != attachment.attachment_id
+
+        with pytest.raises(MobileApiError) as error:
+            services.attachment_store.create(
+                user_id="james",
+                device_id="device",
+                conversation_id=conversation_id,
+                filename="third.txt",
+                data=b"third note",
+                max_per_conversation=1,
+            )
+        assert error.value.code == merr.PAYLOAD_TOO_LARGE

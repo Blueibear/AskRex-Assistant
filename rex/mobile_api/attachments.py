@@ -64,7 +64,7 @@ def sniff_media_type(data: bytes) -> str | None:
     if _is_valid_heic(data):
         return "image/heic"
     if data.startswith(b"%PDF-"):
-        return "application/pdf" if b"%%EOF" in data[-2048:] else None
+        return "application/pdf" if _is_valid_pdf(data) else None
     # Never reinterpret a known binary container as an innocent text file.
     if data.startswith((b"GIF87a", b"GIF89a", b"PK\x03\x04", b"Rar!", b"\x7fELF")):
         return None
@@ -175,6 +175,46 @@ def _is_valid_jpeg(data: bytes) -> bool:
                     return offset + 2 == len(data)
                 return False
     return False
+
+
+_PDF_HEADER = re.compile(rb"^%PDF-\d\.\d")
+
+
+def _is_valid_pdf(data: bytes) -> bool:
+    """Perform bounded, non-parsing PDF structural validation.
+
+    A signature plus a trailing ``%%EOF`` alone is not a structurally valid
+    PDF; arbitrary bytes can be wrapped in that envelope.  Require at least
+    one indirect object, a trailer referencing a document root, and a
+    ``startxref`` offset that resolves inside the file to either a classic
+    cross-reference table or a cross-reference stream.
+    """
+    if not _PDF_HEADER.match(data):
+        return False
+    tail = data[-2048:]
+    eof_index = tail.rfind(b"%%EOF")
+    if eof_index == -1:
+        return False
+    if b" obj" not in data and b"\nobj" not in data:
+        return False
+    if b"endobj" not in data:
+        return False
+    if b"/Root" not in data:
+        return False
+    startxref_index = tail.rfind(b"startxref")
+    if startxref_index == -1:
+        return False
+    offset_text = tail[startxref_index + len(b"startxref") : eof_index].strip()
+    try:
+        xref_offset = int(offset_text)
+    except ValueError:
+        return False
+    if xref_offset < 0 or xref_offset >= len(data):
+        return False
+    xref_region = data[xref_offset : xref_offset + 200]
+    is_classic_table = xref_region.startswith(b"xref") and b"trailer" in data
+    is_xref_stream = b"/Type/XRef" in xref_region or b"/Type /XRef" in xref_region
+    return is_classic_table or is_xref_stream
 
 
 _HEIC_BRANDS = {b"heic", b"heix", b"hevc", b"hevx", b"mif1"}
@@ -291,8 +331,8 @@ class MobileAttachmentStore:
             self._cleanup_expired(conn, now)
             count = conn.execute(
                 "SELECT COUNT(*) FROM mobile_conversation_attachments "
-                "WHERE user_id = ? AND device_id = ? AND conversation_id = ?",
-                (user_id, device_id, conversation_id),
+                "WHERE user_id = ? AND device_id = ? AND conversation_id = ? AND expires_at > ?",
+                (user_id, device_id, conversation_id, now.isoformat()),
             ).fetchone()[0]
             if count >= max_per_conversation:
                 raise MobileApiError(
