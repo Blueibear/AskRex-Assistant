@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import sqlite3
 import uuid
@@ -174,6 +175,49 @@ class TestMobileAttachments:
             json=chat_payload(attachment_ids=[uploaded["attachment_id"]]),
         )
         assert wrong_conversation.status_code == 403
+
+    def test_websocket_attachment_reference_is_bound_to_owner_device_and_conversation(
+        self, client, services, fake_chat_service
+    ) -> None:
+        """WebSocket chat must apply the same attachment authority checks as HTTP."""
+        _, headers_a = _authed(client, "james", "pw-123456")
+        _, headers_b = _authed(client, "cole", "pw-abcdef")
+        conversation_id = str(uuid.uuid4())
+        uploaded = _upload(client, headers_a, conversation_id).get_json()["attachment"]
+
+        from rex.mobile_api.websocket import MobileWebSocketServer
+        from tests.mobile_api.test_chat_websocket import FakeWs
+
+        token_b = headers_b["Authorization"].removeprefix("Bearer ")
+        frame = {
+            "type": "chat",
+            **chat_payload(
+                conversation_id=conversation_id,
+                attachment_ids=[uploaded["attachment_id"]],
+            ),
+        }
+        ws = FakeWs(
+            [
+                json.dumps(
+                    {
+                        "type": "auth",
+                        "access_token": token_b,
+                        "client": {
+                            "platform": "ios",
+                            "app_version": "0.1.0",
+                            "device_id": "dev-1",
+                        },
+                    }
+                ),
+                json.dumps(frame),
+            ]
+        )
+
+        MobileWebSocketServer(services).handle(ws, "10.0.0.1")
+
+        assert [event["type"] for event in ws.sent] == ["auth_ok", "ack", "error"]
+        assert ws.sent[-1]["code"] == "FORBIDDEN"
+        assert fake_chat_service.calls == []
 
     def test_attachment_count_and_temp_expiry_cleanup(self, client, services) -> None:
         _, headers = _authed(client)

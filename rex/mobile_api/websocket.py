@@ -374,6 +374,28 @@ class MobileWebSocketServer:
             )
             return True
 
+        try:
+            services.attachment_store.validate_references(
+                user_id=principal.user_id,
+                device_id=principal.paired_device_id,
+                conversation_id=chat_request.conversation_id,
+                attachment_ids=chat_request.attachment_ids,
+            )
+        except MobileApiError as exc:
+            store = services.message_store
+            store.fail(principal.user_id, chat_request.message_id, exc.code)
+            self._send(
+                ws,
+                mev.error_event(
+                    exc.code,
+                    exc.message,
+                    message_id=chat_request.message_id,
+                    retryable=exc.retryable,
+                    details=exc.details,
+                ),
+            )
+            return True
+
         # New reservation: execute exactly once via the canonical Assistant
         # with the connection's immutable principal identity.
         store = services.message_store
