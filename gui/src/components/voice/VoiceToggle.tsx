@@ -9,6 +9,7 @@ export type VoiceState =
   | 'processing'
   | 'speaking'
   | 'cooldown'
+  | 'error'
 
 export interface VoiceToggleProps {
   state: VoiceState
@@ -26,6 +27,7 @@ const stateLabel: Record<VoiceState, string> = {
   processing: 'Thinking\u2026',
   speaking: 'Speaking\u2026',
   cooldown: 'Resetting mic\u2026',
+  error: 'Voice failed',
 }
 
 // SVG icons as inline components to avoid external deps
@@ -79,6 +81,8 @@ function getButtonStyle(state: VoiceState): string {
       return `${base} bg-green-600 text-white focus-visible:ring-green-400`
     case 'cooldown':
       return `${base} bg-surface-raised text-accent focus-visible:ring-accent`
+    case 'error':
+      return `${base} bg-danger/20 text-danger focus-visible:ring-danger`
   }
 }
 

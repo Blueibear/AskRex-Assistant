@@ -2601,13 +2601,13 @@ cd gui && npm run typecheck && npm run build
 **Implementation notes:** Add diagnostics around start, backend/model selection, listener readiness, wake detection, STT handoff, and failure. Preserve latency and avoid repeated heavy model loads.
 
 **Acceptance Criteria:**
-- [ ] Starting wake mode shows `starting`, `listening`, `detected`, `processing`, and `failed` states as applicable.
-- [ ] The UI shows backend and selected model/asset state.
-- [ ] Missing backend/model/microphone errors are actionable.
-- [ ] Logs include bounded structured events for wake start/listen/respond path.
-- [ ] Tests or a harness cover successful readiness and backend unavailable paths.
-- [ ] `pytest tests/test_wakeword_listener_runtime.py -q` passes or replacement targeted tests pass.
-- [ ] `cd gui && npm run typecheck && npm run build` passes.
+- [x] Starting wake mode shows `starting`, `listening`, `detected`, `processing`, and `failed` states as applicable.
+- [x] The UI shows backend and selected model/asset state.
+- [x] Missing backend/model/microphone errors are actionable.
+- [x] Logs include bounded structured events for wake start/listen/respond path.
+- [x] Tests or a harness cover successful readiness and backend unavailable paths.
+- [x] `pytest tests/test_wakeword_listener_runtime.py -q` passes or replacement targeted tests pass.
+- [x] `cd gui && npm run typecheck && npm run build` passes.
 - [ ] All relevant GitHub checks pass.
 
 **Validation commands:**
@@ -2617,6 +2617,9 @@ cd gui && npm run typecheck && npm run build
 ```
 
 **Risk notes:** Diagnostics must not continuously log microphone audio data or sensitive transcripts.
+
+**Local evidence (2026-09-08):** The recovered US-074 path publishes privacy-safe live detector status (configured/active phrase and backend, threshold, fallback state, detector generation, armed state, microphone/device index) plus throttled attempt evidence without raw audio, transcripts, user identity, credentials, filesystem model paths, or exception payloads. Rebuild failures are sanitized in both callback events and logs. Focused Python wake/voice regression passed 51/51 before formatting and 29/29 after the privacy/error-state refinements; the final full Electron GUI gate passed 44/44 files and 225/225 tests, TypeScript typecheck, ESLint with 0 errors (2 existing warnings), and the production Electron build. The GitHub-check criterion remains open until CI is green on the exact pushed head.
+
 
 ---
 

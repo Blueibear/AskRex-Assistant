@@ -72,10 +72,14 @@ The current Rex install paths are validated on Python 3.11. Fresh installs on Py
 **Issue:** Rex doesn't respond to wake word
 
 **Solution:**
-1. Check microphone is working: `python audio_config.py --list`
-2. Lower threshold: set `"threshold": 0.3` under `wakeword` in `config/rex_config.json`
-3. Test wake word detection: `python wakeword_listener.py`
-4. Record custom wake word: `python scripts/record_wakeword.py`
+1. Open the **Voice** page while wake mode is active and check **Say:** for the actual live detector phrase. If fallback is active, this can differ from the configured wake word.
+2. Expand **Wake-word diagnostics** to check the active backend, threshold, selected microphone, confidence evidence, and whether input is unusually quiet or consistently below threshold.
+3. Check microphone is working: `python audio_config.py --list`
+4. Lower threshold only after reviewing the live evidence: set `"threshold": 0.3` under `wakeword` in `config/rex_config.json`.
+5. Test wake word detection: `python wakeword_listener.py`
+6. Record custom wake word: `python scripts/record_wakeword.py`
+
+The diagnostic surface intentionally exposes bounded detector metadata only. It does not display or persist raw microphone audio, transcripts, model/embedding filesystem paths, credentials, or user identity.
 
 ## Custom Wake Model — False Triggers on Silence
 

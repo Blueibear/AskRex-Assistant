@@ -35,6 +35,9 @@ import type {
   ShoppingItem,
   WakeWordInfo,
   WakeWordStatus,
+  WakeWordRuntimeStatus,
+  WakeWordAttemptEvidence,
+  WakeWordRuntimeSnapshots,
   LogEntry,
   LogsResponse,
   UsageSummary,
@@ -142,7 +145,9 @@ function attachVoiceSession(
   onStateChange: (state: string) => void,
   onTranscript: (entry: VoiceTranscriptEntry) => void,
   onError: (error: string) => void,
-  onStatus?: (status: string, label: string) => void
+  onStatus?: (status: string, label: string) => void,
+  onWakeWordRuntimeStatus?: (status: WakeWordRuntimeStatus) => void,
+  onWakeWordAttemptEvidence?: (evidence: WakeWordAttemptEvidence) => void
 ): (() => void) {
   if (voiceCleanup) {
     voiceCleanup()
@@ -161,12 +166,20 @@ function attachVoiceSession(
   function statusHandler(_e: unknown, data: { status: string; label?: string }): void {
     onStatus?.(data.status, data.label ?? data.status)
   }
+  function wakeWordRuntimeStatusHandler(_e: unknown, data: WakeWordRuntimeStatus): void {
+    onWakeWordRuntimeStatus?.(data)
+  }
+  function wakeWordAttemptEvidenceHandler(_e: unknown, data: WakeWordAttemptEvidence): void {
+    onWakeWordAttemptEvidence?.(data)
+  }
 
   function cleanup(): void {
     ipcRenderer.removeListener('rex:voiceState', stateHandler)
     ipcRenderer.removeListener('rex:voiceTranscript', transcriptHandler)
     ipcRenderer.removeListener('rex:voiceError', errorHandler)
     ipcRenderer.removeListener('rex:voiceStatus', statusHandler)
+    ipcRenderer.removeListener('rex:wakeWordRuntimeStatus', wakeWordRuntimeStatusHandler)
+    ipcRenderer.removeListener('rex:wakeWordAttemptEvidence', wakeWordAttemptEvidenceHandler)
     if (voiceCleanup === cleanup) {
       voiceCleanup = null
     }
@@ -178,6 +191,8 @@ function attachVoiceSession(
   ipcRenderer.on('rex:voiceTranscript', transcriptHandler)
   ipcRenderer.on('rex:voiceError', errorHandler)
   ipcRenderer.on('rex:voiceStatus', statusHandler)
+  ipcRenderer.on('rex:wakeWordRuntimeStatus', wakeWordRuntimeStatusHandler)
+  ipcRenderer.on('rex:wakeWordAttemptEvidence', wakeWordAttemptEvidenceHandler)
 
   return cleanup
 }
@@ -268,6 +283,8 @@ const rexAPI = {
   attachVoiceSession,
   startVoice: makeStartVoice,
   stopVoice,
+  getWakeWordRuntimeSnapshots: (): Promise<WakeWordRuntimeSnapshots> =>
+    ipcRenderer.invoke('rex:getWakeWordRuntimeSnapshots'),
   getTasks: (): Promise<Task[]> => ipcRenderer.invoke('rex:getTasks'),
   saveTask: (task: TaskInput): Promise<Task> => ipcRenderer.invoke('rex:saveTask', task),
   deleteTask: (taskId: string): Promise<void> => ipcRenderer.invoke('rex:deleteTask', taskId),
