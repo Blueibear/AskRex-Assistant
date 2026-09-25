@@ -212,6 +212,7 @@ def build_chat_blueprint(services: MobileApiServices, limiter: Any) -> Blueprint
                 chat_request.conversation_id,
                 str(stored.get("response", "")),
                 status=str(stored.get("status", STATUS_COMPLETED)),
+                attachments=list(stored.get("attachments", [])),
             )
             return _sse_response(iter([mev.format_sse(replay)]))
         try:
@@ -333,7 +334,11 @@ def build_chat_blueprint(services: MobileApiServices, limiter: Any) -> Blueprint
                 finished = True
                 yield mev.format_sse(
                     mev.message_done_event(
-                        message_id, conversation_id, full_content, status=STATUS_COMPLETED
+                        message_id,
+                        conversation_id,
+                        full_content,
+                        status=STATUS_COMPLETED,
+                        attachments=[attachment.public_dict() for attachment in attachments],
                     )
                 )
             finally:

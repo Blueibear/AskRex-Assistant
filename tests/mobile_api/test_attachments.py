@@ -23,6 +23,7 @@ from tests.mobile_api.conftest import (
     chat_payload,
     create_user,
     paired_login_tokens,
+    parse_sse_events,
 )
 
 
@@ -218,6 +219,69 @@ class TestMobileAttachments:
         assert [event["type"] for event in ws.sent] == ["auth_ok", "ack", "error"]
         assert ws.sent[-1]["code"] == "FORBIDDEN"
         assert fake_chat_service.calls == []
+
+    def test_sse_terminal_includes_safe_attachment_provenance(self, client) -> None:
+        """Successful SSE attachment chat mirrors the HTTP terminal metadata."""
+        _, headers = _authed(client)
+        conversation_id = str(uuid.uuid4())
+        uploaded = _upload(client, headers, conversation_id).get_json()["attachment"]
+        payload = chat_payload(
+            conversation_id=conversation_id,
+            attachment_ids=[uploaded["attachment_id"]],
+        )
+
+        response = client.post("/mobile/chat/stream", headers=headers, json=payload)
+
+        assert response.status_code == 200
+        done = [
+            event for event in parse_sse_events(response.data) if event["type"] == "message_done"
+        ]
+        assert len(done) == 1
+        assert done[0]["attachments"] == [uploaded]
+        assert "path" not in repr(done[0]).lower()
+
+    def test_websocket_terminal_includes_safe_attachment_provenance(
+        self, client, services
+    ) -> None:
+        """Successful WebSocket attachment chat emits the same terminal metadata."""
+        _, headers = _authed(client)
+        conversation_id = str(uuid.uuid4())
+        uploaded = _upload(client, headers, conversation_id).get_json()["attachment"]
+
+        from rex.mobile_api.websocket import MobileWebSocketServer
+        from tests.mobile_api.test_chat_websocket import FakeWs
+
+        token = headers["Authorization"].removeprefix("Bearer ")
+        frame = {
+            "type": "chat",
+            **chat_payload(
+                conversation_id=conversation_id,
+                attachment_ids=[uploaded["attachment_id"]],
+            ),
+        }
+        ws = FakeWs(
+            [
+                json.dumps(
+                    {
+                        "type": "auth",
+                        "access_token": token,
+                        "client": {
+                            "platform": "ios",
+                            "app_version": "0.1.0",
+                            "device_id": "dev-1",
+                        },
+                    }
+                ),
+                json.dumps(frame),
+            ]
+        )
+
+        MobileWebSocketServer(services).handle(ws, "10.0.0.1")
+
+        done = [event for event in ws.sent if event["type"] == "message_done"]
+        assert len(done) == 1
+        assert done[0]["attachments"] == [uploaded]
+        assert "path" not in repr(done[0]).lower()
 
     def test_attachment_count_and_temp_expiry_cleanup(self, client, services) -> None:
         _, headers = _authed(client)

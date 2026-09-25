@@ -349,6 +349,7 @@ class MobileWebSocketServer:
                     chat_request.conversation_id,
                     str(stored.get("response", "")),
                     status=str(stored.get("status", STATUS_COMPLETED)),
+                    attachments=list(stored.get("attachments", [])),
                 ),
             )
             return True
@@ -375,7 +376,7 @@ class MobileWebSocketServer:
             return True
 
         try:
-            services.attachment_store.validate_references(
+            attachments = services.attachment_store.validate_references(
                 user_id=principal.user_id,
                 device_id=principal.paired_device_id,
                 conversation_id=chat_request.conversation_id,
@@ -491,6 +492,7 @@ class MobileWebSocketServer:
             "response": full_content,
             "status": STATUS_COMPLETED,
             "events": [],
+            "attachments": [attachment.public_dict() for attachment in attachments],
         }
         # Terminal result is stored before message_done is announced.
         store.complete(
@@ -504,6 +506,7 @@ class MobileWebSocketServer:
                     chat_request.conversation_id,
                     full_content,
                     status=STATUS_COMPLETED,
+                    attachments=[attachment.public_dict() for attachment in attachments],
                 ),
             )
         except Exception:

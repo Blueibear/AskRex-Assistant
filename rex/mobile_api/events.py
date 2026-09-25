@@ -48,14 +48,21 @@ def message_done_event(
     conversation_id: str,
     full_content: str,
     status: str = "completed",
+    attachments: list[dict[str, object]] | None = None,
 ) -> dict[str, Any]:
-    return {
+    event: dict[str, Any] = {
         "type": EVENT_MESSAGE_DONE,
         "message_id": message_id,
         "conversation_id": conversation_id,
         "full_content": full_content,
         "status": status,
     }
+    # Terminal frames mirror the HTTP terminal payload.  These are safe
+    # provenance records only: attachment bytes and storage paths never cross
+    # a chat transport boundary.
+    if attachments is not None:
+        event["attachments"] = attachments
+    return event
 
 
 def error_event(
