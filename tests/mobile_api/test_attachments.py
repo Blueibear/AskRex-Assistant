@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from rex.mobile_api import attachments as attachment_module
+from rex.mobile_api import errors as merr
 from rex.mobile_api.errors import MobileApiError
 from rex.mobile_api.routes.attachments import (
     _MULTIPART_OVERHEAD_BYTES,
@@ -491,7 +492,7 @@ class TestMobileAttachments:
     def test_expired_file_unlink_failure_keeps_retryable_metadata(
         self, services, monkeypatch
     ) -> None:
-        """Expired private bytes remain locatable until a cleanup retry removes them."""
+        """Expired cleanup state is retained but cannot authorize retained bytes."""
         attachment = services.attachment_store.create(
             user_id="james",
             device_id="device",
@@ -526,12 +527,14 @@ class TestMobileAttachments:
             original_unlink(path, *args, **kwargs)
 
         monkeypatch.setattr(Path, "unlink", fail_once)
-        services.attachment_store.validate_references(
-            user_id="james",
-            device_id="device",
-            conversation_id=str(uuid.uuid4()),
-            attachment_ids=(),
-        )
+        with pytest.raises(MobileApiError) as error:
+            services.attachment_store.validate_references(
+                user_id="james",
+                device_id="device",
+                conversation_id=attachment.conversation_id,
+                attachment_ids=(attachment.attachment_id,),
+            )
+        assert error.value.code == merr.FORBIDDEN
         assert storage.exists()
         conn = connect(services.db_path)
         try:

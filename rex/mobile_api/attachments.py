@@ -369,8 +369,8 @@ class MobileAttachmentStore:
                     "SELECT attachment_id, conversation_id, filename, media_type, size_bytes, "
                     "storage_name "
                     "FROM mobile_conversation_attachments WHERE attachment_id = ? AND user_id = ? "
-                    "AND device_id = ? AND conversation_id = ?",
-                    (attachment_id, user_id, device_id, conversation_id),
+                    "AND device_id = ? AND conversation_id = ? AND expires_at > ?",
+                    (attachment_id, user_id, device_id, conversation_id, now.isoformat()),
                 ).fetchone()
                 if row is None:
                     raise MobileApiError(
