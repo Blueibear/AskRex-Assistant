@@ -7,7 +7,9 @@ import json
 import os
 import sqlite3
 import uuid
+import zlib
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -45,6 +47,44 @@ def _upload(client, headers, conversation_id, data=b"private note", filename="no
         },
         content_type="multipart/form-data",
     )
+
+
+def _png_chunk(chunk_type: bytes, payload: bytes) -> bytes:
+    checksum = zlib.crc32(chunk_type + payload) & 0xFFFFFFFF
+    return (
+        len(payload).to_bytes(4, "big")
+        + chunk_type
+        + payload
+        + checksum.to_bytes(4, "big")
+    )
+
+
+def _valid_png() -> bytes:
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", b"\0\0\0\x01\0\0\0\x01\x08\x02\0\0\0")
+        + _png_chunk(b"IDAT", zlib.compress(b"\0\0\0\0"))
+        + _png_chunk(b"IEND", b"")
+    )
+
+
+def _valid_jpeg() -> bytes:
+    return bytes.fromhex(
+        "ffd8"
+        "ffc0000b080001000101011100"
+        "ffda0008010100003f00"
+        "00ffd9"
+    )
+
+
+def _bmff_box(box_type: bytes, payload: bytes) -> bytes:
+    return (len(payload) + 8).to_bytes(4, "big") + box_type + payload
+
+
+def _valid_heic() -> bytes:
+    ftyp = _bmff_box(b"ftyp", b"heic\0\0\0\0mif1heic")
+    handler = _bmff_box(b"hdlr", b"\0\0\0\0\0\0\0\0pict")
+    return ftyp + _bmff_box(b"meta", b"\0\0\0\0" + handler)
 
 
 class TestMobileAttachments:
@@ -216,6 +256,31 @@ class TestMobileAttachments:
         )
         assert response.status_code == 415
         assert response.get_json()["error"]["code"] == "INVALID_MEDIA"
+
+    @pytest.mark.parametrize(
+        ("data", "media_type"),
+        [
+            (_valid_png(), "image/png"),
+            (_valid_jpeg(), "image/jpeg"),
+            (_valid_heic(), "image/heic"),
+        ],
+    )
+    def test_image_content_requires_a_structurally_valid_container(
+        self, data: bytes, media_type: str
+    ) -> None:
+        """Image detection verifies bounded container structure, not a signature alone."""
+        assert attachment_module.sniff_media_type(data) == media_type
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            b"\x89PNG\r\n\x1a\n" + b"not-a-png",
+            b"\xff\xd8\xff" + b"not-a-jpeg",
+            _bmff_box(b"ftyp", b"heic\0\0\0\0mif1") + b"truncated-meta",
+        ],
+    )
+    def test_image_signature_without_complete_structure_is_rejected(self, data: bytes) -> None:
+        assert attachment_module.sniff_media_type(data) is None
 
     def test_attachment_reference_is_bound_to_owner_device_and_conversation(
         self, client, fake_chat_service
@@ -422,3 +487,65 @@ class TestMobileAttachments:
                 max_per_conversation=5,
             )
         assert list(services.attachment_store.storage_root.iterdir()) == []
+
+    def test_expired_file_unlink_failure_keeps_retryable_metadata(
+        self, services, monkeypatch
+    ) -> None:
+        """Expired private bytes remain locatable until a cleanup retry removes them."""
+        attachment = services.attachment_store.create(
+            user_id="james",
+            device_id="device",
+            conversation_id=str(uuid.uuid4()),
+            filename="note.txt",
+            data=b"private note",
+            max_per_conversation=5,
+        )
+        storage = services.attachment_store.storage_root / f"{attachment.attachment_id}.bin"
+        from rex.mobile_api.db import connect
+
+        conn = connect(services.db_path)
+        try:
+            conn.execute(
+                "UPDATE mobile_conversation_attachments SET expires_at = ? WHERE attachment_id = ?",
+                (
+                    (services.attachment_store._now() - timedelta(seconds=1)).isoformat(),
+                    attachment.attachment_id,
+                ),
+            )
+        finally:
+            conn.close()
+
+        original_unlink = Path.unlink
+        failed_once = False
+
+        def fail_once(path: Path, *args, **kwargs) -> None:
+            nonlocal failed_once
+            if path == storage and not failed_once:
+                failed_once = True
+                raise PermissionError("forced unlink failure")
+            original_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", fail_once)
+        services.attachment_store.validate_references(
+            user_id="james",
+            device_id="device",
+            conversation_id=str(uuid.uuid4()),
+            attachment_ids=(),
+        )
+        assert storage.exists()
+        conn = connect(services.db_path)
+        try:
+            assert conn.execute(
+                "SELECT COUNT(*) FROM mobile_conversation_attachments WHERE attachment_id = ?",
+                (attachment.attachment_id,),
+            ).fetchone()[0] == 1
+        finally:
+            conn.close()
+
+        services.attachment_store.validate_references(
+            user_id="james",
+            device_id="device",
+            conversation_id=str(uuid.uuid4()),
+            attachment_ids=(),
+        )
+        assert not storage.exists()

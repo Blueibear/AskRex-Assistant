@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import re
 import uuid
+import zlib
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -56,13 +57,11 @@ def sanitized_filename(name: object) -> str:
 
 def sniff_media_type(data: bytes) -> str | None:
     """Return an allowlisted type from bytes, never from a MIME claim."""
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+    if _is_valid_png(data):
         return "image/png"
-    if data.startswith(b"\xff\xd8\xff"):
+    if _is_valid_jpeg(data):
         return "image/jpeg"
-    if len(data) >= 12 and data[4:8] == b"ftyp" and data[8:12] in {
-        b"heic", b"heix", b"hevc", b"hevx", b"mif1",
-    }:
+    if _is_valid_heic(data):
         return "image/heic"
     if data.startswith(b"%PDF-"):
         return "application/pdf" if b"%%EOF" in data[-2048:] else None
@@ -76,6 +75,156 @@ def sniff_media_type(data: bytes) -> str | None:
     if not decoded or "\x00" in decoded:
         return None
     return "text/plain"
+
+
+def _is_valid_png(data: bytes) -> bool:
+    """Perform bounded, non-decoding PNG container validation."""
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return False
+    offset = 8
+    seen_ihdr = False
+    seen_idat = False
+    while offset + 12 <= len(data):
+        length = int.from_bytes(data[offset : offset + 4], "big")
+        chunk_end = offset + 12 + length
+        if chunk_end > len(data):
+            return False
+        chunk_type = data[offset + 4 : offset + 8]
+        payload = data[offset + 8 : offset + 8 + length]
+        checksum = int.from_bytes(data[offset + 8 + length : chunk_end], "big")
+        if zlib.crc32(chunk_type + payload) & 0xFFFFFFFF != checksum:
+            return False
+        if not seen_ihdr:
+            if chunk_type != b"IHDR" or length != 13:
+                return False
+            width = int.from_bytes(payload[:4], "big")
+            height = int.from_bytes(payload[4:8], "big")
+            if not width or not height:
+                return False
+            seen_ihdr = True
+        elif chunk_type == b"IDAT":
+            seen_idat = True
+        elif chunk_type == b"IEND":
+            return length == 0 and seen_idat and chunk_end == len(data)
+        offset = chunk_end
+    return False
+
+
+def _is_valid_jpeg(data: bytes) -> bool:
+    """Check JPEG segment framing, image dimensions, and terminal EOI marker."""
+    if not data.startswith(b"\xff\xd8"):
+        return False
+    offset = 2
+    seen_frame = False
+    while offset < len(data):
+        if data[offset] != 0xFF:
+            return False
+        while offset < len(data) and data[offset] == 0xFF:
+            offset += 1
+        if offset >= len(data):
+            return False
+        marker = data[offset]
+        offset += 1
+        if marker == 0xD9:
+            return seen_frame and offset == len(data)
+        if marker in {0xD8, 0x01} or 0xD0 <= marker <= 0xD7:
+            continue
+        if offset + 2 > len(data):
+            return False
+        segment_length = int.from_bytes(data[offset : offset + 2], "big")
+        if segment_length < 2 or offset + segment_length > len(data):
+            return False
+        payload = data[offset + 2 : offset + segment_length]
+        offset += segment_length
+        if marker in {
+            0xC0,
+            0xC1,
+            0xC2,
+            0xC3,
+            0xC5,
+            0xC6,
+            0xC7,
+            0xC9,
+            0xCA,
+            0xCB,
+            0xCD,
+            0xCE,
+            0xCF,
+        }:
+            if (
+                len(payload) < 6
+                or not int.from_bytes(payload[1:3], "big")
+                or not int.from_bytes(payload[3:5], "big")
+            ):
+                return False
+            seen_frame = True
+        if marker == 0xDA:
+            if not seen_frame or len(payload) < 6:
+                return False
+            while offset < len(data):
+                if data[offset] != 0xFF:
+                    offset += 1
+                    continue
+                if offset + 1 >= len(data):
+                    return False
+                next_byte = data[offset + 1]
+                if next_byte == 0x00 or 0xD0 <= next_byte <= 0xD7:
+                    offset += 2
+                    continue
+                if next_byte == 0xD9:
+                    return offset + 2 == len(data)
+                return False
+    return False
+
+
+_HEIC_BRANDS = {b"heic", b"heix", b"hevc", b"hevx", b"mif1"}
+
+
+def _bmff_boxes(data: bytes, start: int, end: int):
+    """Yield bounded ISO BMFF boxes, rejecting truncated/extended containers."""
+    offset = start
+    while offset < end:
+        if offset + 8 > end:
+            return
+        size = int.from_bytes(data[offset : offset + 4], "big")
+        box_type = data[offset + 4 : offset + 8]
+        header_size = 8
+        if size == 1:
+            if offset + 16 > end:
+                return
+            size = int.from_bytes(data[offset + 8 : offset + 16], "big")
+            header_size = 16
+        if size == 0:
+            size = end - offset
+        if size < header_size or offset + size > end:
+            return
+        yield box_type, offset + header_size, offset + size
+        offset += size
+
+
+def _is_valid_heic(data: bytes) -> bool:
+    """Require a complete HEIF BMFF file with ftyp and pict meta handler."""
+    boxes = list(_bmff_boxes(data, 0, len(data)))
+    if not boxes or boxes[-1][2] != len(data) or boxes[0][0] != b"ftyp":
+        return False
+    _, ftyp_start, ftyp_end = boxes[0]
+    ftyp = data[ftyp_start:ftyp_end]
+    if len(ftyp) < 8 or len(ftyp) % 4:
+        return False
+    brands = {ftyp[:4], *(ftyp[index : index + 4] for index in range(8, len(ftyp), 4))}
+    if not brands.intersection(_HEIC_BRANDS):
+        return False
+    for box_type, meta_start, meta_end in boxes:
+        if box_type != b"meta" or meta_end - meta_start < 4:
+            continue
+        children = list(_bmff_boxes(data, meta_start + 4, meta_end))
+        if not children or children[-1][2] != meta_end:
+            continue
+        for child_type, child_start, child_end in children:
+            if child_type == b"hdlr" and child_end - child_start >= 12:
+                if data[child_start + 8 : child_start + 12] == b"pict":
+                    return True
+    return False
 
 
 class MobileAttachmentStore:
@@ -108,13 +257,14 @@ class MobileAttachmentStore:
             try:
                 path.unlink(missing_ok=True)
             except OSError:
-                # The database record is still removed: an inaccessible stale
-                # temp file must never remain authorized.
-                pass
-        conn.execute(
-            "DELETE FROM mobile_conversation_attachments WHERE expires_at <= ?",
-            (now.isoformat(),),
-        )
+                # Preserve the expired row as retryable cleanup state. It is
+                # already unauthorized (all reads require a future expiry),
+                # and a later cleanup pass can still locate the private bytes.
+                continue
+            conn.execute(
+                "DELETE FROM mobile_conversation_attachments WHERE attachment_id = ?",
+                (str(row["attachment_id"]),),
+            )
 
     def create(
         self,
