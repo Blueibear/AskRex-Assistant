@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { spawn } from 'child_process'
 import type { ChildProcess } from 'child_process'
 import { bridgeSpawnOptions, resolveBridgePath, resolvePythonCommand } from '../bridgeResolver'
@@ -262,7 +262,9 @@ export function registerVoiceHandlers(session: ElectronSessionIdentity): void {
       microphone_label: microphoneLabel ?? null
     })
 
-    const bridgeArgs = [scriptPath, '--user', session.userId]
+    const bridgeArgs = app.isPackaged
+      ? ['-I', scriptPath, '--user', session.userId]
+      : [scriptPath, '--user', session.userId]
     if (microphoneLabel) {
       bridgeArgs.push('--microphone-label', microphoneLabel)
     }

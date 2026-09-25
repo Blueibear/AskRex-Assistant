@@ -9,6 +9,7 @@ from typing import cast
 from rex.assistant_errors import (
     AudioDeviceError,
 )
+from rex.audio_config import resolve_input_capture_rate
 from rex.voice._types import (
     AudioArray,
     RecorderCallable,
@@ -29,6 +30,27 @@ from rex.voice.transcripts import (
     _COMMAND_CAPTURE_MIN_SECONDS,
     _COMMAND_CAPTURE_RMS_THRESHOLD,
 )
+
+
+def _resample_mono(audio: AudioArray, *, target_frames: int) -> AudioArray:
+    """Resample mono float audio to an exact frame count using linear interpolation."""
+    np = _require_numpy()
+    source = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if target_frames <= 0:
+        raise AudioDeviceError("Target resample frame count must be positive")
+    if source.size == 0:
+        raise AudioDeviceError("Audio capture returned no samples")
+    if source.size == target_frames:
+        return cast(AudioArray, source)
+    if source.size == 1:
+        return cast(AudioArray, np.full(target_frames, source[0], dtype=np.float32))
+
+    source_positions = np.linspace(0.0, 1.0, num=source.size, endpoint=True)
+    target_positions = np.linspace(0.0, 1.0, num=target_frames, endpoint=True)
+    return cast(
+        AudioArray,
+        np.interp(target_positions, source_positions, source).astype(np.float32, copy=False),
+    )
 
 
 def _vl():
@@ -330,21 +352,41 @@ class AsyncMicrophone:
 
         def _capture() -> np.ndarray:  # type: ignore[name-defined]
             start = time.perf_counter()
-            _vl().logger.debug("MIC DEBUG: _record start duration=%.2f frames=%d", duration, frames)
+            capture_rate = resolve_input_capture_rate(sd, self._device_index, self.sample_rate)
+            capture_frames = max(int(round(capture_rate * duration)), 1)
+            _vl().logger.debug(
+                "MIC DEBUG: _record start duration=%.2f target_rate=%d capture_rate=%.0f frames=%d",
+                duration,
+                self.sample_rate,
+                capture_rate,
+                capture_frames,
+            )
 
             recording = sd.rec(
-                frames,
-                samplerate=self.sample_rate,
+                capture_frames,
+                samplerate=capture_rate,
                 channels=1,
                 dtype="float32",
                 device=self._device_index,
                 blocking=True,
-            )
+            ).reshape(-1)
+
+            if capture_rate != float(self.sample_rate):
+                _vl().logger.info(
+                    "[Audio] Resampling microphone input to Rex processing rate",
+                    extra=_voice_log_extra(
+                        event="audio_capture_rate_fallback",
+                        device_index=self._device_index,
+                        capture_rate_hz=capture_rate,
+                        processing_rate_hz=self.sample_rate,
+                    ),
+                )
+                recording = _resample_mono(recording, target_frames=frames)
 
             end = time.perf_counter()
             _vl().logger.debug("MIC DEBUG: blocking sd.rec returned after %.3fs total", end - start)
 
-            return recording.reshape(-1)
+            return recording
 
         try:
             data = await asyncio.to_thread(_capture)

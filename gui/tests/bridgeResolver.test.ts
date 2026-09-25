@@ -129,6 +129,29 @@ describe('runtime path isolation', () => {
     expect(options.env.ASKREX_MEMORY_DIR).toBe(join('/fake/user-data', 'Memory'))
   })
 
+  it('isolates packaged children from machine Python packages', () => {
+    const previousPath = process.env.PYTHONPATH
+    const previousHome = process.env.PYTHONHOME
+    const previousNoUserSite = process.env.PYTHONNOUSERSITE
+    process.env.PYTHONPATH = 'C:\\unsafe\\pythonpath'
+    process.env.PYTHONHOME = 'C:\\unsafe\\pythonhome'
+    delete process.env.PYTHONNOUSERSITE
+    mockApp.isPackaged = true
+    try {
+      const options = bridgeSpawnOptions()
+      expect(options.env.PYTHONPATH).toBeUndefined()
+      expect(options.env.PYTHONHOME).toBeUndefined()
+      expect(options.env.PYTHONNOUSERSITE).toBe('1')
+    } finally {
+      if (previousPath === undefined) delete process.env.PYTHONPATH
+      else process.env.PYTHONPATH = previousPath
+      if (previousHome === undefined) delete process.env.PYTHONHOME
+      else process.env.PYTHONHOME = previousHome
+      if (previousNoUserSite === undefined) delete process.env.PYTHONNOUSERSITE
+      else process.env.PYTHONNOUSERSITE = previousNoUserSite
+    }
+  })
+
   it('actively strips the plaintext credential fallback from packaged children', () => {
     const previous = process.env.REX_ALLOW_PLAINTEXT_CREDENTIAL_FALLBACK
     process.env.REX_ALLOW_PLAINTEXT_CREDENTIAL_FALLBACK = '1'

@@ -201,6 +201,10 @@ def test_runtime_probe_uses_absolute_isolated_managed_python_and_complete_import
         "torch",
         "whisper",
         "imageio_ffmpeg",
+        "openwakeword",
+        "scipy",
+        "onnxruntime",
+        "sklearn",
     ):
         assert module_name in probe_code
     kwargs = observed["kwargs"]

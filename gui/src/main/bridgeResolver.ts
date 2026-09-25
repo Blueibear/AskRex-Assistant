@@ -96,6 +96,9 @@ export function bridgeSpawnOptions(): { cwd: string; env: NodeJS.ProcessEnv } {
     // plaintext credential escape hatch. Every managed Python child is
     // vault-only even when the parent environment contains the flag.
     delete env.REX_ALLOW_PLAINTEXT_CREDENTIAL_FALLBACK
+    delete env.PYTHONPATH
+    delete env.PYTHONHOME
+    env.PYTHONNOUSERSITE = '1'
   }
   return {
     cwd: runtimeRoot,
