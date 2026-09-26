@@ -34,6 +34,23 @@ def _config(tmp_path: Path) -> OrchestratorConfig:
     )
 
 
+def test_claude_executable_prefers_cmd_shim_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    def fake_which(name: str):
+        seen.append(name)
+        return (
+            r"C:\\Users\\james\\AppData\\Roaming\\npm\\claude.cmd" if name == "claude.cmd" else None
+        )
+
+    monkeypatch.setattr(claude_cloud.shutil, "which", fake_which)
+    monkeypatch.setattr(claude_cloud, "__import__", __import__, raising=False)
+
+    assert claude_cloud._claude_executable().endswith("claude.cmd")
+    if __import__("os").name == "nt":
+        assert seen[0] == "claude.cmd"
+
+
 def test_cloud_prompt_requires_final_completion_commit() -> None:
     prompt = claude_cloud._cloud_prompt(
         TaskItem("ROADMAP-123", "Implement it", "review feedback"),
@@ -72,7 +89,7 @@ def test_launch_persists_machine_readable_session_metadata(
     monkeypatch.setattr(claude_cloud.tempfile, "mkdtemp", lambda **kwargs: str(tmp_path / "launch"))
 
     def fake_execute(command, *, cwd, timeout):
-        assert command[0] == "claude"
+        assert command[0].lower().endswith(("claude", "claude.cmd"))
         assert command[1] == "--cloud"
         assert "--output-format" in command
         return SimpleNamespace(

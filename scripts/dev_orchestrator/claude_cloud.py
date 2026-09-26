@@ -63,6 +63,15 @@ def _run(
     )
 
 
+def _claude_executable() -> str:
+    candidates = ("claude.cmd", "claude") if __import__("os").name == "nt" else ("claude",)
+    for candidate in candidates:
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    raise ClaudeCloudError("Claude Code CLI is not available on PATH")
+
+
 def _repo_for_role(config: OrchestratorConfig, role: str) -> Path:
     if role == "backend":
         root = config.backend_root
@@ -170,7 +179,7 @@ def launch_cloud_session(
             runner = execute or _run
             result = runner(
                 [
-                    "claude",
+                    _claude_executable(),
                     "--cloud",
                     prompt,
                     "--output-format",
