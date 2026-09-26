@@ -51,6 +51,19 @@ def test_claude_executable_prefers_cmd_shim_on_windows(monkeypatch: pytest.Monke
         assert seen[0] == "claude.cmd"
 
 
+def test_parse_cloud_launch_metadata_accepts_current_cli_output() -> None:
+    output = (
+        "\x1b[?25hCreated cloud session: Review task\r\n"
+        "View: https://claude.ai/code/session_01K7cJz4TRbzvetbp5kkrnUL?from=cli&m=0\r\n"
+        "Resume with: claude --teleport session_01K7cJz4TRbzvetbp5kkrnUL\r\n"
+    )
+
+    session_id, url = claude_cloud._parse_cloud_launch_metadata(output)
+
+    assert session_id == "session_01K7cJz4TRbzvetbp5kkrnUL"
+    assert url.startswith("https://claude.ai/code/session_01K7cJz4TRbzvetbp5kkrnUL")
+
+
 def test_cloud_prompt_requires_final_completion_commit() -> None:
     prompt = claude_cloud._cloud_prompt(
         TaskItem("ROADMAP-123", "Implement it", "review feedback"),

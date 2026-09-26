@@ -74,8 +74,21 @@ def _claude_executable() -> str:
     raise ClaudeCloudError("Claude Code CLI is not available on PATH")
 
 
-def _ps_quote(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
+_ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+
+
+def _parse_cloud_launch_metadata(output: str) -> tuple[str, str]:
+    cleaned = _ANSI_ESCAPE.sub("", output).replace("\r", "")
+    session_match = re.search(r"Session ID:\s*((?:session_|cse_)[A-Za-z0-9_-]+)", cleaned)
+    if not session_match:
+        session_match = re.search(
+            r"Resume with:\s*claude\s+--teleport\s+((?:session_|cse_)[A-Za-z0-9_-]+)",
+            cleaned,
+        )
+    url_match = re.search(r"View:\s*(https://claude\.ai/code/\S+)", cleaned)
+    if not session_match or not url_match:
+        raise ClaudeCloudError("Claude cloud launch output did not contain session metadata")
+    return session_match.group(1), url_match.group(1).rstrip()
 
 
 def _launch_cloud_interactive(
@@ -85,83 +98,51 @@ def _launch_cloud_interactive(
     prompt: str,
     timeout: int = 120,
 ) -> tuple[str, str]:
+    del coordination_root
     if os.name != "nt":
-        raise ClaudeCloudError(
-            "automatic Claude cloud launch currently requires Windows Terminal; "
-            "use the operator cloud launch flow on this platform"
-        )
-    wt = shutil.which("wt.exe") or shutil.which("wt")
-    if not wt:
-        raise ClaudeCloudError("Windows Terminal (wt.exe) is required for Claude cloud launch")
-    claude = _claude_executable()
-    launch_root = coordination_root / "cloud-launch"
-    launch_root.mkdir(parents=True, exist_ok=True)
-    nonce = uuid4().hex
-    prompt_path = launch_root / f"{nonce}.prompt.txt"
-    script_path = launch_root / f"{nonce}.ps1"
-    transcript_path = launch_root / f"{nonce}.transcript.txt"
-    exit_path = launch_root / f"{nonce}.exit.txt"
-    prompt_path.write_text(prompt, encoding="utf-8")
-    script = (
-        "$ErrorActionPreference = 'Continue'\n"
-        f"Start-Transcript -Path {_ps_quote(str(transcript_path))} -Force | Out-Null\n"
-        "try {\n"
-        f"  Set-Location -LiteralPath {_ps_quote(str(worktree))}\n"
-        f"  $task = Get-Content -LiteralPath {_ps_quote(str(prompt_path))} -Raw -Encoding UTF8\n"
-        f"  & {_ps_quote(claude)} --cloud $task\n"
-        "  $code = $LASTEXITCODE\n"
-        f"  [System.IO.File]::WriteAllText({_ps_quote(str(exit_path))}, [string]$code)\n"
-        "} finally { Stop-Transcript | Out-Null }\n"
-    )
-    script_path.write_text(script, encoding="utf-8")
+        raise ClaudeCloudError("automatic Claude cloud launch currently requires Windows ConPTY")
     try:
-        launched = subprocess.Popen(
-            [
-                wt,
-                "-w",
-                "new",
-                "new-tab",
-                "--title",
-                "AskRex Claude Cloud",
-                "powershell.exe",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(script_path),
-            ],
-            cwd=worktree,
-        )
+        from winpty import PtyProcess
+    except ImportError as exc:
+        raise ClaudeCloudError(
+            "Claude cloud launch requires the Windows dev dependency pywinpty"
+        ) from exc
+
+    proc = PtyProcess.spawn(
+        [_claude_executable(), "--cloud", prompt],
+        cwd=str(worktree),
+        dimensions=(40, 160),
+    )
+    try:
+        proc.fileobj.settimeout(0.5)
+        chunks: list[str] = []
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if exit_path.exists():
+            try:
+                chunk = proc.read(4096)
+            except (EOFError, TimeoutError, OSError):
+                chunk = ""
+            if chunk:
+                chunks.append(chunk)
+            if not proc.isalive():
                 break
-            if launched.poll() not in (None, 0) and not transcript_path.exists():
-                raise ClaudeCloudError("Windows Terminal failed before Claude cloud launch")
-            time.sleep(0.5)
         else:
+            proc.terminate(force=True)
             raise ClaudeCloudError("Claude cloud launch timed out waiting for session metadata")
 
-        exit_code = exit_path.read_text(encoding="utf-8-sig").strip()
-        transcript = (
-            transcript_path.read_text(encoding="utf-8-sig", errors="replace")
-            if transcript_path.exists()
-            else ""
-        )
-        if exit_code != "0":
-            error_lines = [line.strip() for line in transcript.splitlines() if "Error:" in line]
-            detail = error_lines[-1] if error_lines else "Claude cloud CLI exited unsuccessfully"
+        output = "".join(chunks)
+        exit_status = getattr(proc, "exitstatus", None)
+        if exit_status not in (None, 0):
+            cleaned = _ANSI_ESCAPE.sub("", output).replace("\r", "")
+            errors = [line.strip() for line in cleaned.splitlines() if "Error:" in line]
+            detail = errors[-1] if errors else "Claude cloud CLI exited unsuccessfully"
             raise ClaudeCloudError(f"Claude cloud session launch failed: {detail}")
-        session_match = re.search(r"Session ID:\s*((?:session_|cse_)[A-Za-z0-9_-]+)", transcript)
-        url_match = re.search(r"View:\s*(https://claude\.ai/code/\S+)", transcript)
-        if not session_match or not url_match:
-            raise ClaudeCloudError(
-                "Claude cloud launch transcript did not contain session metadata"
-            )
-        return session_match.group(1), url_match.group(1).rstrip()
+        return _parse_cloud_launch_metadata(output)
     finally:
-        for path in (prompt_path, script_path, transcript_path, exit_path):
-            path.unlink(missing_ok=True)
+        try:
+            proc.close(force=True)
+        except Exception:
+            pass
 
 
 def _repo_for_role(config: OrchestratorConfig, role: str) -> Path:
