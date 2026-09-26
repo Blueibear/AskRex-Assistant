@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -64,12 +66,102 @@ def _run(
 
 
 def _claude_executable() -> str:
-    candidates = ("claude.cmd", "claude") if __import__("os").name == "nt" else ("claude",)
+    candidates = ("claude.cmd", "claude") if os.name == "nt" else ("claude",)
     for candidate in candidates:
         resolved = shutil.which(candidate)
         if resolved:
             return resolved
     raise ClaudeCloudError("Claude Code CLI is not available on PATH")
+
+
+def _ps_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _launch_cloud_interactive(
+    *,
+    coordination_root: Path,
+    worktree: Path,
+    prompt: str,
+    timeout: int = 120,
+) -> tuple[str, str]:
+    if os.name != "nt":
+        raise ClaudeCloudError(
+            "automatic Claude cloud launch currently requires Windows Terminal; "
+            "use the operator cloud launch flow on this platform"
+        )
+    wt = shutil.which("wt.exe") or shutil.which("wt")
+    if not wt:
+        raise ClaudeCloudError("Windows Terminal (wt.exe) is required for Claude cloud launch")
+    claude = _claude_executable()
+    launch_root = coordination_root / "cloud-launch"
+    launch_root.mkdir(parents=True, exist_ok=True)
+    nonce = uuid4().hex
+    prompt_path = launch_root / f"{nonce}.prompt.txt"
+    script_path = launch_root / f"{nonce}.ps1"
+    transcript_path = launch_root / f"{nonce}.transcript.txt"
+    exit_path = launch_root / f"{nonce}.exit.txt"
+    prompt_path.write_text(prompt, encoding="utf-8")
+    script = (
+        "$ErrorActionPreference = 'Continue'\n"
+        f"Start-Transcript -Path {_ps_quote(str(transcript_path))} -Force | Out-Null\n"
+        "try {\n"
+        f"  Set-Location -LiteralPath {_ps_quote(str(worktree))}\n"
+        f"  $task = Get-Content -LiteralPath {_ps_quote(str(prompt_path))} -Raw -Encoding UTF8\n"
+        f"  & {_ps_quote(claude)} --cloud $task\n"
+        "  $code = $LASTEXITCODE\n"
+        f"  [System.IO.File]::WriteAllText({_ps_quote(str(exit_path))}, [string]$code)\n"
+        "} finally { Stop-Transcript | Out-Null }\n"
+    )
+    script_path.write_text(script, encoding="utf-8")
+    try:
+        launched = subprocess.Popen(
+            [
+                wt,
+                "-w",
+                "new",
+                "new-tab",
+                "--title",
+                "AskRex Claude Cloud",
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script_path),
+            ],
+            cwd=worktree,
+        )
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if exit_path.exists():
+                break
+            if launched.poll() not in (None, 0) and not transcript_path.exists():
+                raise ClaudeCloudError("Windows Terminal failed before Claude cloud launch")
+            time.sleep(0.5)
+        else:
+            raise ClaudeCloudError("Claude cloud launch timed out waiting for session metadata")
+
+        exit_code = exit_path.read_text(encoding="utf-8-sig").strip()
+        transcript = (
+            transcript_path.read_text(encoding="utf-8-sig", errors="replace")
+            if transcript_path.exists()
+            else ""
+        )
+        if exit_code != "0":
+            error_lines = [line.strip() for line in transcript.splitlines() if "Error:" in line]
+            detail = error_lines[-1] if error_lines else "Claude cloud CLI exited unsuccessfully"
+            raise ClaudeCloudError(f"Claude cloud session launch failed: {detail}")
+        session_match = re.search(r"Session ID:\s*((?:session_|cse_)[A-Za-z0-9_-]+)", transcript)
+        url_match = re.search(r"View:\s*(https://claude\.ai/code/\S+)", transcript)
+        if not session_match or not url_match:
+            raise ClaudeCloudError(
+                "Claude cloud launch transcript did not contain session metadata"
+            )
+        return session_match.group(1), url_match.group(1).rstrip()
+    finally:
+        for path in (prompt_path, script_path, transcript_path, exit_path):
+            path.unlink(missing_ok=True)
 
 
 def _repo_for_role(config: OrchestratorConfig, role: str) -> Path:
@@ -176,34 +268,41 @@ def launch_cloud_session(
                     + (add.stderr or add.stdout).strip()
                 )
             prompt = _cloud_prompt(task, role=role, branch=branch)
-            runner = execute or _run
-            result = runner(
-                [
-                    _claude_executable(),
-                    "--cloud",
-                    prompt,
-                    "--output-format",
-                    "json",
-                ],
-                cwd=worktree,
-                timeout=120,
-            )
-            if result.returncode != 0:
-                raise ClaudeCloudError(
-                    "Claude cloud session launch failed: "
-                    + (result.stderr or result.stdout).strip()
+            if execute is None:
+                session_id, url = _launch_cloud_interactive(
+                    coordination_root=config.coordination_root,
+                    worktree=worktree,
+                    prompt=prompt,
+                    timeout=120,
                 )
-            try:
-                payload = json.loads(result.stdout)
-            except json.JSONDecodeError as exc:
-                raise ClaudeCloudError("Claude cloud launch did not return JSON") from exc
-            if not isinstance(payload, dict) or payload.get("ok") is not True:
-                raise ClaudeCloudError(
-                    "Claude cloud session launch was rejected: "
-                    + str(payload.get("error", payload))
+            else:
+                result = execute(
+                    [
+                        _claude_executable(),
+                        "--cloud",
+                        prompt,
+                        "--output-format",
+                        "json",
+                    ],
+                    cwd=worktree,
+                    timeout=120,
                 )
-            session_id = str(payload.get("session_id", "")).strip()
-            url = str(payload.get("url", "")).strip()
+                if result.returncode != 0:
+                    raise ClaudeCloudError(
+                        "Claude cloud session launch failed: "
+                        + (result.stderr or result.stdout).strip()
+                    )
+                try:
+                    payload = json.loads(result.stdout)
+                except json.JSONDecodeError as exc:
+                    raise ClaudeCloudError("Claude cloud launch did not return JSON") from exc
+                if not isinstance(payload, dict) or payload.get("ok") is not True:
+                    raise ClaudeCloudError(
+                        "Claude cloud session launch was rejected: "
+                        + str(payload.get("error", payload))
+                    )
+                session_id = str(payload.get("session_id", "")).strip()
+                url = str(payload.get("url", "")).strip()
             if not _SESSION_ID.match(session_id) or not url.startswith("https://claude.ai/code/"):
                 raise ClaudeCloudError("Claude cloud launch returned invalid session metadata")
         finally:
