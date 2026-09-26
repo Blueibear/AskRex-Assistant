@@ -158,6 +158,9 @@ class TestMobileApiConfigSerialization:
             "rate_limit_chat",
             "rate_limit_voice",
             "idempotency_retention_hours",
+            "max_attachment_bytes",
+            "max_attachments_per_conversation",
+            "attachment_retention_seconds",
         }
 
     def test_show_config_output_includes_mobile_api(self, capsys) -> None:

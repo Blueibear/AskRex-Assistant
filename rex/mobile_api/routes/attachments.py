@@ -40,7 +40,9 @@ def _conversation_id() -> str:
     try:
         return str(uuid.UUID(value))
     except (ValueError, TypeError, AttributeError) as exc:
-        raise MobileApiError(merr.BAD_REQUEST, "Field 'conversation_id' must be a UUID.", 400) from exc
+        raise MobileApiError(
+            merr.BAD_REQUEST, "Field 'conversation_id' must be a UUID.", 400
+        ) from exc
 
 
 def build_attachments_blueprint(services: MobileApiServices, limiter: Any) -> Blueprint:
@@ -51,7 +53,9 @@ def build_attachments_blueprint(services: MobileApiServices, limiter: Any) -> Bl
     @require_mobile_auth(required_scope=ROUTE_SCOPES["attachments.upload"])
     def upload_attachment() -> Any:
         if not request.content_type or "multipart/form-data" not in request.content_type:
-            raise MobileApiError(merr.INVALID_MEDIA, "Content-Type must be multipart/form-data.", 415)
+            raise MobileApiError(
+                merr.INVALID_MEDIA, "Content-Type must be multipart/form-data.", 415
+            )
         multipart_max_bytes = services.config.max_attachment_bytes + _MULTIPART_OVERHEAD_BYTES
         # This must be set before touching request.form or request.files.
         # In particular, a chunked request has no Content-Length, so the

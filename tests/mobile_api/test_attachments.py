@@ -52,12 +52,7 @@ def _upload(client, headers, conversation_id, data=b"private note", filename="no
 
 def _png_chunk(chunk_type: bytes, payload: bytes) -> bytes:
     checksum = zlib.crc32(chunk_type + payload) & 0xFFFFFFFF
-    return (
-        len(payload).to_bytes(4, "big")
-        + chunk_type
-        + payload
-        + checksum.to_bytes(4, "big")
-    )
+    return len(payload).to_bytes(4, "big") + chunk_type + payload + checksum.to_bytes(4, "big")
 
 
 def _valid_png() -> bytes:
@@ -70,12 +65,7 @@ def _valid_png() -> bytes:
 
 
 def _valid_jpeg() -> bytes:
-    return bytes.fromhex(
-        "ffd8"
-        "ffc0000b080001000101011100"
-        "ffda0008010100003f00"
-        "00ffd9"
-    )
+    return bytes.fromhex("ffd8" "ffc0000b080001000101011100" "ffda0008010100003f00" "00ffd9")
 
 
 def _bmff_box(box_type: bytes, payload: bytes) -> bytes:
@@ -104,9 +94,7 @@ def _valid_pdf() -> bytes:
 
 
 class TestMobileAttachments:
-    def test_chat_attachment_reference_count_overflow_is_payload_too_large(
-        self, client
-    ) -> None:
+    def test_chat_attachment_reference_count_overflow_is_payload_too_large(self, client) -> None:
         """HTTP count overflow has the documented 413/PAYLOAD_TOO_LARGE contract."""
         _, headers = _authed(client)
         response = client.post(
@@ -143,9 +131,7 @@ class TestMobileAttachments:
                 json.dumps(
                     {
                         "type": "chat",
-                        **chat_payload(
-                            attachment_ids=[str(uuid.uuid4()) for _ in range(6)]
-                        ),
+                        **chat_payload(attachment_ids=[str(uuid.uuid4()) for _ in range(6)]),
                     }
                 ),
             ]
@@ -164,15 +150,17 @@ class TestMobileAttachments:
         services.config.max_attachment_bytes = 32
         boundary = "askrex-test-boundary"
         body = (
-            f"--{boundary}\r\n"
-            'Content-Disposition: form-data; name="conversation_id"\r\n\r\n'
-            f"{uuid.uuid4()}\r\n"
-            f"--{boundary}\r\n"
-            'Content-Disposition: form-data; name="attachment"; filename="note.txt"\r\n'
-            "Content-Type: text/plain\r\n\r\n"
-        ).encode("ascii") + (b"x" * (services.config.max_attachment_bytes + _MULTIPART_OVERHEAD_BYTES)) + (
-            f"\r\n--{boundary}--\r\n"
-        ).encode("ascii")
+            (
+                f"--{boundary}\r\n"
+                'Content-Disposition: form-data; name="conversation_id"\r\n\r\n'
+                f"{uuid.uuid4()}\r\n"
+                f"--{boundary}\r\n"
+                'Content-Disposition: form-data; name="attachment"; filename="note.txt"\r\n'
+                "Content-Type: text/plain\r\n\r\n"
+            ).encode("ascii")
+            + (b"x" * (services.config.max_attachment_bytes + _MULTIPART_OVERHEAD_BYTES))
+            + (f"\r\n--{boundary}--\r\n").encode("ascii")
+        )
 
         response = client.open(
             "/mobile/attachments",
@@ -401,9 +389,7 @@ class TestMobileAttachments:
         assert done[0]["attachments"] == [uploaded]
         assert "path" not in repr(done[0]).lower()
 
-    def test_websocket_terminal_includes_safe_attachment_provenance(
-        self, client, services
-    ) -> None:
+    def test_websocket_terminal_includes_safe_attachment_provenance(self, client, services) -> None:
         """Successful WebSocket attachment chat emits the same terminal metadata."""
         _, headers = _authed(client)
         conversation_id = str(uuid.uuid4())
@@ -567,10 +553,13 @@ class TestMobileAttachments:
         assert storage.exists()
         conn = connect(services.db_path)
         try:
-            assert conn.execute(
-                "SELECT COUNT(*) FROM mobile_conversation_attachments WHERE attachment_id = ?",
-                (attachment.attachment_id,),
-            ).fetchone()[0] == 1
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) FROM mobile_conversation_attachments WHERE attachment_id = ?",
+                    (attachment.attachment_id,),
+                ).fetchone()[0]
+                == 1
+            )
         finally:
             conn.close()
 
@@ -582,9 +571,7 @@ class TestMobileAttachments:
         )
         assert not storage.exists()
 
-    def test_stuck_expired_row_does_not_block_active_quota(
-        self, services, monkeypatch
-    ) -> None:
+    def test_stuck_expired_row_does_not_block_active_quota(self, services, monkeypatch) -> None:
         """A retained expired retry row is not an active attachment for quota."""
         conversation_id = str(uuid.uuid4())
         attachment = services.attachment_store.create(
