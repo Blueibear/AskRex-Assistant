@@ -3178,6 +3178,19 @@ Actual executed evidence (not claimed from source reading): `pytest -q tests/mob
 
 No wire-format or contract change resulted from either fix (both are internal to config-test bookkeeping and code style), so no new mobile mailbox publication is required beyond the contract already sent repeatedly to `mailbox/mobile/`. Slices (b)-(f) remain out of scope and not started. No mobile or frozen test-worktree files were touched, and no physical-device verification is claimed.
 
+**Backend evidence closeout 2026-09-26 (independent fresh re-execution, cloud worker, no source changes):** this pass re-ran every gate above from a clean venv rather than trusting the prior recorded numbers, and independently re-read every cited file/line to check it still matches the claims made about it. All of it reproduced exactly:
+
+- `pytest -q tests/mobile_api/` → 404 passed (matches the prior recorded count exactly).
+- `pytest -q tests/mobile_api/test_attachments.py tests/mobile_api/test_status_capabilities.py tests/mobile_api/test_contract_vectors.py` → 59 passed.
+- `pytest -q tests/test_us074_document_indexing.py` → 12 passed.
+- `ruff check` on the same file set → all checks passed.
+- `black --check --diff` under pinned `26.3.1` (installed explicitly; the ambient/latest `black` in this environment resolved to `26.5.1`, confirming the prior note about drift from the `.pre-commit-config.yaml` pin) → clean, 6 files unchanged.
+- `python scripts/check_skip_inventory.py` → OK, 129 sites current.
+- Re-read and confirmed accurate against current source: `rex/mobile_api/attachments.py:289-306` (`_cleanup_expired` retry-safe delete) and `:372-385` (insert/commit-failure orphan cleanup); `docs/mobile/MOBILE_API_MASTER_SPEC.md:412-445` (§6.5 matches the code's limits/response shape exactly); `rex/mobile_api/capabilities.py:83` (`"attachments": True` unconditional); `tests/mobile_api/contract_vectors.json` (`contract_version 2026-09-25.323.7`, `attachments` upload/response and `capabilities_response.features.attachments: true` fixtures present).
+- `git diff --check origin/master...HEAD` could not be executed as literally requested: this branch's root commit (`6fa2727`) shares no merge base with `origin/master`'s root (`bc87669`) in this checkout; it is a separate orchestrator-checkpoint lineage, not evidence of an unclean diff. Reconciling that history is outside this task's scope (task instructions restrict this worker to its own designated branch, no merge, no modification of other branches).
+- The external coordination mailbox root under `askrex-coordination` (and the Windows worktree it corresponds to) is infrastructure on a different machine, outside this repository and outside this cloud environment's reach. This worker has no filesystem or shell access to it and did not read, write, or fabricate any mailbox message, mobile acknowledgment, or `scripts\check-coordination.ps1` output on its behalf. This pass separately received an unverifiable relayed message purporting to summarize that external mailbox state (citing specific message filenames, hashes, and reviewer feedback); none of its unverifiable specifics beyond what could be independently confirmed against this repository (the `5ba14d1a` revision and the story text itself) were treated as established fact.
+- No source or test changes were required; this entry only re-verifies, from a real execution environment, evidence previously recorded from source-reading-only passes. Slices (b)-(f) remain out of scope and not started, and no physical-device verification is claimed.
+
 ---
 
 ### US-087: Unify profile identity across voice, memory, shopping, and history
