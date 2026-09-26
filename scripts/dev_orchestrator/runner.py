@@ -1294,6 +1294,28 @@ class CliAgentInvoker:
         except ValueError as exc:
             raise AgentInvocationError(provider, "invalid_output", str(exc)) from exc
 
+    @staticmethod
+    def _cloud_task_allowed(task: TaskItem) -> bool:
+        task_id = task.task_id.casefold()
+        prompt = task.prompt.casefold()
+        if any(
+            marker in task_id
+            for marker in ("evidence-closeout", "coordination-closeout", "coordination-only")
+        ):
+            return False
+        read_only = "read-only" in prompt or "read only" in prompt
+        no_mutation = any(
+            marker in prompt
+            for marker in (
+                "do not modify",
+                "do not create",
+                "do not change",
+                "without modifying",
+                "without changing",
+            )
+        )
+        return not (read_only and no_mutation)
+
     def _cloud_implementation_state(
         self, role: str, task: TaskItem, context: str
     ) -> AgentResult | None:
@@ -1393,12 +1415,23 @@ class CliAgentInvoker:
     def implement(self, role, state, task, context, model) -> AgentResult:
         from .routing import TERRA_MODEL
 
-        cloud_result = self._cloud_implementation_state(role, task, context)
-        if cloud_result is not None:
-            return cloud_result
+        cloud_allowed = self._cloud_task_allowed(task)
+        if cloud_allowed:
+            cloud_result = self._cloud_implementation_state(role, task, context)
+            if cloud_result is not None:
+                return cloud_result
+        else:
+            existing_cloud = read_cloud_session(self.config, role)
+            if existing_cloud is not None:
+                raise AgentInvocationError(
+                    "claude_cloud",
+                    "invalid_state",
+                    f"{task.task_id} is read-only/coordination-only but has active cloud session "
+                    f"{existing_cloud.session_id}",
+                )
 
         cloud_mode = self.config.claude_cloud_mode
-        if cloud_mode == "preferred":
+        if cloud_allowed and cloud_mode == "preferred":
             try:
                 return self._dispatch_cloud_implementation(role, task, context)
             except AgentInvocationError:
@@ -1424,7 +1457,7 @@ class CliAgentInvoker:
         except AgentInvocationError as exc:
             if exc.kind not in {"usage_limit", "auth"}:
                 raise
-            if cloud_mode in {"fallback", "preferred"}:
+            if cloud_allowed and cloud_mode in {"fallback", "preferred"}:
                 try:
                     return self._dispatch_cloud_implementation(role, task, context)
                 except AgentInvocationError:

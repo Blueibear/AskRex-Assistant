@@ -2066,3 +2066,95 @@ def test_run_command_environment_override_is_child_local(tmp_path: Path, monkeyp
     assert result.returncode == 0
     assert result.stdout.strip() == "child-only-token"
     assert os.getenv("CLAUDE_CODE_OAUTH_TOKEN") is None
+
+
+def test_read_only_evidence_closeout_never_dispatches_to_cloud(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+    from dataclasses import replace
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
+
+    config, _backend, _mobile = _safe_config(tmp_path)
+    config = replace(config, claude_cloud_mode="preferred")
+    monkeypatch.setattr(
+        runner,
+        "launch_cloud_session",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("read-only closeout must never launch Claude cloud")
+        ),
+    )
+    calls: list[list[str]] = []
+
+    def execute(command, *_args, **_kwargs):
+        calls.append(command)
+        if len(calls) == 1:
+            return ProcessResult(1, "", "You've hit your session limit")
+        return ProcessResult(
+            0,
+            json.dumps(
+                {
+                    "outcome": "continue",
+                    "summary": "Codex handled read-only closeout",
+                    "next_action": "continue",
+                    "needs_user": False,
+                    "blocker_reason": "",
+                }
+            ),
+            "",
+        )
+
+    result = CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
+        "backend",
+        WorkerState("backend"),
+        TaskItem(
+            "backend-roadmap-us086-evidence-closeout-001",
+            "Perform a read-only bounded evidence audit. Do not modify or create any file.",
+        ),
+        "bounded coordination context",
+        "sonnet",
+    )
+
+    assert result.outcome == "continue"
+    assert len(calls) == 2
+    assert calls[1][0].lower().startswith("codex")
+
+
+def test_read_only_closeout_with_existing_cloud_session_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.runner import AgentInvocationError, CliAgentInvoker
+
+    config, _backend, _mobile = _safe_config(tmp_path)
+    config = replace(config, claude_cloud_mode="preferred")
+    monkeypatch.setattr(
+        runner,
+        "read_cloud_session",
+        lambda *_args: SimpleNamespace(session_id="session_out_of_scope"),
+    )
+    with pytest.raises(AgentInvocationError) as caught:
+        CliAgentInvoker(
+            config,
+            execute=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("local execution must not run while forbidden cloud state exists")
+            ),
+            allow_test_executor=True,
+        ).implement(
+            "backend",
+            WorkerState("backend"),
+            TaskItem(
+                "backend-roadmap-us086-evidence-closeout-001",
+                "Perform a read-only audit. Do not modify files.",
+            ),
+            "ctx",
+            "sonnet",
+        )
+
+    assert caught.value.provider == "claude_cloud"
+    assert caught.value.kind == "invalid_state"
