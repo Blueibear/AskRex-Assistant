@@ -704,3 +704,96 @@ def test_validation_receipt_rejects_unsafe_task_id(tmp_path: Path) -> None:
     config = _config(tmp_path, repo, [sys.executable, "-c", "pass"])
     with pytest.raises(ValueError, match="safe"):
         run_iteration_validation(config, "backend", "../escape", base_head="x", head="")
+
+
+def test_review_evidence_prioritizes_explicit_outgoing_message_anchor(tmp_path: Path) -> None:
+    repo = tmp_path / "backend-explicit-outgoing"
+    base = _git_repo(repo)
+    head = _commit(repo, "base\nchanged\n")
+    config = _config(tmp_path, repo, [sys.executable, "-c", "print('OK')"])
+    assert run_iteration_validation(
+        config, "backend", "US-086-CLOSEOUT", base_head=base, head=head
+    ).passed
+    mailbox = config.coordination_root / "mailbox" / "mobile"
+    mailbox.mkdir(parents=True)
+    target = mailbox / "MSG-explicit-contract-00-backend.md"
+    target.write_text(
+        "# AskRex Coordination Message\n\nFrom: backend\nTo: mobile\nRelated: US-086\n\n"
+        "## Message\nEXPLICIT-CONTRACT-CONTENT\n",
+        encoding="utf-8",
+    )
+    for index in range(9):
+        (mailbox / f"MSG-noise-{index:02d}-backend.md").write_text(
+            "# AskRex Coordination Message\n\nFrom: backend\nTo: mobile\nRelated: US-086\n\n"
+            f"## Message\nNOISE-{index}\n",
+            encoding="utf-8",
+        )
+    state = WorkerState(
+        role="backend",
+        task=TaskItem("US-086-CLOSEOUT", "Review US-086 and include MSG-explicit-contract"),
+        task_base_head=base,
+    )
+    bundle = build_review_evidence(
+        config,
+        "backend",
+        state,
+        state.task,
+        "coordination",
+        "inv-explicit-outgoing",
+    )
+    assert "MSG-explicit-contract-00-backend.md" in bundle.text
+    assert "EXPLICIT-CONTRACT-CONTENT" in bundle.text
+
+
+def test_review_evidence_prioritizes_explicit_validated_artifact_and_receipt_path(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "backend-explicit-artifact"
+    base = _git_repo(repo)
+    head = _commit(repo, "base\nchanged\n")
+    placeholder = _config(tmp_path, repo, [sys.executable, "-c", "print('placeholder')"])
+    mailbox = placeholder.coordination_root / "mailbox" / "testing"
+    mailbox.mkdir(parents=True)
+    target = mailbox / "MSG-explicit-validated-00-backend.md"
+    target.write_text("EXPLICIT-VALIDATED-CONTENT\n", encoding="utf-8")
+    artifacts = [target]
+    for index in range(12):
+        item = mailbox / f"MSG-noise-validated-{index:02d}-backend.md"
+        item.write_text(f"NOISE-VALIDATED-{index}\n", encoding="utf-8")
+        artifacts.append(item)
+    output = "\n".join(str(item) for item in artifacts)
+    config = replace(
+        placeholder,
+        metadata={
+            "iteration_validation": {
+                "enabled": True,
+                "backend": {
+                    "gates": [
+                        {
+                            "name": "artifact list",
+                            "command": [sys.executable, "-c", f"print({output!r})"],
+                        }
+                    ]
+                },
+            }
+        },
+    )
+    task_id = "US-086-CLOSEOUT-VALIDATED"
+    assert run_iteration_validation(config, "backend", task_id, base_head=base, head=head).passed
+    state = WorkerState(
+        role="backend",
+        task=TaskItem(task_id, "Review US-086 using MSG-explicit-validated"),
+        task_base_head=base,
+    )
+    bundle = build_review_evidence(
+        config,
+        "backend",
+        state,
+        state.task,
+        "coordination",
+        "inv-explicit-validated",
+    )
+    assert "MSG-explicit-validated-00-backend.md" in bundle.text
+    assert "EXPLICIT-VALIDATED-CONTENT" in bundle.text
+    receipt_path = config.coordination_root / "validation" / f"backend-{task_id}.json"
+    assert str(receipt_path.resolve()) in bundle.text

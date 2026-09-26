@@ -124,7 +124,8 @@ def _outgoing_coordination(config: OrchestratorConfig, role: str, task: TaskItem
         return "No task-relevant outgoing coordination messages were recorded."
 
     anchors = _task_coordination_anchors(task)
-    messages: list[tuple[int, Path, str]] = []
+    explicit_message_anchors = tuple(anchor for anchor in anchors if anchor.startswith("msg-"))
+    messages: list[tuple[int, int, Path, str]] = []
     try:
         recipients = [path for path in mailbox_root.iterdir() if path.is_dir()]
         for recipient in recipients:
@@ -133,19 +134,20 @@ def _outgoing_coordination(config: OrchestratorConfig, role: str, task: TaskItem
                 if _message_field(text, "From").casefold() != role.casefold():
                     continue
                 related = _message_field(text, "Related").casefold()
-                searchable = f"{related}\n{text.casefold()}"
+                searchable = f"{path.name.casefold()}\n{related}\n{text.casefold()}"
                 if not any(anchor in searchable for anchor in anchors):
                     continue
-                messages.append((path.stat().st_mtime_ns, path, text))
+                explicit = int(any(anchor in searchable for anchor in explicit_message_anchors))
+                messages.append((explicit, path.stat().st_mtime_ns, path, text))
     except OSError as exc:
         raise EvidenceError("cannot read task-relevant coordination evidence") from exc
 
     if not messages:
         return "No task-relevant outgoing coordination messages were recorded."
 
-    messages.sort(key=lambda item: item[0], reverse=True)
+    messages.sort(key=lambda item: (item[0], item[1]), reverse=True)
     rendered: list[str] = []
-    for _mtime_ns, path, text in messages[:8]:
+    for _explicit, _mtime_ns, path, text in messages[:8]:
         relative = path.relative_to(config.coordination_root).as_posix()
         rendered.append(f"### {relative}\n{text}")
     return "\n\n".join(rendered)
@@ -228,6 +230,7 @@ def _changed_file_contents(
 def _validated_artifact_contents(
     config: OrchestratorConfig,
     receipt: ValidationReceipt,
+    task: TaskItem,
 ) -> str:
     """Include supervisor-validated coordination artifacts named by successful gates.
 
@@ -274,16 +277,28 @@ def _validated_artifact_contents(
     if not candidates:
         return "No validated coordination artifacts were referenced by gate output."
 
-    rendered: list[str] = []
-    for path in candidates[:12]:
+    anchors = _task_coordination_anchors(task)
+    explicit_message_anchors = tuple(anchor for anchor in anchors if anchor.startswith("msg-"))
+    ranked: list[tuple[int, int, int, Path, str]] = []
+    for path in candidates:
         try:
             text = path.read_text(encoding="utf-8-sig", errors="replace")
+            mtime_ns = path.stat().st_mtime_ns
         except OSError as exc:
             raise EvidenceError("cannot read validated coordination artifact") from exc
         relative = path.relative_to(root).as_posix()
+        searchable = f"{relative.casefold()}\n{text.casefold()}"
+        explicit = int(any(anchor in searchable for anchor in explicit_message_anchors))
+        anchor_hits = sum(1 for anchor in anchors if anchor in searchable)
+        ranked.append((explicit, anchor_hits, mtime_ns, path, text))
+
+    ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    rendered: list[str] = []
+    for _explicit, _anchor_hits, _mtime_ns, path, text in ranked[:12]:
+        relative = path.relative_to(root).as_posix()
         rendered.append(f"### {relative}\n{text}")
-    if len(candidates) > 12:
-        rendered.append(f"[{len(candidates) - 12} additional validated artifacts omitted]")
+    if len(ranked) > 12:
+        rendered.append(f"[{len(ranked) - 12} additional validated artifacts omitted]")
     return "\n\n".join(rendered)
 
 
@@ -369,7 +384,10 @@ def build_review_evidence(
         task_diff,
     )
 
-    validated_artifacts = _validated_artifact_contents(config, receipt)
+    validated_artifacts = _validated_artifact_contents(config, receipt, task)
+    receipt_path = (
+        config.coordination_root / "validation" / f"{role}-{task.task_id}.json"
+    ).resolve()
 
     sections = (
         (
@@ -392,7 +410,7 @@ def build_review_evidence(
         ("task_diff", task_diff),
         ("changed_file_contents", changed_file_contents),
         ("validated_artifacts", validated_artifacts),
-        ("validation", _receipt_text(receipt)),
+        ("validation", "receipt_path: " + str(receipt_path) + "\n" + _receipt_text(receipt)),
     )
     rendered: list[str] = []
     reasons: list[str] = []
