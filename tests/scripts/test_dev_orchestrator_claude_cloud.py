@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,12 +44,25 @@ def test_claude_executable_prefers_cmd_shim_on_windows(monkeypatch: pytest.Monke
             r"C:\\Users\\james\\AppData\\Roaming\\npm\\claude.cmd" if name == "claude.cmd" else None
         )
 
+    monkeypatch.setattr(claude_cloud.os, "name", "nt")
     monkeypatch.setattr(claude_cloud.shutil, "which", fake_which)
-    monkeypatch.setattr(claude_cloud, "__import__", __import__, raising=False)
 
     assert claude_cloud._claude_executable().endswith("claude.cmd")
-    if __import__("os").name == "nt":
-        assert seen[0] == "claude.cmd"
+    assert seen[0] == "claude.cmd"
+
+
+def test_claude_executable_uses_bare_name_off_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    def fake_which(name: str):
+        seen.append(name)
+        return "/usr/bin/claude" if name == "claude" else None
+
+    monkeypatch.setattr(claude_cloud.os, "name", "posix")
+    monkeypatch.setattr(claude_cloud.shutil, "which", fake_which)
+
+    assert claude_cloud._claude_executable() == "/usr/bin/claude"
+    assert seen == ["claude"]
 
 
 def test_parse_cloud_launch_metadata_accepts_current_cli_output() -> None:
@@ -62,6 +76,118 @@ def test_parse_cloud_launch_metadata_accepts_current_cli_output() -> None:
 
     assert session_id == "session_01K7cJz4TRbzvetbp5kkrnUL"
     assert url.startswith("https://claude.ai/code/session_01K7cJz4TRbzvetbp5kkrnUL")
+
+
+def test_launch_cloud_interactive_requires_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claude_cloud.os, "name", "posix")
+
+    with pytest.raises(ClaudeCloudError, match="Windows ConPTY"):
+        claude_cloud._launch_cloud_interactive(
+            coordination_root=tmp_path, worktree=tmp_path, prompt="do work"
+        )
+
+
+def test_launch_cloud_interactive_requires_pywinpty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claude_cloud.os, "name", "nt")
+    monkeypatch.delitem(sys.modules, "winpty", raising=False)
+
+    with pytest.raises(ClaudeCloudError, match="pywinpty"):
+        claude_cloud._launch_cloud_interactive(
+            coordination_root=tmp_path, worktree=tmp_path, prompt="do work"
+        )
+
+
+class _FakePtyProcess:
+    def __init__(self, chunks: list[str], *, exitstatus: int | None = 0) -> None:
+        self._chunks = list(chunks)
+        self.exitstatus = exitstatus
+        self.fileobj = SimpleNamespace(settimeout=lambda timeout: None)
+        self.terminated = False
+        self.closed = False
+
+    def read(self, size: int) -> str:
+        del size
+        if self._chunks:
+            return self._chunks.pop(0)
+        raise TimeoutError("no data available")
+
+    def isalive(self) -> bool:
+        return bool(self._chunks)
+
+    def terminate(self, force: bool = False) -> None:
+        del force
+        self.terminated = True
+
+    def close(self, force: bool = False) -> None:
+        del force
+        self.closed = True
+
+
+def _install_fake_winpty(monkeypatch: pytest.MonkeyPatch, proc: _FakePtyProcess) -> None:
+    fake_module = SimpleNamespace(PtyProcess=SimpleNamespace(spawn=lambda *a, **kw: proc))
+    monkeypatch.setitem(sys.modules, "winpty", fake_module)
+
+
+def test_launch_cloud_interactive_parses_successful_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claude_cloud.os, "name", "nt")
+    monkeypatch.setattr(claude_cloud, "_claude_executable", lambda: "claude.cmd")
+    proc = _FakePtyProcess(
+        [
+            "Created cloud session: Review task\r\n",
+            "View: https://claude.ai/code/session_01ABCDEFGHJKMNPQRSTVWXYZ\r\n",
+            "Resume with: claude --teleport session_01ABCDEFGHJKMNPQRSTVWXYZ\r\n",
+        ]
+    )
+    _install_fake_winpty(monkeypatch, proc)
+
+    session_id, url = claude_cloud._launch_cloud_interactive(
+        coordination_root=tmp_path, worktree=tmp_path, prompt="do work", timeout=5
+    )
+
+    assert session_id == "session_01ABCDEFGHJKMNPQRSTVWXYZ"
+    assert url == "https://claude.ai/code/session_01ABCDEFGHJKMNPQRSTVWXYZ"
+    assert proc.closed
+    assert not proc.terminated
+
+
+def test_launch_cloud_interactive_times_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claude_cloud.os, "name", "nt")
+    monkeypatch.setattr(claude_cloud, "_claude_executable", lambda: "claude.cmd")
+    proc = _FakePtyProcess([])
+    monkeypatch.setattr(proc, "isalive", lambda: True)
+    _install_fake_winpty(monkeypatch, proc)
+
+    with pytest.raises(ClaudeCloudError, match="timed out"):
+        claude_cloud._launch_cloud_interactive(
+            coordination_root=tmp_path, worktree=tmp_path, prompt="do work", timeout=0.2
+        )
+
+    assert proc.terminated
+
+
+def test_launch_cloud_interactive_reports_cli_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claude_cloud.os, "name", "nt")
+    monkeypatch.setattr(claude_cloud, "_claude_executable", lambda: "claude.cmd")
+    proc = _FakePtyProcess(
+        ["Some banner\r\n", "Error: authentication failed\r\n"],
+        exitstatus=1,
+    )
+    _install_fake_winpty(monkeypatch, proc)
+
+    with pytest.raises(ClaudeCloudError, match="authentication failed"):
+        claude_cloud._launch_cloud_interactive(
+            coordination_root=tmp_path, worktree=tmp_path, prompt="do work", timeout=5
+        )
 
 
 def test_cloud_prompt_requires_final_completion_commit() -> None:
