@@ -528,6 +528,7 @@ def test_existing_cloud_session_is_polled_without_local_model_execution(
             task_id="B-CLOUD-POLL",
             session_id="session_cloud_poll",
             url="https://claude.ai/code/session_cloud_poll",
+            status="running",
             launched_at="2099-01-01T00:00:00+00:00",
         ),
     )
@@ -555,6 +556,58 @@ def test_existing_cloud_session_is_polled_without_local_model_execution(
     assert "still running" in result.summary
 
 
+def test_context_delivery_failed_session_retries_over_stdin_before_poll(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.claude_cloud import ClaudeCloudPoll
+    from scripts.dev_orchestrator.runner import CliAgentInvoker
+
+    config, _backend, _mobile = _safe_config(tmp_path)
+    config = replace(config, claude_cloud_mode="preferred")
+    pending = SimpleNamespace(
+        task_id="B-CLOUD-CONTEXT",
+        session_id="session_context",
+        url="https://claude.ai/code/session_context",
+        status="context_delivery_failed",
+        launched_at="2099-01-01T00:00:00+00:00",
+    )
+    delivered: list[tuple[str, str]] = []
+    monkeypatch.setattr(runner, "read_cloud_session", lambda *_args: pending)
+
+    def fake_deliver(_config, role, task, context):
+        delivered.append((task.task_id, context))
+        return SimpleNamespace(**{**pending.__dict__, "status": "running"})
+
+    monkeypatch.setattr(runner, "deliver_cloud_context", fake_deliver)
+    monkeypatch.setattr(
+        runner,
+        "poll_cloud_session",
+        lambda *_args: ClaudeCloudPoll("running", "a" * 40, "base"),
+    )
+
+    result = CliAgentInvoker(
+        config,
+        execute=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("context retry must happen before local execution")
+        ),
+        allow_test_executor=True,
+    ).implement(
+        "backend",
+        WorkerState("backend"),
+        TaskItem("B-CLOUD-CONTEXT", "Continue cloud task"),
+        "large bounded context",
+        "sonnet",
+    )
+
+    assert result.outcome == "continue"
+    assert delivered == [("B-CLOUD-CONTEXT", "large bounded context")]
+    assert "still running" in result.summary
+
+
 def test_expired_mismatched_cloud_session_is_cleared_before_redispatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -570,6 +623,7 @@ def test_expired_mismatched_cloud_session_is_cleared_before_redispatch(
         task_id="OLD-CLOUD-TASK",
         session_id="session_stale",
         url="https://claude.ai/code/session_stale",
+        status="running",
         launched_at="2000-01-01T00:00:00+00:00",
     )
     cleared: list[str] = []
@@ -628,6 +682,7 @@ def test_live_mismatched_cloud_session_still_blocks_new_task(
         task_id="OLD-CLOUD-TASK",
         session_id="session_live",
         url="https://claude.ai/code/session_live",
+        status="running",
         launched_at="2099-01-01T00:00:00+00:00",
     )
     cleared: list[str] = []

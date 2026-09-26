@@ -20,6 +20,7 @@ from .claude_cloud import (
     ClaudeCloudError,
     adopt_cloud_session,
     clear_cloud_session,
+    deliver_cloud_context,
     launch_cloud_session,
     poll_cloud_session,
     read_cloud_session,
@@ -1293,7 +1294,9 @@ class CliAgentInvoker:
         except ValueError as exc:
             raise AgentInvocationError(provider, "invalid_output", str(exc)) from exc
 
-    def _cloud_implementation_state(self, role: str, task: TaskItem) -> AgentResult | None:
+    def _cloud_implementation_state(
+        self, role: str, task: TaskItem, context: str
+    ) -> AgentResult | None:
         session = read_cloud_session(self.config, role)
         if session is None:
             return None
@@ -1316,6 +1319,19 @@ class CliAgentInvoker:
                 "invalid_state",
                 f"{role} cloud session {session.session_id} belongs to {session.task_id}, not {task.task_id}",
             )
+
+        if session.status in {"awaiting_context", "context_delivery_failed"}:
+            if expired:
+                raise AgentInvocationError(
+                    "claude_cloud",
+                    "timeout",
+                    f"Claude cloud session {session.session_id} did not receive its bounded context within "
+                    f"{self.config.claude_cloud_timeout_minutes} minutes. Inspect {session.url}",
+                )
+            try:
+                session = deliver_cloud_context(self.config, role, task, context)
+            except ClaudeCloudError as exc:
+                raise AgentInvocationError("claude_cloud", "failed", str(exc)) from exc
 
         try:
             poll = poll_cloud_session(self.config, role)
@@ -1356,10 +1372,20 @@ class CliAgentInvoker:
             )
         except ClaudeCloudError as exc:
             raise AgentInvocationError("claude_cloud", "failed", str(exc)) from exc
+        status = getattr(session, "status", "running")
+        if status == "context_delivery_failed":
+            summary = (
+                f"Claude cloud session {session.session_id} launched, but bounded context delivery "
+                "did not complete and will be retried."
+            )
+            next_action = f"Retry context delivery to {session.url} on the next supervisor cycle."
+        else:
+            summary = f"Dispatched {task.task_id} to Claude cloud session {session.session_id}."
+            next_action = f"Poll {session.url} until the bound completion commit is pushed."
         return AgentResult(
             outcome="continue",
-            summary=f"Dispatched {task.task_id} to Claude cloud session {session.session_id}.",
-            next_action=f"Poll {session.url} until the bound completion commit is pushed.",
+            summary=summary,
+            next_action=next_action,
             task_id=task.task_id,
             role=role,
         )
@@ -1367,7 +1393,7 @@ class CliAgentInvoker:
     def implement(self, role, state, task, context, model) -> AgentResult:
         from .routing import TERRA_MODEL
 
-        cloud_result = self._cloud_implementation_state(role, task)
+        cloud_result = self._cloud_implementation_state(role, task, context)
         if cloud_result is not None:
             return cloud_result
 
