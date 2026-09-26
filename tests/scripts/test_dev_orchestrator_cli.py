@@ -371,6 +371,7 @@ def test_status_exposes_privacy_safe_openai_budget_summary(tmp_path: Path) -> No
     status = json.loads(render_status(config))
     assert status["openai_worker_enabled"] is False
     assert status["openai_project_hard_limit_confirmed"] is False
+    assert status["openai_routing_policy"] == "chatgpt_subscription_first_api_fallback"
     budget = status["openai_api_budget"]
     assert budget["cap_usd"] == "30.00"
     assert budget["spent_or_reserved_usd"] == str(reservation.reserved_usd)

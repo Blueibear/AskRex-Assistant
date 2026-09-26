@@ -140,51 +140,64 @@ def test_implementation_stays_on_cli_path(tmp_path: Path) -> None:
     assert openai.calls == []
 
 
-def test_routine_review_uses_api_terra(tmp_path: Path) -> None:
+def test_subscription_success_does_not_reserve_api_budget(tmp_path: Path) -> None:
+    router, _config, cli, openai, budget = _router(tmp_path)
+    task = TaskItem("B-1", "Review")
+    before = budget.status()
+
+    result = router.review("backend", WorkerState("backend"), task, "ctx", TERRA_MODEL)
+
+    assert result.outcome == "pass"
+    assert cli.calls == [("review", "backend", "B-1", TERRA_MODEL)]
+    assert openai.calls == []
+    assert budget.status() == before
+
+
+def test_routine_review_uses_subscription_codex_terra_first(tmp_path: Path) -> None:
     router, _config, cli, openai, _budget = _router(tmp_path)
     task = TaskItem("B-1", "Review")
 
     result = router.review("backend", WorkerState("backend"), task, "ctx", TERRA_MODEL)
 
     assert result.outcome == "pass"
-    assert openai.calls == [("review", "backend", "B-1", TERRA_MODEL)]
-    assert cli.calls == []
+    assert cli.calls == [("review", "backend", "B-1", TERRA_MODEL)]
+    assert openai.calls == []
 
 
-def test_escalated_review_uses_api_sol(tmp_path: Path) -> None:
+def test_escalated_review_uses_subscription_codex_sol_first(tmp_path: Path) -> None:
     router, _config, cli, openai, _budget = _router(tmp_path)
     task = TaskItem("B-1", "Review")
     state = WorkerState("backend", review_failures=2)
 
     router.review("backend", state, task, "ctx", SOL_MODEL)
 
-    assert openai.calls == [("review", "backend", "B-1", SOL_MODEL)]
-    assert cli.calls == []
+    assert cli.calls == [("review", "backend", "B-1", SOL_MODEL)]
+    assert openai.calls == []
 
 
-def test_codex_implemented_checkpoint_forces_api_sol_review(tmp_path: Path) -> None:
+def test_codex_implemented_checkpoint_forces_subscription_sol_review(tmp_path: Path) -> None:
     router, config, cli, openai, _budget = _router(tmp_path)
     _mark_last_provider(config, "backend", "codex")
     task = TaskItem("B-1", "Review")
 
     router.review("backend", WorkerState("backend"), task, "ctx", TERRA_MODEL)
 
-    assert openai.calls == [("review", "backend", "B-1", SOL_MODEL)]
-    assert cli.calls == []
+    assert cli.calls == [("review", "backend", "B-1", SOL_MODEL)]
+    assert openai.calls == []
 
 
-def test_api_review_failure_falls_back_to_matching_codex_model(tmp_path: Path) -> None:
-    error = AgentInvocationError("openai", "transient", "temporary")
-    openai = _FakeOpenAI(review=[error])
-    cli = _FakeCli(review=[_result("pass")])
+def test_codex_review_failure_falls_back_to_api_model(tmp_path: Path) -> None:
+    error = AgentInvocationError("codex", "usage_limit", "subscription limit")
+    cli = _FakeCli(review=[error])
+    openai = _FakeOpenAI(review=[_result("pass")])
     router, _config, cli, openai, _budget = _router(tmp_path, cli=cli, openai=openai)
     task = TaskItem("B-1", "Review")
 
     result = router.review("backend", WorkerState("backend"), task, "ctx", TERRA_MODEL)
 
     assert result.outcome == "pass"
-    assert openai.calls == [("review", "backend", "B-1", TERRA_MODEL)]
     assert cli.calls == [("review", "backend", "B-1", TERRA_MODEL)]
+    assert openai.calls == [("review", "backend", "B-1", TERRA_MODEL)]
 
 
 def test_final_verify_bypasses_api_and_forces_codex_sol(tmp_path: Path) -> None:
@@ -197,17 +210,16 @@ def test_final_verify_bypasses_api_and_forces_codex_sol(tmp_path: Path) -> None:
     assert cli.calls == [("review", "backend", "FINAL-VERIFY-backend", SOL_MODEL)]
 
 
-def test_planning_uses_api_sol_then_codex_sol_fallback(tmp_path: Path) -> None:
-    error = AgentInvocationError("openai", "timeout", "timeout")
-    openai = _FakeOpenAI(lead=[error])
-    cli = _FakeCli(lead=[_result("assign")])
+def test_planning_uses_subscription_codex_before_api_fallback(tmp_path: Path) -> None:
+    cli = _FakeCli(lead=[AgentInvocationError("codex", "usage_limit", "subscription limit")])
+    openai = _FakeOpenAI(lead=[_result("assign")])
     router, _config, cli, openai, _budget = _router(tmp_path, cli=cli, openai=openai)
 
     result = router.lead("backend", WorkerState("backend"), "ctx")
 
     assert result.outcome == "assign"
-    assert openai.calls == [("lead", "plan", "", SOL_MODEL, "", "")]
     assert cli.calls == [("lead", "backend", "", SOL_MODEL)]
+    assert openai.calls == [("lead", "plan", "", SOL_MODEL, "", "")]
 
 
 def test_disabled_api_uses_codex_sol_for_planning_and_no_astra(tmp_path: Path) -> None:
@@ -225,7 +237,7 @@ def test_disabled_api_uses_codex_sol_for_planning_and_no_astra(tmp_path: Path) -
     ]
 
 
-def test_adjudication_exhausts_sol_chain_before_astra(tmp_path: Path) -> None:
+def test_adjudication_exhausts_subscription_then_api_sol_before_astra(tmp_path: Path) -> None:
     task = TaskItem("B-1", "Adjudicate")
     state = WorkerState(
         "backend",
@@ -233,37 +245,40 @@ def test_adjudication_exhausts_sol_chain_before_astra(tmp_path: Path) -> None:
         task_base_head="base-123",
         implementation_failures=4,
     )
-    openai = _FakeOpenAI(lead=[_result("failed"), _result("assign")])
     cli = _FakeCli(lead=[_result("failed")])
+    openai = _FakeOpenAI(lead=[_result("failed"), _result("assign")])
     router, _config, cli, openai, _budget = _router(tmp_path, cli=cli, openai=openai)
 
     result = router.lead("backend", state, "ctx", task=task)
 
     episode = escalation_episode_key("backend", task, state)
     assert result.outcome == "assign"
+    assert cli.calls == [("lead", "backend", "B-1", SOL_MODEL)]
     assert openai.calls == [
         ("lead", "adjudicate", "B-1", SOL_MODEL, "", ""),
         ("lead", "adjudicate", "B-1", ASTRA_MODEL, "astra_adjudication", episode),
     ]
-    assert cli.calls == [("lead", "backend", "B-1", SOL_MODEL)]
 
 
 @pytest.mark.parametrize(
     "outcome",
     ["assign", "done", "blocked_user", "blocked_system", "pass", "changes_required", "continue"],
 )
-def test_valid_sol_outcome_never_escalates_to_astra(tmp_path: Path, outcome: str) -> None:
+def test_valid_api_sol_outcome_never_escalates_to_astra_after_subscription_failure(
+    tmp_path: Path, outcome: str
+) -> None:
     task = TaskItem("B-1", "Adjudicate")
     state = WorkerState("backend", task=task, task_base_head="base", implementation_failures=9)
+    cli = _FakeCli(lead=[_result("failed")])
     openai = _FakeOpenAI(lead=[_result(outcome)])
-    router, _config, cli, openai, _budget = _router(tmp_path, openai=openai)
+    router, _config, cli, openai, _budget = _router(tmp_path, cli=cli, openai=openai)
 
     result = router.lead("backend", state, "ctx", task=task)
 
     assert result.outcome == outcome
+    assert cli.calls == [("lead", "backend", "B-1", SOL_MODEL)]
     assert len(openai.calls) == 1
     assert openai.calls[0][3] == SOL_MODEL
-    assert cli.calls == []
 
 
 def test_task_below_astra_threshold_never_uses_astra(tmp_path: Path) -> None:
@@ -280,20 +295,20 @@ def test_task_below_astra_threshold_never_uses_astra(tmp_path: Path) -> None:
     assert cli.calls == [("lead", "backend", "B-1", SOL_MODEL)]
 
 
-def test_sol_transport_failure_does_not_itself_justify_astra(tmp_path: Path) -> None:
+def test_subscription_and_api_transport_failures_do_not_justify_astra(tmp_path: Path) -> None:
     task = TaskItem("B-1", "Adjudicate")
     state = WorkerState("backend", task=task, task_base_head="base", implementation_failures=8)
-    api_error = AgentInvocationError("openai", "transient", "temporary")
     cli_error = AgentInvocationError("codex", "usage_limit", "limited")
-    openai = _FakeOpenAI(lead=[api_error])
+    api_error = AgentInvocationError("openai", "transient", "temporary")
     cli = _FakeCli(lead=[cli_error])
+    openai = _FakeOpenAI(lead=[api_error])
     router, _config, _cli, openai, _budget = _router(tmp_path, cli=cli, openai=openai)
 
     with pytest.raises(AgentInvocationError) as exc:
         router.lead("backend", state, "ctx", task=task)
 
-    assert exc.value.provider == "codex"
-    assert exc.value.kind == "usage_limit"
+    assert exc.value.provider == "openai"
+    assert exc.value.kind == "transient"
     assert [call[3] for call in openai.calls] == [SOL_MODEL]
 
 
@@ -368,20 +383,18 @@ def test_non_astra_reservation_does_not_close_episode(tmp_path: Path) -> None:
     assert not ledger.has_astra_attempt(episode)
 
 
-def test_api_sol_error_then_valid_failed_codex_sol_can_escalate_to_astra(tmp_path: Path) -> None:
+def test_structured_subscription_failure_is_returned_if_api_fallback_errors(tmp_path: Path) -> None:
     task = TaskItem("B-1", "Adjudicate")
     state = WorkerState("backend", task=task, task_base_head="base", implementation_failures=8)
-    openai = _FakeOpenAI(
-        lead=[AgentInvocationError("openai", "transient", "temporary"), _result("assign")]
-    )
     cli = _FakeCli(lead=[_result("failed")])
+    openai = _FakeOpenAI(lead=[AgentInvocationError("openai", "transient", "temporary")])
     router, _config, cli, openai, _budget = _router(tmp_path, cli=cli, openai=openai)
 
     result = router.lead("backend", state, "ctx", task=task)
 
-    assert result.outcome == "assign"
-    assert [call[3] for call in openai.calls] == [SOL_MODEL, ASTRA_MODEL]
+    assert result.outcome == "failed"
     assert cli.calls == [("lead", "backend", "B-1", SOL_MODEL)]
+    assert [call[3] for call in openai.calls] == [SOL_MODEL]
 
 
 def test_duplicate_astra_reservation_for_episode_is_rejected_atomically(tmp_path: Path) -> None:
@@ -407,11 +420,11 @@ def test_duplicate_astra_reservation_for_episode_is_rejected_atomically(tmp_path
         )
 
 
-def test_api_review_failure_then_codex_usage_limit_preserves_codex_provider(tmp_path: Path) -> None:
+def test_codex_review_limit_then_api_failure_preserves_api_failure(tmp_path: Path) -> None:
+    cli = _FakeCli(review=[AgentInvocationError("codex", "usage_limit", "weekly limit")])
     openai = _FakeOpenAI(
         review=[AgentInvocationError("openai", "transient", "temporary API failure")]
     )
-    cli = _FakeCli(review=[AgentInvocationError("codex", "usage_limit", "weekly limit")])
     router, _config, _cli, _openai, _budget = _router(
         tmp_path,
         cli=cli,
@@ -422,8 +435,8 @@ def test_api_review_failure_then_codex_usage_limit_preserves_codex_provider(tmp_
     with pytest.raises(AgentInvocationError) as caught:
         router.review("backend", WorkerState("backend"), task, "ctx", TERRA_MODEL)
 
-    assert caught.value.provider == "codex"
-    assert caught.value.kind == "usage_limit"
+    assert caught.value.provider == "openai"
+    assert caught.value.kind == "transient"
 
 
 def test_done_claim_final_verification_bypasses_openai_even_when_enabled(

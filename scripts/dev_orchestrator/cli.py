@@ -546,6 +546,7 @@ def render_status(config: OrchestratorConfig) -> str:
         "claude_subscription_token_configured": bool(config.claude_oauth_credential_ref),
         "openai_worker_enabled": config.openai_worker_enabled,
         "openai_project_hard_limit_confirmed": config.openai_project_hard_limit_confirmed,
+        "openai_routing_policy": "chatgpt_subscription_first_api_fallback",
         "openai_api_budget": {key: str(value) for key, value in openai_budget.items()},
         "workers": workers,
     }

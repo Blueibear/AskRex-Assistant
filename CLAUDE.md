@@ -703,6 +703,7 @@ Add a short rule here that would have prevented the mistake.
 
 ### Learned rules
 
+- OpenAI routing is subscription-first: use ChatGPT-authenticated Codex CLI for normal planning/review before any metered Responses API worker. The local monthly OpenAI dollar budget applies only to true API-key/project Responses API calls; subscription-backed Codex CLI usage is governed by Codex plan limits/reset policy and must not consume or be reported as API spend.
 - Agent CLI failure summaries must preserve the terminal error even when verbose banners/prompts exceed the bounded diagnostic limit, and HTTP 401/Unauthorized/incorrect-key responses must classify as authentication failures rather than generic system failures.
 - On Windows, subprocesses that read Git text output for orchestration/evidence must set an explicit UTF-8 encoding and bounded error handling; never rely on the process locale/code page for `git diff` or other repository text because non-ASCII source content can crash reader threads and corrupt supervisor state transitions.
 - Codex review and lead sandboxes remain read-only. Deterministic supervisor validation owns execution of configured test/build/diff gates before review; reviewer prompts must inspect the supplied gate evidence and must not rerun pytest, builds, formatters, cache-generating commands, or other validation that requires repository or temporary writes.

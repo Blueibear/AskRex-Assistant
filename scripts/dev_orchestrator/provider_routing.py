@@ -56,22 +56,15 @@ class ProviderRoutingInvoker:
         return task.task_id.upper().startswith("FINAL-VERIFY-")
 
     def review(self, role, state, task, context, model) -> AgentResult:
-        if self._is_final_verify(task):
-            return self.cli_invoker.review(role, state, task, context, SOL_MODEL)
-
-        selected_model = self._review_model(role, model)
-        if not self.config.openai_worker_enabled:
-            return self.cli_invoker.review(role, state, task, context, selected_model)
+        selected_model = (
+            SOL_MODEL if self._is_final_verify(task) else self._review_model(role, model)
+        )
         try:
-            return self.openai_worker.review(
-                role,
-                state,
-                task,
-                context,
-                selected_model,
-            )
+            return self.cli_invoker.review(role, state, task, context, selected_model)
         except AgentInvocationError:
-            return self.cli_invoker.review(
+            if not self.config.openai_worker_enabled:
+                raise
+            return self.openai_worker.review(
                 role,
                 state,
                 task,
@@ -80,8 +73,18 @@ class ProviderRoutingInvoker:
             )
 
     def _sol_lead(self, role, state, context, task: TaskItem | None) -> AgentResult:
-        if not self.config.openai_worker_enabled:
-            return self.cli_invoker.lead(role, state, context, task=task)
+        try:
+            subscription_result = self.cli_invoker.lead(role, state, context, task=task)
+        except AgentInvocationError:
+            if not self.config.openai_worker_enabled:
+                raise
+            subscription_result = None
+        else:
+            if task is None or subscription_result.outcome != "failed":
+                return subscription_result
+            if not self.config.openai_worker_enabled:
+                return subscription_result
+
         phase = "adjudicate" if task is not None else "plan"
         model = (
             self.config.openai_planning_model
@@ -89,7 +92,7 @@ class ProviderRoutingInvoker:
             else self.config.openai_escalation_model
         )
         try:
-            result = self.openai_worker.lead(
+            api_result = self.openai_worker.lead(
                 role,
                 state,
                 task,
@@ -98,17 +101,14 @@ class ProviderRoutingInvoker:
                 model=model,
             )
         except AgentInvocationError:
-            fallback = self.cli_invoker.lead(role, state, context, task=task)
-            if task is None or fallback.outcome != "failed":
-                return fallback
-            return self._maybe_astra(role, state, task, context, fallback)
-        if task is None or result.outcome != "failed":
-            return result
+            if subscription_result is not None:
+                return subscription_result
+            raise
 
-        fallback = self.cli_invoker.lead(role, state, context, task=task)
-        if fallback.outcome != "failed":
-            return fallback
-        return self._maybe_astra(role, state, task, context, fallback)
+        if task is None or api_result.outcome != "failed":
+            return api_result
+        assert task is not None
+        return self._maybe_astra(role, state, task, context, api_result)
 
     def _astra_eligible(self, state: WorkerState, task: TaskItem, episode: str) -> bool:
         failures = max(state.implementation_failures, state.review_failures)
