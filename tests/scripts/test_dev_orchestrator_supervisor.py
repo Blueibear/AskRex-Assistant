@@ -5,7 +5,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from scripts.dev_orchestrator.supervisor import Supervisor
+from scripts.dev_orchestrator.supervisor import Supervisor, _is_coordination_only_task
 from scripts.dev_orchestrator.types import (
     AgentResult,
     CoordinationMessage,
@@ -368,7 +368,6 @@ def test_validation_infrastructure_failure_blocks_system(tmp_path: Path) -> None
     assert "missing runner" in state.blocked_reason
 
 
-
 def test_review_phase_rejects_continue_before_coordination_side_effects(tmp_path: Path) -> None:
     invoker = FakeInvoker()
     invoker.add(
@@ -421,6 +420,18 @@ def test_review_changes_required_loops_back_to_implementation(tmp_path: Path) ->
     assert state.review_failures == 1
     assert state.task is not None
     assert "Fix schema mismatch" in state.task.feedback
+
+
+def test_evidence_closeout_with_comma_separated_no_mutation_phrase_is_coordination_only() -> None:
+    task = TaskItem(
+        "backend-roadmap-us086-evidence-closeout-001",
+        (
+            "Perform a read-only bounded closeout audit. "
+            "Do not modify source, tests, Git metadata, issue files, or coordination files."
+        ),
+    )
+
+    assert _is_coordination_only_task(task) is True
 
 
 def test_coordination_only_second_review_rejection_escalates_and_astra_can_close(
@@ -511,7 +522,7 @@ def test_coordination_review_circuit_clears_pending_review_before_adjudication(
                     "coordination_messages": [],
                     "issue_updates": [],
                 },
-            }
+            },
         }
     )
 
@@ -665,9 +676,7 @@ def test_blocked_system_retries_from_saved_review_phase(tmp_path: Path) -> None:
     assert state.task is None
 
 
-def test_runner_pipe_block_retries_with_recovery_then_exhausts(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_runner_pipe_block_retries_with_recovery_then_exhausts(tmp_path: Path, monkeypatch) -> None:
     reason = (
         "CreateProcess: Failed to create unified exec process: "
         "timed out after 15000ms connecting runner pipe-in"
@@ -729,42 +738,40 @@ def test_runner_pipe_block_retries_with_recovery_then_exhausts(
     assert resets == [True, True, True, True]
 
 
-def test_runner_pipe_invocation_error_recovers_before_retry(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_runner_pipe_invocation_error_recovers_before_retry(tmp_path: Path, monkeypatch) -> None:
     from scripts.dev_orchestrator.runner import AgentInvocationError
 
     reason = (
-        'CreateProcess: Failed to create unified exec process: '
-        'timed out after 15000ms connecting runner pipe-in'
+        "CreateProcess: Failed to create unified exec process: "
+        "timed out after 15000ms connecting runner pipe-in"
     )
     resets: list[bool] = []
     monkeypatch.setattr(
-        'scripts.dev_orchestrator.supervisor.recover_codex_windows_terminal_runner',
+        "scripts.dev_orchestrator.supervisor.recover_codex_windows_terminal_runner",
         lambda: resets.append(True) or True,
     )
     supervisor = Supervisor(make_config(tmp_path, observe_only=False), FakeInvoker())
     state = WorkerState(
-        role='backend',
+        role="backend",
         status=WorkerStatus.IMPLEMENTING,
-        task=TaskItem('B-PIPE-EXC', 'Exercise invocation-error runner recovery'),
+        task=TaskItem("B-PIPE-EXC", "Exercise invocation-error runner recovery"),
     )
 
     supervisor._handle_invocation_error(
-        'backend',
+        "backend",
         state,
-        'implement',
-        AgentInvocationError('codex', 'transient', reason),
-        'ctx',
+        "implement",
+        AgentInvocationError("codex", "transient", reason),
+        "ctx",
     )
 
-    saved = supervisor.load_state('backend')
+    saved = supervisor.load_state("backend")
     assert resets == [True]
     assert saved.status is WorkerStatus.BLOCKED_SYSTEM
-    assert saved.blocker_kind == 'system'
+    assert saved.blocker_kind == "system"
     assert saved.resume_status is WorkerStatus.IMPLEMENTING
     assert saved.implementation_failures == 1
-    assert 'automatic retry 1/4' in saved.blocked_reason
+    assert "automatic retry 1/4" in saved.blocked_reason
 
 
 def test_codex_implemented_checkpoint_forces_sol_review(tmp_path: Path) -> None:
@@ -1545,7 +1552,9 @@ def test_review_pass_records_completed_task_and_planner_cannot_resurrect_it(
     assert state.status is WorkerStatus.IDLE
     assert state.task is None
     assert not any(call[:2] == ("backend", "implement") for call in invoker.calls[3:])
-    alerts = list((config.coordination_root / "alerts").glob("duplicate-completed-task-backend-*.json"))
+    alerts = list(
+        (config.coordination_root / "alerts").glob("duplicate-completed-task-backend-*.json")
+    )
     assert len(alerts) == 1
 
 
@@ -1561,7 +1570,9 @@ def test_completed_task_remains_closed_when_reviewed_head_is_ancestor(
     (repo / "tracked.txt").write_text("one\n", encoding="utf-8")
     subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-m", "one"], cwd=repo, check=True, capture_output=True)
-    completed_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    completed_head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=repo, text=True
+    ).strip()
 
     supervisor = Supervisor(config, FakeInvoker())
     completed = TaskItem("backend-us101-done", "Finish US-101.")
@@ -1575,7 +1586,9 @@ def test_completed_task_remains_closed_when_reviewed_head_is_ancestor(
     (repo / "tracked.txt").write_text("two\n", encoding="utf-8")
     subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-m", "two"], cwd=repo, check=True, capture_output=True)
-    current_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    current_head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=repo, text=True
+    ).strip()
 
     record = supervisor.completed_tasks.matching_record(
         "backend",

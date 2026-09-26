@@ -75,6 +75,8 @@ _COORDINATION_ONLY_MARKERS = (
     "coordination only",
     "coordination closeout",
     "closeout evidence",
+    "evidence-closeout",
+    "evidence closeout",
     "mailbox closeout",
 )
 
@@ -82,6 +84,7 @@ _NO_PRODUCT_MUTATION_MARKERS = (
     "do not change the accepted implementation",
     "do not modify backend source/tests",
     "do not modify source/tests",
+    "do not modify source",
     "do not change source/tests",
     "no implementation change",
     "no source changes",
@@ -93,9 +96,8 @@ _NO_PRODUCT_MUTATION_MARKERS = (
 
 def _is_coordination_only_task(task: TaskItem) -> bool:
     text = f"{task.task_id}\n{task.prompt}".casefold()
-    return (
-        any(marker in text for marker in _COORDINATION_ONLY_MARKERS)
-        and any(marker in text for marker in _NO_PRODUCT_MUTATION_MARKERS)
+    return any(marker in text for marker in _COORDINATION_ONLY_MARKERS) and any(
+        marker in text for marker in _NO_PRODUCT_MUTATION_MARKERS
     )
 
 
@@ -106,8 +108,6 @@ def _updates_are_retest_handoff(updates) -> bool:
         if str(update.status).strip()
     }
     return bool(statuses) and statuses <= {"fixed-needs-retest", "needs-retest"}
-
-
 
 
 class Supervisor:
@@ -594,9 +594,7 @@ class Supervisor:
         except AgentInvocationError as exc:
             self._handle_invocation_error(role, state, "review", exc, context)
             return
-        if not self._accept_result(
-            role, state, result, phase="review", allow_issue_updates=False
-        ):
+        if not self._accept_result(role, state, result, phase="review", allow_issue_updates=False):
             return
         if result.outcome == "pass":
             with ControlPlaneLock(role_lease_lock_path(self.config, role)):
@@ -661,9 +659,7 @@ class Supervisor:
         except AgentInvocationError as exc:
             self._handle_invocation_error(role, state, "plan", exc, context)
             return
-        if not self._accept_result(
-            role, state, result, phase="plan", allow_issue_updates=False
-        ):
+        if not self._accept_result(role, state, result, phase="plan", allow_issue_updates=False):
             return
         if result.outcome == "assign":
             if not result.task_id or not result.task_prompt:
@@ -919,7 +915,9 @@ class Supervisor:
     def _adjudicate(self, role: str, state: WorkerState, context: str) -> None:
         assert state.task is not None
         adjudication_context = context
-        if _is_coordination_only_task(state.task) and self._has_current_green_validation(role, state):
+        if _is_coordination_only_task(state.task) and self._has_current_green_validation(
+            role, state
+        ):
             try:
                 evidence = build_review_evidence(
                     self.config,
