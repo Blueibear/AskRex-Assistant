@@ -434,6 +434,18 @@ def test_evidence_closeout_with_comma_separated_no_mutation_phrase_is_coordinati
     assert _is_coordination_only_task(task) is True
 
 
+def test_evidence_closeout_with_do_not_modify_or_create_any_file_is_coordination_only() -> None:
+    task = TaskItem(
+        "backend-roadmap-us086-evidence-closeout-001",
+        (
+            "Perform a read-only bounded evidence audit. "
+            "Do not modify or create any file, run physical tests, or touch unrelated work."
+        ),
+    )
+
+    assert _is_coordination_only_task(task) is True
+
+
 def test_coordination_only_second_review_rejection_escalates_and_astra_can_close(
     tmp_path: Path, monkeypatch
 ) -> None:
