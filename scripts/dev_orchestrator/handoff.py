@@ -390,6 +390,21 @@ def advance_handoff(
             verify_invocation_commits(checkout.root, pre_head, post_head, invocation_id)
     elif provider == "claude":
         verify_invocation_commits(checkout.root, pre_head, post_head, invocation_id)
+    elif provider == "claude_cloud":
+        if not pending_result or str(pending_result.get("phase", "")) != "implement":
+            raise HandoffRequired("Claude cloud adoption requires a bound implementation result")
+        if post_head == pre_head:
+            raise HandoffRequired("Claude cloud adoption did not advance repository HEAD")
+        ancestor = _git_result(checkout.root, "merge-base", "--is-ancestor", pre_head, post_head)
+        if ancestor.returncode != 0:
+            raise HandoffRequired(
+                "Claude cloud result is not a fast-forward descendant of dispatch HEAD"
+            )
+        task_id = str(pending_result.get("task_id", "")).strip()
+        expected_subject = f"ralph-cloud-complete: {task_id}"
+        subject = _git(checkout.root, "show", "-s", "--format=%s", post_head)
+        if not task_id or subject != expected_subject:
+            raise HandoffRequired("Claude cloud completion commit does not match the bound task")
     elif provider == "openai":
         if post_head != pre_head:
             raise HandoffRequired("read-only OpenAI invocation changed repository HEAD")

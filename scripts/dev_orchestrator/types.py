@@ -94,6 +94,8 @@ class OrchestratorConfig:
     deferred_issue_ids: tuple[str, ...] = ()
     deferred_task_prefixes: tuple[str, ...] = ()
     claude_oauth_credential_ref: str = ""
+    claude_cloud_mode: str = "off"
+    claude_cloud_timeout_minutes: int = 240
     poll_seconds: int = 60
     implementation_escalation_after: int = 2
     review_escalation_after: int = 2

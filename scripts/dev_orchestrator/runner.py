@@ -11,11 +11,18 @@ import threading
 import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from . import scratch as _scratch
+from .claude_cloud import (
+    ClaudeCloudError,
+    adopt_cloud_session,
+    launch_cloud_session,
+    poll_cloud_session,
+    read_cloud_session,
+)
 from .coordination import validate_agent_updates
 from .evidence import EvidenceError, build_review_evidence
 from .handoff import (
@@ -28,7 +35,7 @@ from .handoff import (
 from .lifecycle import ControlPlaneLock
 from .paths import validate_runtime_paths
 from .schema import allowed_outcomes_for_phase, validate_agent_result
-from .types import AgentResult
+from .types import AgentResult, TaskItem
 
 _clone_scratch_repo = _scratch._clone_scratch_repo
 _remove_scratch_tree = _scratch._remove_scratch_tree
@@ -1285,8 +1292,80 @@ class CliAgentInvoker:
         except ValueError as exc:
             raise AgentInvocationError(provider, "invalid_output", str(exc)) from exc
 
+    def _cloud_implementation_state(self, role: str, task: TaskItem) -> AgentResult | None:
+        session = read_cloud_session(self.config, role)
+        if session is None:
+            return None
+        if session.task_id != task.task_id:
+            raise AgentInvocationError(
+                "claude_cloud",
+                "invalid_state",
+                f"{role} cloud session {session.session_id} belongs to {session.task_id}, not {task.task_id}",
+            )
+        try:
+            poll = poll_cloud_session(self.config, role)
+        except ClaudeCloudError as exc:
+            raise AgentInvocationError("claude_cloud", "failed", str(exc)) from exc
+        if poll.status == "ready_for_review":
+            try:
+                return adopt_cloud_session(self.config, role)
+            except (ClaudeCloudError, HandoffRequired) as exc:
+                raise AgentInvocationError("claude_cloud", "failed", str(exc)) from exc
+
+        try:
+            launched_at = datetime.fromisoformat(session.launched_at).astimezone(UTC)
+        except (TypeError, ValueError) as exc:
+            raise AgentInvocationError(
+                "claude_cloud", "invalid_state", "Claude cloud session timestamp is invalid"
+            ) from exc
+        timeout = timedelta(minutes=self.config.claude_cloud_timeout_minutes)
+        if datetime.now(UTC) - launched_at > timeout:
+            raise AgentInvocationError(
+                "claude_cloud",
+                "timeout",
+                f"Claude cloud session {session.session_id} did not complete within "
+                f"{self.config.claude_cloud_timeout_minutes} minutes. Inspect {session.url}",
+            )
+        return AgentResult(
+            outcome="continue",
+            summary=f"Claude cloud session {session.session_id} is still running ({poll.status}).",
+            next_action=f"Poll {session.url} on the next supervisor cycle.",
+            task_id=task.task_id,
+            role=role,
+        )
+
+    def _dispatch_cloud_implementation(self, role: str, task: TaskItem) -> AgentResult:
+        invocation_id = str(uuid.uuid4())
+        try:
+            session = launch_cloud_session(
+                self.config,
+                role=role,
+                task=task,
+                invocation_id=invocation_id,
+            )
+        except ClaudeCloudError as exc:
+            raise AgentInvocationError("claude_cloud", "failed", str(exc)) from exc
+        return AgentResult(
+            outcome="continue",
+            summary=f"Dispatched {task.task_id} to Claude cloud session {session.session_id}.",
+            next_action=f"Poll {session.url} until the bound completion commit is pushed.",
+            task_id=task.task_id,
+            role=role,
+        )
+
     def implement(self, role, state, task, context, model) -> AgentResult:
         from .routing import TERRA_MODEL
+
+        cloud_result = self._cloud_implementation_state(role, task)
+        if cloud_result is not None:
+            return cloud_result
+
+        cloud_mode = self.config.claude_cloud_mode
+        if cloud_mode == "preferred":
+            try:
+                return self._dispatch_cloud_implementation(role, task)
+            except AgentInvocationError:
+                pass
 
         repo = self._repo(role)
         invocation_id = str(uuid.uuid4())
@@ -1308,6 +1387,11 @@ class CliAgentInvoker:
         except AgentInvocationError as exc:
             if exc.kind not in {"usage_limit", "auth"}:
                 raise
+            if cloud_mode in {"fallback", "preferred"}:
+                try:
+                    return self._dispatch_cloud_implementation(role, task)
+                except AgentInvocationError:
+                    pass
 
         fallback_invocation_id = str(uuid.uuid4())
         fallback_prompt = _codex_task_prompt(

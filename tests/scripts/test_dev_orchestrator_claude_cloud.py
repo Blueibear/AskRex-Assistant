@@ -209,3 +209,127 @@ def test_adopt_refuses_if_local_worktree_moved(
 
     with pytest.raises(ClaudeCloudError, match="worktree moved"):
         adopt_cloud_session(config, "backend")
+
+
+def test_adopt_publishes_bound_pending_result_and_clears_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    session = ClaudeCloudSession(
+        role="backend",
+        task_id="US-086",
+        session_id="session_abc",
+        url="https://claude.ai/code/session_abc",
+        branch="ralph/cloud/backend/us-086-12345678",
+        base_head="a" * 40,
+        launched_at="2026-09-25T00:00:00+00:00",
+        invocation_id="inv-cloud-123",
+    )
+    claude_cloud._session_store(config, "backend").write(session.to_dict())
+    monkeypatch.setattr(
+        claude_cloud,
+        "poll_cloud_session",
+        lambda *_args: claude_cloud.ClaudeCloudPoll(
+            "ready_for_review", "b" * 40, "ralph-cloud-complete: US-086"
+        ),
+    )
+    monkeypatch.setattr(claude_cloud, "validate_handoff", lambda *_args: None)
+    merged = False
+
+    def fake_git(repo: Path, *args: str, timeout: int = 60) -> str:
+        nonlocal merged
+        if args == ("status", "--porcelain"):
+            return ""
+        if args == ("rev-parse", "HEAD"):
+            return "b" * 40 if merged else "a" * 40
+        if args[:2] == ("merge", "--ff-only"):
+            merged = True
+            return ""
+        raise AssertionError(args)
+
+    monkeypatch.setattr(claude_cloud, "_git_text", fake_git)
+    captured: dict[str, object] = {}
+
+    def fake_advance(config, role, **kwargs):
+        captured.update(kwargs)
+        return tmp_path / "handoff.json"
+
+    monkeypatch.setattr(claude_cloud, "advance_handoff", fake_advance)
+
+    result = adopt_cloud_session(config, "backend")
+
+    assert result.outcome == "ready_for_review"
+    assert result.invocation_id == "inv-cloud-123"
+    assert captured["provider"] == "claude_cloud"
+    pending = captured["pending_result"]
+    assert isinstance(pending, dict)
+    assert pending["task_id"] == "US-086"
+    assert pending["result"]["outcome"] == "ready_for_review"
+    assert read_cloud_session(config, "backend") is None
+
+
+def test_handoff_accepts_only_bound_cloud_completion_commit(tmp_path: Path) -> None:
+    import subprocess
+
+    from scripts.dev_orchestrator.cli import initialize_runtime
+    from scripts.dev_orchestrator.handoff import (
+        acknowledge_handoff,
+        advance_handoff,
+        read_pending_result,
+    )
+    from tests.scripts.test_dev_orchestrator_safety import _git_repo
+
+    root = tmp_path / "coord"
+    root.mkdir()
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "frozen"
+    frozen.mkdir()
+    _git_repo(backend)
+    _git_repo(mobile)
+    config = initialize_runtime(root, backend, mobile, frozen)
+    acknowledge_handoff(config, "backend", source="test")
+    pre_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=backend, text=True).strip()
+    (backend / "cloud.txt").write_text("complete\n", encoding="utf-8")
+    subprocess.run(["git", "add", "cloud.txt"], cwd=backend, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "ralph-cloud-complete: US-CLOUD"],
+        cwd=backend,
+        check=True,
+    )
+    post_head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=backend, text=True
+    ).strip()
+    pending = {
+        "phase": "implement",
+        "role": "backend",
+        "task_id": "US-CLOUD",
+        "invocation_id": "cloud-invocation",
+        "pre_head": pre_head,
+        "post_head": post_head,
+        "result": {
+            "outcome": "ready_for_review",
+            "summary": "cloud complete",
+            "next_action": "review",
+            "needs_user": False,
+            "blocker_reason": "",
+            "task_id": "US-CLOUD",
+            "task_prompt": "",
+            "role": "backend",
+            "invocation_id": "cloud-invocation",
+            "coordination_messages": [],
+            "issue_updates": [],
+        },
+    }
+
+    advance_handoff(
+        config,
+        "backend",
+        pre_head=pre_head,
+        post_head=post_head,
+        invocation_id="cloud-invocation",
+        provider="claude_cloud",
+        pending_result=pending,
+    )
+
+    assert read_pending_result(config, "backend")["task_id"] == "US-CLOUD"

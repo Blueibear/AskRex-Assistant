@@ -98,6 +98,28 @@ def test_init_persists_observe_only_config_and_loads_it(tmp_path: Path) -> None:
     assert config.frozen_worktree == frozen
 
 
+def test_claude_cloud_mode_round_trips_and_requires_pause(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.cli import set_claude_cloud_mode, set_observe_only
+
+    root = tmp_path / "coordination"
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "rex-ai-pc-test"
+    for path in (root, backend, mobile, frozen):
+        path.mkdir()
+
+    initialize_runtime(root, backend, mobile, frozen)
+    updated = set_claude_cloud_mode(root, "preferred")
+
+    assert updated.claude_cloud_mode == "preferred"
+    assert load_config(root).claude_cloud_mode == "preferred"
+    assert load_config(root).claude_cloud_timeout_minutes == 240
+
+    set_observe_only(root, False)
+    with pytest.raises(ValueError, match="pause the supervisor"):
+        set_claude_cloud_mode(root, "fallback")
+
+
 def test_deferred_task_prefixes_round_trip_in_config(tmp_path: Path) -> None:
     from dataclasses import replace
 

@@ -2,7 +2,7 @@ import argparse
 import getpass
 import json
 import time
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -59,6 +59,8 @@ def _config_payload(config: OrchestratorConfig) -> dict:
         "deferred_issue_ids": list(config.deferred_issue_ids),
         "deferred_task_prefixes": list(config.deferred_task_prefixes),
         "claude_oauth_credential_ref": config.claude_oauth_credential_ref,
+        "claude_cloud_mode": config.claude_cloud_mode,
+        "claude_cloud_timeout_minutes": config.claude_cloud_timeout_minutes,
         "poll_seconds": config.poll_seconds,
         "implementation_escalation_after": config.implementation_escalation_after,
         "review_escalation_after": config.review_escalation_after,
@@ -120,6 +122,8 @@ def load_config(root: Path) -> OrchestratorConfig:
             str(value) for value in payload.get("deferred_task_prefixes", ())
         ),
         claude_oauth_credential_ref=str(payload.get("claude_oauth_credential_ref", "")),
+        claude_cloud_mode=str(payload.get("claude_cloud_mode", "off")),
+        claude_cloud_timeout_minutes=int(payload.get("claude_cloud_timeout_minutes", 240)),
         poll_seconds=int(payload.get("poll_seconds", 60)),
         implementation_escalation_after=int(payload.get("implementation_escalation_after", 2)),
         review_escalation_after=int(payload.get("review_escalation_after", 2)),
@@ -153,6 +157,10 @@ def load_config(root: Path) -> OrchestratorConfig:
         config.mobile_root,
         config.frozen_worktree,
     )
+    if config.claude_cloud_mode not in {"off", "fallback", "preferred"}:
+        raise ValueError("Claude cloud mode must be one of: off, fallback, preferred")
+    if config.claude_cloud_timeout_minutes <= 0:
+        raise ValueError("Claude cloud timeout must be positive")
     validate_openai_policy(config)
     return config
 
@@ -407,6 +415,19 @@ def set_issue_deferred(
         return updated
 
 
+def set_claude_cloud_mode(root: Path, mode: str) -> OrchestratorConfig:
+    normalized = mode.strip().lower()
+    if normalized not in {"off", "fallback", "preferred"}:
+        raise ValueError("Claude cloud mode must be one of: off, fallback, preferred")
+    with ControlPlaneLock(root / "control-plane.lock"):
+        config = load_config(root)
+        if not config.observe_only:
+            raise ValueError("pause the supervisor before changing Claude cloud routing")
+        updated = replace(config, claude_cloud_mode=normalized)
+        save_config(updated)
+        return updated
+
+
 def set_reset_policy(root: Path, reserve_last_reset: bool) -> OrchestratorConfig:
     with ControlPlaneLock(root / "control-plane.lock"):
         config = replace(load_config(root), reserve_last_reset=reserve_last_reset)
@@ -547,6 +568,8 @@ def render_status(config: OrchestratorConfig) -> str:
         "deferred_issue_ids": list(config.deferred_issue_ids),
         "deferred_task_prefixes": list(config.deferred_task_prefixes),
         "claude_subscription_token_configured": bool(config.claude_oauth_credential_ref),
+        "claude_cloud_mode": config.claude_cloud_mode,
+        "claude_cloud_timeout_minutes": config.claude_cloud_timeout_minutes,
         "openai_worker_enabled": config.openai_worker_enabled,
         "openai_project_hard_limit_confirmed": config.openai_project_hard_limit_confirmed,
         "openai_routing_policy": "chatgpt_subscription_first_api_fallback",
@@ -670,6 +693,10 @@ def build_parser() -> argparse.ArgumentParser:
     resets.add_argument("--coordination-root", type=Path, required=True)
     resets.add_argument("--remaining", type=int, required=True)
 
+    cloud_mode = sub.add_parser("set-claude-cloud-mode")
+    cloud_mode.add_argument("--coordination-root", type=Path, required=True)
+    cloud_mode.add_argument("--mode", choices=("off", "fallback", "preferred"), required=True)
+
     reset_policy = sub.add_parser("set-reset-policy")
     reset_policy.add_argument("--coordination-root", type=Path, required=True)
     reset_policy.add_argument("--reserve-last-reset", choices=("true", "false"), required=True)
@@ -788,6 +815,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "confirm-resets":
         print(render_status(record_confirmed_resets(root, args.remaining)))
         return 0
+    if args.command == "set-claude-cloud-mode":
+        print(render_status(set_claude_cloud_mode(root, args.mode)))
+        return 0
     if args.command == "set-reset-policy":
         reserve = args.reserve_last_reset == "true"
         print(render_status(set_reset_policy(root, reserve)))
@@ -827,7 +857,7 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(root)
         if not config.observe_only:
             raise ValueError("pause the supervisor before adopting Claude cloud changes")
-        print(adopt_cloud_session(config, args.role))
+        print(json.dumps(asdict(adopt_cloud_session(config, args.role)), indent=2, sort_keys=True))
         return 0
     config = load_config(root)
     if args.command == "cycle":

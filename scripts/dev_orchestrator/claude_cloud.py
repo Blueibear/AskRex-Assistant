@@ -13,8 +13,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from .handoff import advance_handoff, validate_handoff
 from .storage import AtomicJsonStore
-from .types import OrchestratorConfig, TaskItem
+from .types import AgentResult, OrchestratorConfig, TaskItem
 
 _COMPLETION_PREFIX = "ralph-cloud-complete:"
 _BRANCH_SAFE = re.compile(r"[^a-z0-9._-]+")
@@ -34,6 +35,7 @@ class ClaudeCloudSession:
     branch: str
     base_head: str
     launched_at: str
+    invocation_id: str = ""
     status: str = "running"
 
     def to_dict(self) -> dict[str, str]:
@@ -200,7 +202,7 @@ def _ensure_github_remote(repo: Path) -> None:
         raise ClaudeCloudError("Claude cloud dispatch requires a GitHub origin remote")
 
 
-def _cloud_prompt(task: TaskItem, *, role: str, branch: str) -> str:
+def _cloud_prompt(task: TaskItem, *, role: str, branch: str, invocation_id: str = "") -> str:
     completion = f"{_COMPLETION_PREFIX} {task.task_id}"
     feedback = f"\n\nCurrent reviewer/validator feedback:\n{task.feedback}" if task.feedback else ""
     return (
@@ -214,7 +216,9 @@ def _cloud_prompt(task: TaskItem, *, role: str, branch: str) -> str:
         f"on the branch with subject exactly: {completion!r}. Ralph treats that exact final commit subject as the "
         "durable completion signal. If you are blocked, do not create the completion commit; leave an explanatory "
         "commit or session message instead.\n\n"
-        f"Role: {role}\nTask ID: {task.task_id}\n\nTask:\n{task.prompt}{feedback}"
+        f"Role: {role}\nTask ID: {task.task_id}\n"
+        f"AskRex-Orchestrator-Invocation-ID: {invocation_id}\n\n"
+        f"Task:\n{task.prompt}{feedback}"
     )
 
 
@@ -223,6 +227,7 @@ def launch_cloud_session(
     *,
     role: str,
     task: TaskItem,
+    invocation_id: str | None = None,
     execute: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> ClaudeCloudSession:
     existing = read_cloud_session(config, role)
@@ -234,6 +239,7 @@ def launch_cloud_session(
     _ensure_clean_repo(repo)
     _ensure_github_remote(repo)
     base_head = _git_text(repo, "rev-parse", "HEAD")
+    cloud_invocation_id = invocation_id or str(uuid4())
     branch = f"ralph/cloud/{role}/{_slug(task.task_id)}-{uuid4().hex[:8]}"
     _git_text(repo, "branch", branch, base_head)
     try:
@@ -242,13 +248,18 @@ def launch_cloud_session(
         temp_root.mkdir(parents=True, exist_ok=True)
         worktree = Path(tempfile.mkdtemp(prefix=f"{role}-", dir=temp_root))
         try:
-            add = _run(["git", "worktree", "add", "--detach", str(worktree), branch], cwd=repo)
+            add = _run(["git", "worktree", "add", str(worktree), branch], cwd=repo)
             if add.returncode != 0:
                 raise ClaudeCloudError(
                     "failed to create Claude cloud launch worktree: "
                     + (add.stderr or add.stdout).strip()
                 )
-            prompt = _cloud_prompt(task, role=role, branch=branch)
+            prompt = _cloud_prompt(
+                task,
+                role=role,
+                branch=branch,
+                invocation_id=cloud_invocation_id,
+            )
             if execute is None:
                 session_id, url = _launch_cloud_interactive(
                     coordination_root=config.coordination_root,
@@ -302,6 +313,7 @@ def launch_cloud_session(
         branch=branch,
         base_head=base_head,
         launched_at=datetime.now(UTC).isoformat(),
+        invocation_id=cloud_invocation_id,
     )
     _session_store(config, role).write(record.to_dict())
     return record
@@ -333,7 +345,7 @@ def poll_cloud_session(config: OrchestratorConfig, role: str) -> ClaudeCloudPoll
     return ClaudeCloudPoll(status=status, remote_head=remote_head, subject=subject)
 
 
-def adopt_cloud_session(config: OrchestratorConfig, role: str) -> str:
+def adopt_cloud_session(config: OrchestratorConfig, role: str) -> AgentResult:
     session = read_cloud_session(config, role)
     if session is None:
         raise ClaudeCloudError(f"{role} has no active Claude cloud session")
@@ -349,8 +361,41 @@ def adopt_cloud_session(config: OrchestratorConfig, role: str) -> str:
         raise ClaudeCloudError(
             "role worktree moved after Claude cloud dispatch; refusing automatic adoption"
         )
+    validate_handoff(config, role)
     remote_ref = f"refs/remotes/origin/{session.branch}"
     _git_text(repo, "merge", "--ff-only", remote_ref, timeout=120)
-    updated = ClaudeCloudSession(**{**session.to_dict(), "status": "adopted"})
-    _session_store(config, role).write(updated.to_dict())
-    return poll.remote_head
+    post_head = _git_text(repo, "rev-parse", "HEAD")
+    if post_head != poll.remote_head:
+        raise ClaudeCloudError(
+            "Claude cloud adoption HEAD did not match the verified remote result"
+        )
+
+    invocation_id = session.invocation_id or str(uuid4())
+    result = AgentResult(
+        outcome="ready_for_review",
+        summary=f"Claude cloud session {session.session_id} completed and was adopted.",
+        next_action="Run deterministic validation, then independent Codex review.",
+        task_id=session.task_id,
+        role=role,
+        invocation_id=invocation_id,
+    )
+    pending_result = {
+        "phase": "implement",
+        "role": role,
+        "task_id": session.task_id,
+        "invocation_id": invocation_id,
+        "pre_head": session.base_head,
+        "post_head": post_head,
+        "result": asdict(result),
+    }
+    advance_handoff(
+        config,
+        role,
+        pre_head=session.base_head,
+        post_head=post_head,
+        invocation_id=invocation_id,
+        provider="claude_cloud",
+        pending_result=pending_result,
+    )
+    clear_cloud_session(config, role)
+    return result

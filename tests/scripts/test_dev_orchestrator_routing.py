@@ -428,6 +428,130 @@ def test_cli_invoker_raises_typed_usage_failure(tmp_path: Path) -> None:
     assert exc.value.kind == "usage_limit"
 
 
+def test_preferred_cloud_mode_dispatches_before_local_claude(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.runner import CliAgentInvoker
+
+    config, _backend, _mobile = _safe_config(tmp_path)
+    config = replace(config, claude_cloud_mode="preferred")
+    monkeypatch.setattr(
+        runner,
+        "launch_cloud_session",
+        lambda *args, **kwargs: SimpleNamespace(
+            session_id="session_cloud_pref",
+            url="https://claude.ai/code/session_cloud_pref",
+        ),
+    )
+    calls = 0
+
+    def execute(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("preferred cloud dispatch must precede local model execution")
+
+    result = CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
+        "backend",
+        WorkerState("backend"),
+        TaskItem("B-CLOUD", "Implement in cloud"),
+        "ctx",
+        "sonnet",
+    )
+
+    assert result.outcome == "continue"
+    assert "session_cloud_pref" in result.summary
+    assert calls == 0
+
+
+def test_fallback_cloud_mode_runs_after_local_claude_usage_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
+
+    config, _backend, _mobile = _safe_config(tmp_path)
+    config = replace(config, claude_cloud_mode="fallback")
+    monkeypatch.setattr(
+        runner,
+        "launch_cloud_session",
+        lambda *args, **kwargs: SimpleNamespace(
+            session_id="session_cloud_fallback",
+            url="https://claude.ai/code/session_cloud_fallback",
+        ),
+    )
+    calls = 0
+
+    def execute(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return ProcessResult(1, "", "You've hit your session limit")
+
+    result = CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
+        "backend",
+        WorkerState("backend"),
+        TaskItem("B-CLOUD-FALLBACK", "Implement in cloud"),
+        "ctx",
+        "sonnet",
+    )
+
+    assert result.outcome == "continue"
+    assert "session_cloud_fallback" in result.summary
+    assert calls == 1
+
+
+def test_existing_cloud_session_is_polled_without_local_model_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.claude_cloud import ClaudeCloudPoll
+    from scripts.dev_orchestrator.runner import CliAgentInvoker
+
+    config, _backend, _mobile = _safe_config(tmp_path)
+    config = replace(config, claude_cloud_mode="preferred")
+    monkeypatch.setattr(
+        runner,
+        "read_cloud_session",
+        lambda *_args: SimpleNamespace(
+            task_id="B-CLOUD-POLL",
+            session_id="session_cloud_poll",
+            url="https://claude.ai/code/session_cloud_poll",
+            launched_at="2099-01-01T00:00:00+00:00",
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "poll_cloud_session",
+        lambda *_args: ClaudeCloudPoll("running", "a" * 40, "base"),
+    )
+
+    result = CliAgentInvoker(
+        config,
+        execute=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("active cloud session must be polled, not duplicated")
+        ),
+        allow_test_executor=True,
+    ).implement(
+        "backend",
+        WorkerState("backend"),
+        TaskItem("B-CLOUD-POLL", "Continue cloud task"),
+        "ctx",
+        "sonnet",
+    )
+
+    assert result.outcome == "continue"
+    assert "still running" in result.summary
+
+
 def test_implementation_falls_back_to_codex_when_claude_is_usage_limited(tmp_path: Path) -> None:
     import json
 
