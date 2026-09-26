@@ -8,7 +8,8 @@ The orchestrator combines:
 
 - deterministic Python supervision and durable state;
 - Claude Code implementation loops with Codex as the implementation fallback;
-- read-only OpenAI API Terra/Sol reasoning with matching Codex fallbacks;
+- optional Claude Code cloud implementation sessions on isolated pushed GitHub branches;
+- ChatGPT-subscription Codex planning/review first, with metered OpenAI API reasoning only as fallback;
 - emergency-only GPT-6 Astra adjudication after the Sol chain remains explicitly unresolved;
 - the shared cross-instance coordination protocol;
 - a model-free Windows watchdog.
@@ -28,11 +29,11 @@ Every invocation selects its provider/model explicitly. Do not rely on the user'
 | Phase | Primary | Fallback |
 |---|---|---|
 | Implementation | Claude `sonnet` / escalated `opus` | Codex implementation |
-| Routine review | OpenAI API `gpt-5.6-terra` | Codex `gpt-5.6-terra` |
-| Escalated review | OpenAI API `gpt-5.6-sol` | Codex `gpt-5.6-sol` |
-| Review after Codex implementation | OpenAI API `gpt-5.6-sol` | Codex `gpt-5.6-sol` |
-| Planning | OpenAI API `gpt-5.6-sol` | Codex `gpt-5.6-sol` |
-| Adjudication | OpenAI API Sol, then Codex Sol | API `gpt-6-astra` only after a valid unresolved `failed` result and all emergency gates |
+| Routine review | Codex `gpt-5.6-terra` via ChatGPT subscription | OpenAI API `gpt-5.6-terra` |
+| Escalated review | Codex `gpt-5.6-sol` via ChatGPT subscription | OpenAI API `gpt-5.6-sol` |
+| Review after Codex implementation | Codex `gpt-5.6-sol` via ChatGPT subscription | OpenAI API `gpt-5.6-sol` |
+| Planning | Codex `gpt-5.6-sol` via ChatGPT subscription | OpenAI API `gpt-5.6-sol` |
+| Adjudication | Codex Sol via ChatGPT subscription, then API Sol fallback | API `gpt-6-astra` only after a valid unresolved `failed` result and all emergency gates |
 | `FINAL-VERIFY-*` | Codex `gpt-5.6-sol` only | none |
 
 Astra is not a routine planner, reviewer, implementer, or final verifier. It may be attempted at most once for a revision-bound task escalation episode. API/Codex transport unavailability alone never justifies Astra; the lower-cost Sol chain must produce a valid explicitly unresolved result first.
@@ -95,7 +96,9 @@ py -3.11 -m scripts.dev_orchestrator.cli init `
 
 `init` is non-destructive and defaults to observe-only. `cycle` performs one supervision cycle. `run` holds the single-instance lock, maintains a background heartbeat, reloads config every cycle, and continues until stopped. Normal `activate` changes only observe-only/runtime state; it does **not** enable paid OpenAI API routing. Owner scheduling overrides use `defer-issue` / `resume-issue` only while the supervisor is paused. Deferral is scheduling metadata, not issue closure or verification: the canonical issue file remains unchanged and visible to coordination/testing. `--clear-task-id` releases only explicitly named current task IDs; Ralph never infers that relationship from prompt text or a loose story-number substring. `configure-claude-oauth` also requires the supervisor to be paused; it reads the Claude Code long-lived subscription token through an interactive hidden prompt, persists it only in the OS-backed Rex credential vault, and stores only the resulting credential reference in orchestrator config. Ralph injects that token only into the disposable Claude Docker child environment and never places the token value in argv, repo files, coordination files, logs, or config. If no vault-backed token is configured, Ralph retains the existing read-only bind-mounted Claude subscription credential-file path.
 
-OpenAI API activation is a separate operator sequence: create/use a dedicated OpenAI project; configure an enforced **$30.00/month** project spend limit in OpenAI; ensure the household credential vault contains the OpenAI credential; record the project ID and cap confirmation with `confirm-openai-project-limit`; then run `enable-openai-worker`. The enable command accepts no credential value, requires a vault-backed credential, and stores only configuration state. Removing the vault credential later causes active API construction/send to fail closed. `disable-openai-worker` requires no credential and is safe at any time. Ralph also enforces a separate local **$30.00 per UTC month** reservation ledger before every paid call.
+Claude Code cloud implementation is an operator-controlled asynchronous lane. Pause the supervisor before `cloud-dispatch` or `cloud-adopt`. Dispatch requires a clean role worktree with a GitHub `origin`; Ralph creates and pushes a dedicated `ralph/cloud/<role>/...` branch, launches `claude --cloud`, and stores only the returned session metadata in `coordination-root/cloud-sessions/`. The cloud session may push only that branch and never merges it. Completion is fail-closed: Ralph recognizes work as ready only when the remote branch's final commit subject is exactly `ralph-cloud-complete: <task_id>`. `cloud-adopt` additionally requires the local role worktree to still be clean and at the exact dispatch base HEAD, then fast-forwards the reviewed remote branch. If the local worktree moved, adoption is refused so cloud and local workers cannot overwrite one another. Cloud session credits/rate limits are Anthropic account state and are not represented as Rex API spend.
+
+OpenAI API activation is a separate operator sequence: create/use a dedicated OpenAI project; configure an enforced **$30.00/month** project spend limit in OpenAI; ensure the household credential vault contains the OpenAI credential; record the project ID and cap confirmation with `confirm-openai-project-limit`; then run `enable-openai-worker`. The enable command accepts no credential value, requires a vault-backed credential, and stores only configuration state. Removing the vault credential later causes active API construction/send to fail closed. `disable-openai-worker` requires no credential and is safe at any time. Ralph also enforces a separate local **$30.00 per UTC month** reservation ledger before every paid API call; ChatGPT-subscription Codex CLI usage does not consume that ledger.
 
 ## Watchdog
 

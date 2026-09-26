@@ -9,6 +9,7 @@ from pathlib import Path
 
 from rex.credentials import CredentialManager
 
+from .claude_cloud import adopt_cloud_session, launch_cloud_session, poll_cloud_session
 from .completion import record_acceptance
 from .handoff import (
     accept_handoff,
@@ -26,7 +27,7 @@ from .routing import validate_openai_policy
 from .runner import CliAgentInvoker
 from .storage import AtomicJsonStore
 from .supervisor import Supervisor
-from .types import OrchestratorConfig
+from .types import OrchestratorConfig, TaskItem
 from .usage import UsageBudget
 
 _CONFIG_NAME = "orchestrator-config.json"
@@ -42,6 +43,8 @@ _RUNTIME_DIRS = (
     "active-agents",
     "completion",
     "usage",
+    "cloud-sessions",
+    "cloud-worktrees",
 )
 
 
@@ -683,6 +686,21 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--coordination-root", type=Path, required=True)
     resume.add_argument("--role", choices=("backend", "mobile"), required=True)
     resume.add_argument("--blocker-kind", choices=("github_auth", "auth", "human"), required=True)
+
+    cloud_dispatch = sub.add_parser("cloud-dispatch")
+    cloud_dispatch.add_argument("--coordination-root", type=Path, required=True)
+    cloud_dispatch.add_argument("--role", choices=("backend", "mobile"), required=True)
+    cloud_dispatch.add_argument("--task-id", required=True)
+    cloud_dispatch.add_argument("--prompt", required=True)
+    cloud_dispatch.add_argument("--feedback", default="")
+
+    cloud_status = sub.add_parser("cloud-status")
+    cloud_status.add_argument("--coordination-root", type=Path, required=True)
+    cloud_status.add_argument("--role", choices=("backend", "mobile"), required=True)
+
+    cloud_adopt = sub.add_parser("cloud-adopt")
+    cloud_adopt.add_argument("--coordination-root", type=Path, required=True)
+    cloud_adopt.add_argument("--role", choices=("backend", "mobile"), required=True)
     return parser
 
 
@@ -781,6 +799,35 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "resume-human":
         path = resume_confirmed_human_blocker(root, args.role, args.blocker_kind)
         print(str(path))
+        return 0
+    if args.command == "cloud-dispatch":
+        config = load_config(root)
+        if not config.observe_only:
+            raise ValueError(
+                "pause the supervisor before dispatching a Claude cloud implementation"
+            )
+        session = launch_cloud_session(
+            config,
+            role=args.role,
+            task=TaskItem(args.task_id, args.prompt, args.feedback),
+        )
+        print(json.dumps(session.to_dict(), indent=2, sort_keys=True))
+        return 0
+    if args.command == "cloud-status":
+        poll = poll_cloud_session(load_config(root), args.role)
+        print(
+            json.dumps(
+                {"status": poll.status, "remote_head": poll.remote_head, "subject": poll.subject},
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "cloud-adopt":
+        config = load_config(root)
+        if not config.observe_only:
+            raise ValueError("pause the supervisor before adopting Claude cloud changes")
+        print(adopt_cloud_session(config, args.role))
         return 0
     config = load_config(root)
     if args.command == "cycle":

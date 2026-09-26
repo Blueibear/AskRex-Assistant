@@ -1,0 +1,181 @@
+from __future__ import annotations
+
+import json
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from scripts.dev_orchestrator import claude_cloud
+from scripts.dev_orchestrator.claude_cloud import (
+    ClaudeCloudError,
+    ClaudeCloudSession,
+    adopt_cloud_session,
+    launch_cloud_session,
+    poll_cloud_session,
+    read_cloud_session,
+)
+from scripts.dev_orchestrator.types import OrchestratorConfig, TaskItem
+
+
+def _config(tmp_path: Path) -> OrchestratorConfig:
+    root = tmp_path / "coord"
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "frozen"
+    for path in (root, backend, mobile, frozen):
+        path.mkdir()
+    return replace(
+        OrchestratorConfig.default(root),
+        backend_root=backend,
+        mobile_root=mobile,
+        frozen_worktree=frozen,
+    )
+
+
+def test_cloud_prompt_requires_final_completion_commit() -> None:
+    prompt = claude_cloud._cloud_prompt(
+        TaskItem("ROADMAP-123", "Implement it", "review feedback"),
+        role="backend",
+        branch="ralph/cloud/backend/roadmap-123-abcd1234",
+    )
+
+    assert "do not merge" in prompt
+    assert "do not claim physical-device verification" in prompt
+    assert "ralph-cloud-complete: ROADMAP-123" in prompt
+    assert "review feedback" in prompt
+
+
+def test_launch_persists_machine_readable_session_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    commands: list[tuple[str, ...]] = []
+
+    def fake_git(repo: Path, *args: str, timeout: int = 60) -> str:
+        commands.append(tuple(args))
+        if args == ("status", "--porcelain"):
+            return ""
+        if args == ("remote", "get-url", "origin"):
+            return "https://github.com/blueibear/askrex-assistant.git"
+        if args == ("rev-parse", "HEAD"):
+            return "a" * 40
+        return ""
+
+    monkeypatch.setattr(claude_cloud, "_git_text", fake_git)
+    monkeypatch.setattr(
+        claude_cloud,
+        "_run",
+        lambda command, **kwargs: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+    monkeypatch.setattr(claude_cloud.tempfile, "mkdtemp", lambda **kwargs: str(tmp_path / "launch"))
+
+    def fake_execute(command, *, cwd, timeout):
+        assert command[0] == "claude"
+        assert command[1] == "--cloud"
+        assert "--output-format" in command
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "ok": True,
+                    "session_id": "session_abc123",
+                    "url": "https://claude.ai/code/session_abc123",
+                }
+            ),
+            stderr="",
+        )
+
+    record = launch_cloud_session(
+        config,
+        role="backend",
+        task=TaskItem("US-086", "Implement attachments"),
+        execute=fake_execute,
+    )
+
+    assert record.session_id == "session_abc123"
+    assert record.branch.startswith("ralph/cloud/backend/us-086-")
+    assert read_cloud_session(config, "backend") == record
+    assert any(command[:3] == ("push", "--set-upstream", "origin") for command in commands)
+
+
+@pytest.mark.parametrize(
+    ("remote_head", "subject", "expected"),
+    [
+        ("a" * 40, "base", "running"),
+        ("b" * 40, "work in progress", "working_changes_pushed"),
+        ("b" * 40, "ralph-cloud-complete: US-086", "ready_for_review"),
+    ],
+)
+def test_poll_classifies_remote_branch_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    remote_head: str,
+    subject: str,
+    expected: str,
+) -> None:
+    config = _config(tmp_path)
+    claude_cloud._session_store(config, "backend").write(
+        ClaudeCloudSession(
+            role="backend",
+            task_id="US-086",
+            session_id="session_abc",
+            url="https://claude.ai/code/session_abc",
+            branch="ralph/cloud/backend/us-086-12345678",
+            base_head="a" * 40,
+            launched_at="2026-09-25T00:00:00+00:00",
+        ).to_dict()
+    )
+
+    def fake_git(repo: Path, *args: str, timeout: int = 60) -> str:
+        if args[:2] == ("fetch", "--quiet"):
+            return ""
+        if args[0:2] == ("rev-parse", "refs/remotes/origin/ralph/cloud/backend/us-086-12345678"):
+            return remote_head
+        if args[0:3] == (
+            "show",
+            "-s",
+            "--format=%s",
+        ):
+            return subject
+        raise AssertionError(args)
+
+    monkeypatch.setattr(claude_cloud, "_git_text", fake_git)
+
+    assert poll_cloud_session(config, "backend").status == expected
+
+
+def test_adopt_refuses_if_local_worktree_moved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    session = ClaudeCloudSession(
+        role="backend",
+        task_id="US-086",
+        session_id="session_abc",
+        url="https://claude.ai/code/session_abc",
+        branch="ralph/cloud/backend/us-086-12345678",
+        base_head="a" * 40,
+        launched_at="2026-09-25T00:00:00+00:00",
+    )
+    claude_cloud._session_store(config, "backend").write(session.to_dict())
+    monkeypatch.setattr(
+        claude_cloud,
+        "poll_cloud_session",
+        lambda config, role: claude_cloud.ClaudeCloudPoll(
+            "ready_for_review", "b" * 40, "ralph-cloud-complete: US-086"
+        ),
+    )
+
+    def fake_git(repo: Path, *args: str, timeout: int = 60) -> str:
+        if args == ("status", "--porcelain"):
+            return ""
+        if args == ("rev-parse", "HEAD"):
+            return "c" * 40
+        raise AssertionError(args)
+
+    monkeypatch.setattr(claude_cloud, "_git_text", fake_git)
+
+    with pytest.raises(ClaudeCloudError, match="worktree moved"):
+        adopt_cloud_session(config, "backend")
