@@ -64,17 +64,20 @@ def test_parse_cloud_launch_metadata_accepts_current_cli_output() -> None:
     assert url.startswith("https://claude.ai/code/session_01K7cJz4TRbzvetbp5kkrnUL")
 
 
-def test_cloud_prompt_requires_final_completion_commit() -> None:
+def test_cloud_prompt_requires_final_completion_commit_and_bounded_context() -> None:
     prompt = claude_cloud._cloud_prompt(
         TaskItem("ROADMAP-123", "Implement it", "review feedback"),
         role="backend",
         branch="ralph/cloud/backend/roadmap-123-abcd1234",
+        context="validated coordination evidence",
     )
 
     assert "do not merge" in prompt
     assert "do not claim physical-device verification" in prompt
     assert "ralph-cloud-complete: ROADMAP-123" in prompt
     assert "review feedback" in prompt
+    assert "Authoritative bounded coordination context supplied by Ralph" in prompt
+    assert "validated coordination evidence" in prompt
 
 
 def test_launch_persists_machine_readable_session_metadata(
@@ -104,6 +107,7 @@ def test_launch_persists_machine_readable_session_metadata(
     def fake_execute(command, *, cwd, timeout):
         assert command[0].lower().endswith(("claude", "claude.cmd"))
         assert command[1] == "--cloud"
+        assert "bounded launch context" in command[2]
         assert "--output-format" in command
         return SimpleNamespace(
             returncode=0,
@@ -121,6 +125,7 @@ def test_launch_persists_machine_readable_session_metadata(
         config,
         role="backend",
         task=TaskItem("US-086", "Implement attachments"),
+        context="bounded launch context",
         execute=fake_execute,
     )
 

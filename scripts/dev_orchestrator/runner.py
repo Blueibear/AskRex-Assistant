@@ -19,6 +19,7 @@ from . import scratch as _scratch
 from .claude_cloud import (
     ClaudeCloudError,
     adopt_cloud_session,
+    clear_cloud_session,
     launch_cloud_session,
     poll_cloud_session,
     read_cloud_session,
@@ -1296,12 +1297,26 @@ class CliAgentInvoker:
         session = read_cloud_session(self.config, role)
         if session is None:
             return None
+
+        try:
+            launched_at = datetime.fromisoformat(session.launched_at).astimezone(UTC)
+        except (TypeError, ValueError) as exc:
+            raise AgentInvocationError(
+                "claude_cloud", "invalid_state", "Claude cloud session timestamp is invalid"
+            ) from exc
+        timeout = timedelta(minutes=self.config.claude_cloud_timeout_minutes)
+        expired = datetime.now(UTC) - launched_at > timeout
+
         if session.task_id != task.task_id:
+            if expired:
+                clear_cloud_session(self.config, role)
+                return None
             raise AgentInvocationError(
                 "claude_cloud",
                 "invalid_state",
                 f"{role} cloud session {session.session_id} belongs to {session.task_id}, not {task.task_id}",
             )
+
         try:
             poll = poll_cloud_session(self.config, role)
         except ClaudeCloudError as exc:
@@ -1312,14 +1327,7 @@ class CliAgentInvoker:
             except (ClaudeCloudError, HandoffRequired) as exc:
                 raise AgentInvocationError("claude_cloud", "failed", str(exc)) from exc
 
-        try:
-            launched_at = datetime.fromisoformat(session.launched_at).astimezone(UTC)
-        except (TypeError, ValueError) as exc:
-            raise AgentInvocationError(
-                "claude_cloud", "invalid_state", "Claude cloud session timestamp is invalid"
-            ) from exc
-        timeout = timedelta(minutes=self.config.claude_cloud_timeout_minutes)
-        if datetime.now(UTC) - launched_at > timeout:
+        if expired:
             raise AgentInvocationError(
                 "claude_cloud",
                 "timeout",
@@ -1334,7 +1342,9 @@ class CliAgentInvoker:
             role=role,
         )
 
-    def _dispatch_cloud_implementation(self, role: str, task: TaskItem) -> AgentResult:
+    def _dispatch_cloud_implementation(
+        self, role: str, task: TaskItem, context: str
+    ) -> AgentResult:
         invocation_id = str(uuid.uuid4())
         try:
             session = launch_cloud_session(
@@ -1342,6 +1352,7 @@ class CliAgentInvoker:
                 role=role,
                 task=task,
                 invocation_id=invocation_id,
+                context=context,
             )
         except ClaudeCloudError as exc:
             raise AgentInvocationError("claude_cloud", "failed", str(exc)) from exc
@@ -1363,7 +1374,7 @@ class CliAgentInvoker:
         cloud_mode = self.config.claude_cloud_mode
         if cloud_mode == "preferred":
             try:
-                return self._dispatch_cloud_implementation(role, task)
+                return self._dispatch_cloud_implementation(role, task, context)
             except AgentInvocationError:
                 pass
 
@@ -1389,7 +1400,7 @@ class CliAgentInvoker:
                 raise
             if cloud_mode in {"fallback", "preferred"}:
                 try:
-                    return self._dispatch_cloud_implementation(role, task)
+                    return self._dispatch_cloud_implementation(role, task, context)
                 except AgentInvocationError:
                     pass
 

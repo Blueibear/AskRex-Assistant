@@ -202,9 +202,21 @@ def _ensure_github_remote(repo: Path) -> None:
         raise ClaudeCloudError("Claude cloud dispatch requires a GitHub origin remote")
 
 
-def _cloud_prompt(task: TaskItem, *, role: str, branch: str, invocation_id: str = "") -> str:
+def _cloud_prompt(
+    task: TaskItem,
+    *,
+    role: str,
+    branch: str,
+    invocation_id: str = "",
+    context: str = "",
+) -> str:
     completion = f"{_COMPLETION_PREFIX} {task.task_id}"
     feedback = f"\n\nCurrent reviewer/validator feedback:\n{task.feedback}" if task.feedback else ""
+    bounded_context = (
+        f"\n\nAuthoritative bounded coordination context supplied by Ralph:\n{context}"
+        if context
+        else ""
+    )
     return (
         "You are the implementation worker for the AskRex Ralph development loop. "
         "Read and follow CLAUDE.md and all repository agent instructions before editing. "
@@ -218,7 +230,7 @@ def _cloud_prompt(task: TaskItem, *, role: str, branch: str, invocation_id: str 
         "commit or session message instead.\n\n"
         f"Role: {role}\nTask ID: {task.task_id}\n"
         f"AskRex-Orchestrator-Invocation-ID: {invocation_id}\n\n"
-        f"Task:\n{task.prompt}{feedback}"
+        f"Task:\n{task.prompt}{feedback}{bounded_context}"
     )
 
 
@@ -228,6 +240,7 @@ def launch_cloud_session(
     role: str,
     task: TaskItem,
     invocation_id: str | None = None,
+    context: str = "",
     execute: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> ClaudeCloudSession:
     existing = read_cloud_session(config, role)
@@ -259,6 +272,7 @@ def launch_cloud_session(
                 role=role,
                 branch=branch,
                 invocation_id=cloud_invocation_id,
+                context=context,
             )
             if execute is None:
                 session_id, url = _launch_cloud_interactive(

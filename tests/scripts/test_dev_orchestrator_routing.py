@@ -439,14 +439,16 @@ def test_preferred_cloud_mode_dispatches_before_local_claude(
 
     config, _backend, _mobile = _safe_config(tmp_path)
     config = replace(config, claude_cloud_mode="preferred")
-    monkeypatch.setattr(
-        runner,
-        "launch_cloud_session",
-        lambda *args, **kwargs: SimpleNamespace(
+    launch_context: list[str] = []
+
+    def fake_launch(*_args, **kwargs):
+        launch_context.append(kwargs["context"])
+        return SimpleNamespace(
             session_id="session_cloud_pref",
             url="https://claude.ai/code/session_cloud_pref",
-        ),
-    )
+        )
+
+    monkeypatch.setattr(runner, "launch_cloud_session", fake_launch)
     calls = 0
 
     def execute(*_args, **_kwargs):
@@ -464,6 +466,7 @@ def test_preferred_cloud_mode_dispatches_before_local_claude(
 
     assert result.outcome == "continue"
     assert "session_cloud_pref" in result.summary
+    assert launch_context == ["ctx"]
     assert calls == 0
 
 
@@ -550,6 +553,109 @@ def test_existing_cloud_session_is_polled_without_local_model_execution(
 
     assert result.outcome == "continue"
     assert "still running" in result.summary
+
+
+def test_expired_mismatched_cloud_session_is_cleared_before_redispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.runner import CliAgentInvoker
+
+    config, _backend, _mobile = _safe_config(tmp_path)
+    config = replace(config, claude_cloud_mode="preferred", claude_cloud_timeout_minutes=1)
+    stale = SimpleNamespace(
+        task_id="OLD-CLOUD-TASK",
+        session_id="session_stale",
+        url="https://claude.ai/code/session_stale",
+        launched_at="2000-01-01T00:00:00+00:00",
+    )
+    cleared: list[str] = []
+    launches: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(runner, "read_cloud_session", lambda *_args: stale)
+    monkeypatch.setattr(
+        runner,
+        "clear_cloud_session",
+        lambda _config, role: cleared.append(role),
+    )
+
+    def fake_launch(*_args, **kwargs):
+        launches.append((kwargs["task"].task_id, kwargs["context"]))
+        return SimpleNamespace(
+            session_id="session_current",
+            url="https://claude.ai/code/session_current",
+        )
+
+    monkeypatch.setattr(runner, "launch_cloud_session", fake_launch)
+
+    result = CliAgentInvoker(
+        config,
+        execute=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError(
+                "expired mismatched cloud state should redispatch before local execution"
+            )
+        ),
+        allow_test_executor=True,
+    ).implement(
+        "backend",
+        WorkerState("backend"),
+        TaskItem("CURRENT-TASK", "Continue current work"),
+        "current bounded context",
+        "sonnet",
+    )
+
+    assert result.outcome == "continue"
+    assert cleared == ["backend"]
+    assert launches == [("CURRENT-TASK", "current bounded context")]
+    assert "session_current" in result.summary
+
+
+def test_live_mismatched_cloud_session_still_blocks_new_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.runner import AgentInvocationError, CliAgentInvoker
+
+    config, _backend, _mobile = _safe_config(tmp_path)
+    config = replace(config, claude_cloud_mode="preferred")
+    live = SimpleNamespace(
+        task_id="OLD-CLOUD-TASK",
+        session_id="session_live",
+        url="https://claude.ai/code/session_live",
+        launched_at="2099-01-01T00:00:00+00:00",
+    )
+    cleared: list[str] = []
+    monkeypatch.setattr(runner, "read_cloud_session", lambda *_args: live)
+    monkeypatch.setattr(
+        runner,
+        "clear_cloud_session",
+        lambda _config, role: cleared.append(role),
+    )
+
+    with pytest.raises(AgentInvocationError) as caught:
+        CliAgentInvoker(
+            config,
+            execute=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("live mismatched session must block local execution")
+            ),
+            allow_test_executor=True,
+        ).implement(
+            "backend",
+            WorkerState("backend"),
+            TaskItem("CURRENT-TASK", "Continue current work"),
+            "ctx",
+            "sonnet",
+        )
+
+    assert caught.value.provider == "claude_cloud"
+    assert caught.value.kind == "invalid_state"
+    assert cleared == []
 
 
 def test_implementation_falls_back_to_codex_when_claude_is_usage_limited(tmp_path: Path) -> None:
