@@ -27,6 +27,7 @@ from rex.capabilities.recovery import (
 )
 from rex.capabilities.registry import Capability
 from rex.capabilities.retrieval import CapabilityRetriever
+from rex.runtime.speculation import PrefetchHandle, SpeculativePrefetcher
 
 from .execution import _is_auth_error as _is_auth_error
 from .execution import _is_transient_error as _is_transient_error
@@ -86,6 +87,13 @@ class ToolDispatcher:
             openapi_candidates=openapi_candidates,
             config=config,
         )
+        # Speculatively prefetches only currently healthy/permitted read-only
+        # candidates from this same ranked selection, through this dispatcher's
+        # own canonical `dispatch()` -> `ToolExecutionLifecycle` path (US-101).
+        # Mutating/sensitive/prohibited/disabled/unauthorized tools are never
+        # eligible and are always dispatched through the ordinary single call
+        # below.
+        self._prefetcher = SpeculativePrefetcher(registry.capability_registry, self)
 
     # ------------------------------------------------------------------
     # Public API
@@ -184,8 +192,54 @@ class ToolDispatcher:
             logger.exception("tool_dispatcher: failed to resolve permissions for recovery")
             return frozenset()
 
+    def begin_speculative_prefetch(
+        self,
+        message: str,
+        *,
+        user_id: str | None = None,
+        granted_permissions: set[str] | frozenset[str] | None = None,
+        scope: str = "user",
+    ) -> PrefetchHandle | None:
+        """Start bounded background dispatch while routing is still resolving (US-101).
+
+        Uses a fast, semantic-free lexical pre-ranking so eligible read-only
+        candidates can begin dispatching in the background *before* the
+        authoritative hybrid-ranked :meth:`select_tools_for_user` decision
+        finishes resolving, rather than only after routing has already
+        selected the final tool list. Callers pass the returned handle to
+        :meth:`execute_tools` (``routing_prefetch=``); it is revalidated and
+        discarded there exactly like any other speculative result if it does
+        not match the final selection.
+        """
+        permissions = self._resolve_permissions_for_recovery(user_id, granted_permissions)
+        fast_matches = self._capability_retriever.retrieve_lexical_only(
+            message, user_id=user_id, granted_permissions=permissions
+        )
+        candidate_ids = [
+            match.capability.id
+            for match in fast_matches
+            if self._prefetcher.eligible(
+                match.capability.id, user_id=user_id, granted_permissions=permissions
+            )
+        ]
+        if not candidate_ids:
+            return None
+        return self._prefetcher.begin(
+            candidate_ids,
+            user_id=user_id or "",
+            scope=scope,
+            granted_permissions=permissions,
+            args_by_capability={name: {"transcript": message} for name in candidate_ids},
+        )
+
     def execute_tools(
-        self, tools: list[Tool], message: str, *, user_id: str | None = None
+        self,
+        tools: list[Tool],
+        message: str,
+        *,
+        user_id: str | None = None,
+        scope: str = "user",
+        routing_prefetch: PrefetchHandle | None = None,
     ) -> dict[str, Any]:
         """Invoke *tools* with timeout + one-retry on transient errors.
 
@@ -199,30 +253,83 @@ class ToolDispatcher:
         * All invocations are logged with tool name, duration, and
           success/failure.
 
+        Before the sequential loop, any currently healthy/permitted read-only
+        candidates among *tools* are speculatively prefetched concurrently
+        under a strict bounded budget (US-101) while this turn's cancellation
+        is still observed. Each candidate's speculative payload is discarded
+        unless it revalidates identity/scope/permission/freshness immediately
+        before use; anything ineligible (mutating, sensitive, disabled,
+        unauthorized) always falls through to the single ordinary dispatch
+        call below and is never spuriously called twice.
+
         Args:
             tools:   Tools to execute (from :meth:`select_tools`).
             message: The user message passed as ``transcript`` kwarg.
             user_id: Active user identifier forwarded to each tool handler as
                      ``_user_id`` so that user-scoped tools (e.g. email) can
                      enforce per-user access control.
+            scope:   Current turn's immutable data/authority scope (e.g.
+                     ``TurnScope.USER``/``TurnScope.HOUSEHOLD`` value), used
+                     to revalidate a speculative result before it is used.
+            routing_prefetch: An in-flight handle from
+                     :meth:`begin_speculative_prefetch`, started while routing
+                     was still resolving. When absent, an ordinary blocking
+                     prefetch is started here for *tools* instead (unchanged
+                     legacy behavior for callers that never begin one early).
 
         Returns:
             Dict mapping tool name to its result (or error/timeout string).
         """
+        granted_permissions = self._resolve_permissions_for_recovery(user_id, None)
+        if routing_prefetch is not None:
+            speculative_outcome = self._prefetcher.finish(routing_prefetch)
+        else:
+            eligible_names = [
+                tool.name
+                for tool in tools
+                if self._prefetcher.eligible(
+                    tool.name, user_id=user_id, granted_permissions=granted_permissions
+                )
+            ]
+            speculative_outcome = None
+            if eligible_names:
+                speculative_outcome = self._prefetcher.prefetch(
+                    eligible_names,
+                    user_id=user_id or "",
+                    scope=scope,
+                    granted_permissions=granted_permissions,
+                    args_by_capability={name: {"transcript": message} for name in eligible_names},
+                )
+
         results: dict[str, Any] = {}
         for tool in tools:
             start = time.monotonic()
-            result = self.dispatch(
-                tool.name,
-                {"transcript": message},
-                {"user_id": user_id} if user_id is not None else {},
-            )
+            consumed = None
+            if speculative_outcome is not None:
+                # Re-resolve permissions immediately before use rather than
+                # trusting the snapshot taken before prefetch started.
+                current_permissions = self._resolve_permissions_for_recovery(user_id, None)
+                consumed = self._prefetcher.consume(
+                    speculative_outcome.get(tool.name),
+                    user_id=user_id or "",
+                    scope=scope,
+                    granted_permissions=current_permissions,
+                )
+            if consumed is not None:
+                result = consumed
+            else:
+                result = self.dispatch(
+                    tool.name,
+                    {"transcript": message},
+                    {"user_id": user_id} if user_id is not None else {},
+                )
             duration = time.monotonic() - start
             logger.info(
-                "tool_dispatcher: %r %.3fs %s",
+                "tool_dispatcher: %r %.3fs %s%s",
                 tool.name,
                 duration,
                 "ok" if result.success else result.status,
+                " (speculative)" if consumed is not None else "",
             )
             if result.success:
                 results[tool.name] = result.output
@@ -266,6 +373,16 @@ class ToolDispatcher:
         from rex.mobile_api.action_context import authorized_mobile_tool  # noqa: PLC0415
 
         available = self._config is None or tool in self._registry.available_tools(self._config)
+        timeout_seconds = self._timeout_seconds
+        if context and context.get("speculative"):
+            # A speculative candidate's own dispatch call must never outlive
+            # the speculation budget that launched it (US-101): otherwise an
+            # abandoned/timed-out candidate keeps running under the ordinary,
+            # much longer dispatcher timeout and occupies the bounded
+            # speculative worker pool well past its declared budget.
+            override = context.get("_speculative_timeout_seconds")
+            if isinstance(override, int | float) and override > 0:
+                timeout_seconds = min(timeout_seconds, float(override))
         with authorized_mobile_tool(
             tool.name,
             capability_tags=tool.capability_tags,
@@ -276,7 +393,7 @@ class ToolDispatcher:
                 tool,
                 args,
                 context,
-                timeout_seconds=self._timeout_seconds,
+                timeout_seconds=timeout_seconds,
                 available=available,
                 runtime_config=self._config,
             )

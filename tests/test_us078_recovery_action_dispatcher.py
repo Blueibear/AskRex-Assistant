@@ -39,7 +39,7 @@ class _SelectedToolDispatcher(_RecoveryDispatcher):
     def select_tools_for_user(self, message, *, user_id):
         return [SimpleNamespace(name="existing_tool", operation="read")]
 
-    def execute_tools(self, selected, transcript, *, user_id):
+    def execute_tools(self, selected, transcript, *, user_id, scope="user"):
         return {"existing_tool": "working result"}
 
     def format_tool_context(self, results):

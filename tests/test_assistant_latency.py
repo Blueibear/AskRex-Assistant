@@ -156,7 +156,7 @@ class _ToolDispatcher:
     def select_tools(self, transcript):
         return [SimpleNamespace(operation="read")]
 
-    def execute_tools(self, selected, transcript, *, user_id):
+    def execute_tools(self, selected, transcript, *, user_id, scope="user"):
         time.sleep(0.001)
         return []
 

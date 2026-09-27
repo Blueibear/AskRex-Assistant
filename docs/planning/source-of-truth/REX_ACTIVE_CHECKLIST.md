@@ -117,6 +117,19 @@
 - [x] means current code plus tests/evidence verify the entire checklist item.
 - [ ] means missing, only partially implemented, or not yet reconciled against current `master`.
 - Do not rebuild an existing component under a second architecture. Reuse and harden the foundations below.
+- Safe self-extension is a foundational Rex product requirement. Its architecture must exist from the product baseline even when higher-risk extension paths remain disabled until prerequisite safety gates are verified.
+
+### Reusable Builder Runtime
+- [ ] Define provider-neutral/artifact-neutral build-task and build-result contracts shared by maintenance and self-extension flows
+- [ ] Reuse one isolated-workspace abstraction for Rex core maintenance and generated skill/plugin/MCP artifacts
+- [ ] Reuse deterministic validation, security/capability validation, provenance, approval, and rollback primitives across builders
+- [ ] Expose narrower Skill Builder, Plugin Builder, MCP Adapter Builder, and Automation Builder policies without granting ordinary runtime core-repository mutation authority
+- [ ] Keep Ralph/dev-orchestrator as a privileged consumer of shared builder primitives rather than the product-facing self-extension API itself
+- [ ] Ask for `local-only`, `hybrid`, or `cloud` per build unless the user explicitly saved a default; preserve an `ask every build` option
+- [ ] Treat `local-only` as a hard no-cloud boundary with no silent provider escalation
+- [ ] If a local-only build is blocked, explain the failure/local attempts, proposed frontier provider/model class, and bounded disclosure before requesting one-time cloud permission
+- [ ] Allow a per-user remembered build mode, but require separate explicit opt-in for remembered cloud fallback and keep it revocable/changeable in Settings
+- [ ] Persist build locality choice plus actual provider/model provenance in the audit/build record without private prompt content
 
 ### Verified Existing Foundations to Reuse
 - [x] Rex skill registry exists and persists registered skills

@@ -34,7 +34,9 @@
 
 ### Integrated execution order - 2026-08-08
 
-Use this order for task selection after the reconciliation above. Select the first story below that still has any unchecked acceptance criterion:
+> **Owner live-test-readiness override - 2026-09-15:** US-001 remains completed and is not reopened. Until renewed hands-on live testing begins, defer the currently first-open OpenClaw-only story US-114 and continue with the first incomplete non-OpenClaw story in this order; at the time of this decision that story is US-101. Keep the orchestrator OpenAI API worker disabled during this live-test-readiness push. Once live testing is underway, OpenClaw-only work may resume in a separate controlled workstream provided it does not become a concurrent writer on the active test-remediation branch or block live-test fixes.
+
+Use this order for task selection after the reconciliation above. Select the first story below that still has any unchecked acceptance criterion, subject to the owner override above:
 
 1. `US-063`
 2. `US-075`
@@ -3994,9 +3996,13 @@ grep -n "askrex.app\|Cloudflare\|CORS\|rate limit\|revocation" docs/deployment.m
 
 ---
 
+### Foundational self-extension rule
+
+Safe self-extension is part of the Rex product baseline, not an optional post-release enhancement. US-115 through US-117 remain dependency-ordered behind the policy, capability, evaluation, and verification foundations they require, but they are release-critical capabilities. Shared builder primitives must be reusable by Rex core maintenance and by narrower Skill/Plugin/MCP/Automation builders rather than duplicated into separate development systems. Generated builds must also preserve user control over model locality: ask per build for `local-only`, `hybrid`, or `cloud` unless a user explicitly saved a default; local-only is a hard no-cloud boundary, and any later cloud escalation requires an explanation plus explicit permission rather than silent fallback.
+
 ### US-115: Compose capability gaps declaratively
 
-**Priority:** P1 | **Workstream:** Capabilities / Planning / Self-extension | **Dependencies:** US-078, US-107, US-109, US-108.
+**Priority:** P0 | **Workstream:** Capabilities / Planning / Self-extension | **Dependencies:** US-078, US-107, US-109, US-108.
 
 **Description:** Satisfy supported gaps by composing existing permitted capabilities into a typed declarative graph before considering generated code.
 
@@ -4018,7 +4024,7 @@ grep -n "askrex.app\|Cloudflare\|CORS\|rate limit\|revocation" docs/deployment.m
 
 ### US-116: Build and assess Forge packages
 
-**Priority:** P1 | **Workstream:** Forge / Security / Evaluation | **Dependencies:** US-115; RexBench primitives from US-075 and later stories.
+**Priority:** P0 | **Workstream:** Forge / Security / Evaluation | **Dependencies:** US-115; RexBench primitives from US-075 and later stories.
 
 **Description:** Implement a disabled-by-default Forge build pipeline that creates a bounded capability package plus manifest/tests and assesses it without granting runtime authority.
 
@@ -4029,6 +4035,9 @@ grep -n "askrex.app\|Cloudflare\|CORS\|rate limit\|revocation" docs/deployment.m
 **Acceptance Criteria:**
 - [ ] Forge output is self-contained with manifest, I/O schema, requested capabilities/permissions/network/filesystem scope, risk classification, provenance, and executable tests.
 - [ ] Generation/build/test occurs in a constrained sandbox with bounded resources and no inherited user credentials or ambient production authority.
+- [ ] Before generation begins, Rex uses the user's explicit saved default or asks for `local-only`, `hybrid`, or `cloud`; the choice, bounded disclosure summary, and actual provider/model provenance are auditable without retaining private prompt content.
+- [ ] `local-only` prevents all cloud/frontier model routing for that build. If local models cannot complete or validate the build, Rex stops and explains the failure/local attempts, why cloud assistance may help, the proposed provider/model class, and what would be disclosed before requesting one-time escalation permission; denial leaves the build local/blocked rather than silently falling back.
+- [ ] Users can keep `ask every build` or explicitly remember a per-user mode. A remembered local choice never authorizes cloud fallback; remembering hybrid/cloud fallback requires a separate explicit opt-in and remains revocable/changeable in Settings.
 - [ ] Static/security analysis plus deterministic RexBench/adversarial tests pass before a package can become a promotion candidate.
 - [ ] Generated code receives no runtime authority merely by existing and cannot obtain more authority than the build/test environment could safely evaluate without explicit human approval.
 - [ ] Failed/malicious packages remain quarantined with inspectable evidence and cannot mutate Rex core/package state.
@@ -4040,7 +4049,7 @@ grep -n "askrex.app\|Cloudflare\|CORS\|rate limit\|revocation" docs/deployment.m
 
 ### US-117: Gate Forge promotion and rollback
 
-**Priority:** P1 | **Workstream:** Forge / Approval / Operations | **Dependencies:** US-116, US-109, US-106.
+**Priority:** P0 | **Workstream:** Forge / Approval / Operations | **Dependencies:** US-116, US-109, US-106.
 
 **Description:** Add risk-based promotion, canary observation, traceable human approval for wider authority, and atomic rollback/revocation for Forge packages.
 
@@ -4051,6 +4060,7 @@ grep -n "askrex.app\|Cloudflare\|CORS\|rate limit\|revocation" docs/deployment.m
 **Acceptance Criteria:**
 - [ ] Initial autonomous promotion is limited to read-only low-risk packages that passed every build/security/eval gate; mutation, network-write, credential, shell, filesystem-write, messaging/purchase, or elevated-risk authority requires explicit human approval.
 - [ ] Approval records the exact immutable package digest/version and granted authority; package changes invalidate prior approval.
+- [ ] Promotion/audit evidence records the build locality mode and actual provider/model provenance, and promotion never retroactively broadens the disclosure/model policy chosen for the build.
 - [ ] Canary activation monitors health, failures, lifecycle verification, and policy denials without private payload logging.
 - [ ] Threshold breach/manual revoke atomically disables the capability and restores the prior registry version without losing audit evidence.
 - [ ] Tests cover unauthorized promotion, digest change, canary failure, rollback, active-turn revocation, and per-user permission boundaries.
