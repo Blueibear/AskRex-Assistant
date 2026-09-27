@@ -451,7 +451,7 @@ def test_evidence_reaudit_task_id_and_read_only_prompt_is_coordination_only() ->
         "backend-roadmap-us086-evidence-reaudit-002",
         (
             "Perform a read-only bounded re-audit for ROADMAP-US086-MOBILE-ATTACHMENTS. "
-            "Do not modify or create any file, run physical tests, or touch deferred work."
+            "Do not modify or create files, run physical tests, or touch deferred work."
         ),
     )
 
