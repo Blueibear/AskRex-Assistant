@@ -446,6 +446,39 @@ def test_evidence_closeout_with_do_not_modify_or_create_any_file_is_coordination
     assert _is_coordination_only_task(task) is True
 
 
+def test_evidence_reaudit_task_id_and_read_only_prompt_is_coordination_only() -> None:
+    task = TaskItem(
+        "backend-roadmap-us086-evidence-reaudit-002",
+        (
+            "Perform a read-only bounded re-audit for ROADMAP-US086-MOBILE-ATTACHMENTS. "
+            "Do not modify or create any file, run physical tests, or touch deferred work."
+        ),
+    )
+
+    assert _is_coordination_only_task(task) is True
+
+
+def test_read_only_evidence_audit_with_punctuation_variants_is_coordination_only() -> None:
+    task = TaskItem(
+        "backend-roadmap-us086-evidence_audit-003",
+        (
+            "Perform a read-only bounded evidence-audit. "
+            "Do not modify source/tests or change the accepted implementation."
+        ),
+    )
+
+    assert _is_coordination_only_task(task) is True
+
+
+def test_audit_without_explicit_no_mutation_boundary_is_not_coordination_only() -> None:
+    task = TaskItem(
+        "backend-security-audit-001",
+        "Audit the backend and implement any fixes you find.",
+    )
+
+    assert _is_coordination_only_task(task) is False
+
+
 def test_coordination_only_second_review_rejection_escalates_and_astra_can_close(
     tmp_path: Path, monkeypatch
 ) -> None:

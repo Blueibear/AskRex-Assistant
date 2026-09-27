@@ -71,22 +71,26 @@ def _state_from_dict(role: str, data: dict | None) -> WorkerState:
 
 
 _COORDINATION_ONLY_MARKERS = (
-    "coordination-only",
     "coordination only",
     "coordination closeout",
     "closeout evidence",
-    "evidence-closeout",
     "evidence closeout",
     "mailbox closeout",
+    "evidence audit",
+    "evidence reaudit",
+    "evidence re audit",
+    "read only bounded audit",
+    "read only bounded reaudit",
+    "read only bounded re audit",
 )
 
 _NO_PRODUCT_MUTATION_MARKERS = (
     "do not change the accepted implementation",
-    "do not modify backend source/tests",
-    "do not modify source/tests",
+    "do not modify backend source tests",
+    "do not modify source tests",
     "do not modify source",
     "do not modify or create any file",
-    "do not change source/tests",
+    "do not change source tests",
     "no implementation change",
     "no source changes",
     "without changing implementation",
@@ -95,8 +99,15 @@ _NO_PRODUCT_MUTATION_MARKERS = (
 )
 
 
-def _is_coordination_only_task(task: TaskItem) -> bool:
+def _task_classification_text(task: TaskItem) -> str:
     text = f"{task.task_id}\n{task.prompt}".casefold()
+    for punctuation in ("-", "_", "/"):
+        text = text.replace(punctuation, " ")
+    return " ".join(text.split())
+
+
+def _is_coordination_only_task(task: TaskItem) -> bool:
+    text = _task_classification_text(task)
     return any(marker in text for marker in _COORDINATION_ONLY_MARKERS) and any(
         marker in text for marker in _NO_PRODUCT_MUTATION_MARKERS
     )
