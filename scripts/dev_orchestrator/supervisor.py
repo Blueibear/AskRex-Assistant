@@ -395,6 +395,25 @@ class Supervisor:
                 resume_status=None,
             )
             self.save_state(state)
+        if (
+            state.status is WorkerStatus.BLOCKED_USER
+            and state.blocker_kind == "acceptance"
+            and state.task is None
+            and not self.config.observe_only
+        ):
+            queued = self._dequeue(role)
+            if queued is not None:
+                state = replace(
+                    state,
+                    status=WorkerStatus.IMPLEMENTING,
+                    task=queued,
+                    task_base_head=self._capture_task_base_head(role),
+                    blocked_reason="",
+                    blocker_kind="",
+                    resume_status=None,
+                    idle_context_fingerprint="",
+                )
+                self.save_state(state)
         if state.status is WorkerStatus.BLOCKED_USER and state.blocker_kind == "retest":
             if state.task is not None:
                 if state.task.task_id.lower() in {

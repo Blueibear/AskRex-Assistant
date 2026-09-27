@@ -1070,6 +1070,40 @@ def test_defensive_needs_user_cannot_pass_review(tmp_path: Path) -> None:
     assert state.blocker_kind == "human"
 
 
+def test_explicit_queued_work_resumes_acceptance_block_without_confirming_acceptance(
+    tmp_path: Path,
+) -> None:
+    invoker = FakeInvoker()
+    config = make_config(tmp_path, observe_only=False)
+    supervisor = Supervisor(config, invoker)
+    supervisor.save_state(
+        WorkerState(
+            role="mobile",
+            status=WorkerStatus.BLOCKED_USER,
+            blocker_kind="acceptance",
+            blocked_reason="physical and documentation acceptance still required",
+            resume_status=WorkerStatus.PLANNING,
+        )
+    )
+    supervisor.enqueue(
+        "mobile",
+        TaskItem("mobile-us086-attachments", "Implement the mobile attachment contract."),
+    )
+    invoker.add("mobile", "implement", result("continue", summary="implementation started"))
+
+    supervisor._run_role("mobile")
+
+    state = supervisor.load_state("mobile")
+    assert state.status is WorkerStatus.IMPLEMENTING
+    assert state.task == TaskItem(
+        "mobile-us086-attachments", "Implement the mobile attachment contract."
+    )
+    assert state.blocked_reason == ""
+    assert state.blocker_kind == ""
+    assert state.resume_status is None
+    assert not (config.coordination_root / "completion" / "mobile-acceptance.json").exists()
+
+
 def test_completion_retest_block_reconciles_after_testing_verifies(tmp_path: Path) -> None:
     invoker = FakeInvoker()
     config = make_config(tmp_path, observe_only=False)
