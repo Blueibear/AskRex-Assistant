@@ -246,6 +246,51 @@ def test_review_evidence_includes_matching_canonical_issue_outside_coordination_
     assert bundle.truncated is False
 
 
+def test_review_evidence_includes_roadmap_task_issue_status(tmp_path: Path) -> None:
+    repo = tmp_path / "backend"
+    base = _git_repo(repo)
+    head = _commit(repo, "base\nchanged\n")
+    config = _config(tmp_path, repo, [sys.executable, "-c", "print('OK')"])
+    assert run_iteration_validation(
+        config,
+        "backend",
+        "backend-roadmap-us086-evidence-packet-completion-003",
+        base_head=base,
+        head=head,
+    ).passed
+
+    issue = config.coordination_root / "issues" / "ROADMAP-US086-MOBILE-ATTACHMENTS.md"
+    issue.parent.mkdir(parents=True, exist_ok=True)
+    issue.write_text(
+        "# ROADMAP-US086-MOBILE-ATTACHMENTS\n\nStatus: open\nOwner: both\n",
+        encoding="utf-8",
+    )
+    state = WorkerState(
+        role="backend",
+        task=TaskItem(
+            "backend-roadmap-us086-evidence-packet-completion-003",
+            (
+                "Complete the bounded ROADMAP-US086-MOBILE-ATTACHMENTS evidence packet "
+                "without changing backend source."
+            ),
+        ),
+        task_base_head=base,
+    )
+
+    bundle = build_review_evidence(
+        config,
+        "backend",
+        state,
+        state.task,
+        "coordination snapshot",
+        "inv-roadmap-status",
+    )
+
+    assert "### issues/ROADMAP-US086-MOBILE-ATTACHMENTS.md" in bundle.text
+    assert "Status: open" in bundle.text
+    assert "Owner: both" in bundle.text
+
+
 def test_review_evidence_includes_task_relevant_outgoing_coordination(tmp_path: Path) -> None:
     repo = tmp_path / "backend"
     base = _git_repo(repo)

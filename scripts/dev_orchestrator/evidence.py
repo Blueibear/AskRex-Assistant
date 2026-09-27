@@ -107,6 +107,7 @@ def _task_coordination_anchors(task: TaskItem) -> tuple[str, ...]:
     anchors = {task.task_id.casefold()}
     task_text = f"{task.task_id}\n{task.prompt}\n{task.feedback}"
     for pattern in (
+        r"(?i)\bROADMAP-US\d+(?:-[A-Za-z0-9-]+)?\b",
         r"(?i)\bS\d+\b",
         r"(?i)\bTEST-\d+\b",
         r"(?i)\bUS-\d+\b",
