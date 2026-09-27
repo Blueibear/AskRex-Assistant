@@ -30,6 +30,19 @@ describe('US-125 setup wake-word UX', () => {
     expect(pageSource).toContain('Actual wake detection is still required')
   })
 
+  it('does not silently replace unavailable Hey Rex with an unrelated wake word', () => {
+    expect(pageSource).toContain("const PREFERRED_WAKE_WORD_ID = 'hey_rex'")
+    expect(pageSource).toContain('setPreferredWakeWordMissing(!preferredAvailable)')
+    expect(pageSource).toContain("return { ...previous, wakeWordId: '' }")
+    expect(pageSource).not.toContain("wakeWordId: available[0]?.id ?? ''")
+    expect(pageSource).toContain('explicitly choose another supported wake word')
+  })
+
+  it('only exposes the sample preview when the selected wake word has a sample', () => {
+    expect(pageSource).toContain('const canPreviewSample = selectedWakeWord?.has_sample === true')
+    expect(pageSource).toContain('{canPreviewSample && (')
+  })
+
   it('checks canonical readiness for the currently selected setup wake word', () => {
     expect(pageSource).toContain('window.rex.getSetupWakeWordStatus(data.wakeWordId)')
     expect(pageSource).toContain('[data.wakeWordId, wakeWordsLoading]')

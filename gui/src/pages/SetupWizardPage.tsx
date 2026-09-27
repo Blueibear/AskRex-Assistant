@@ -72,6 +72,7 @@ interface WakeWordStepProps extends StepProps {
   wakeWords: WakeWordInfo[]
   loading: boolean
   inventoryError: string
+  preferredWakeWordMissing: boolean
   previewing: boolean
   samplePlayed: boolean
   previewError: string
@@ -416,6 +417,7 @@ function StepWakeWord({
   wakeWords,
   loading,
   inventoryError,
+  preferredWakeWordMissing,
   previewing,
   samplePlayed,
   previewError,
@@ -425,6 +427,9 @@ function StepWakeWord({
   onPreview,
   onWakeWordChange
 }: WakeWordStepProps): React.ReactElement {
+  const selectedWakeWord = wakeWords.find((wakeWord) => wakeWord.id === data.wakeWordId)
+  const canPreviewSample = selectedWakeWord?.has_sample === true
+
   return (
     <div className="space-y-4">
       <p className="text-text-secondary text-sm">
@@ -451,14 +456,22 @@ function StepWakeWord({
         </select>
       </div>
       {inventoryError && <p className="text-red-400 text-sm">{inventoryError}</p>}
-      <button
-        type="button"
-        onClick={onPreview}
-        disabled={previewing || loading || !data.wakeWordId}
-        className="px-3 py-2 rounded-lg bg-surface-raised text-text-primary text-sm disabled:opacity-50"
-      >
-        {previewing ? 'Playing wake-word sample…' : 'Preview wake-word sample'}
-      </button>
+      {preferredWakeWordMissing && (
+        <p className="text-amber-300 text-sm">
+          Hey Rex is not available on this installation. Install or train a Hey Rex-capable
+          wake-word model, or explicitly choose another supported wake word.
+        </p>
+      )}
+      {canPreviewSample && (
+        <button
+          type="button"
+          onClick={onPreview}
+          disabled={previewing || loading}
+          className="px-3 py-2 rounded-lg bg-surface-raised text-text-primary text-sm disabled:opacity-50"
+        >
+          {previewing ? 'Playing wake-word sample…' : 'Preview wake-word sample'}
+        </button>
+      )}
       {samplePlayed && <p className="text-green-400 text-sm">Wake-word sample played</p>}
       {previewError && <p className="text-red-400 text-sm">{previewError}</p>}
       <p className="text-text-muted text-xs">
@@ -736,6 +749,7 @@ const STEPS = [
 ]
 const HOME_ASSISTANT_STEP = 8
 const VERIFY_STEP = 9
+const PREFERRED_WAKE_WORD_ID = 'hey_rex'
 const DONE_STEP = 10
 
 interface SetupWizardPageProps {
@@ -767,6 +781,7 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
   const [wakeWords, setWakeWords] = useState<WakeWordInfo[]>([])
   const [wakeWordsLoading, setWakeWordsLoading] = useState(true)
   const [wakeWordInventoryError, setWakeWordInventoryError] = useState('')
+  const [preferredWakeWordMissing, setPreferredWakeWordMissing] = useState(false)
   const [wakeWordPreviewing, setWakeWordPreviewing] = useState(false)
   const [wakeWordSamplePlayed, setWakeWordSamplePlayed] = useState(false)
   const [wakeWordPreviewError, setWakeWordPreviewError] = useState('')
@@ -906,6 +921,7 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
     let cancelled = false
     setWakeWordsLoading(true)
     setWakeWordInventoryError('')
+    setPreferredWakeWordMissing(false)
 
     window.rex.listWakeWords()
       .then((result) => {
@@ -917,14 +933,19 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
         }
         const available = result.wake_words ?? []
         setWakeWords(available)
+        const preferredAvailable = available.some(
+          (wakeWord) => wakeWord.id === PREFERRED_WAKE_WORD_ID
+        )
+        setPreferredWakeWordMissing(!preferredAvailable)
         setData((previous) => {
           if (available.some((wakeWord) => wakeWord.id === previous.wakeWordId)) return previous
-          return { ...previous, wakeWordId: available[0]?.id ?? '' }
+          return { ...previous, wakeWordId: '' }
         })
       })
       .catch(() => {
         if (!cancelled) {
           setWakeWords([])
+          setPreferredWakeWordMissing(false)
           setWakeWordInventoryError('Unable to load wake words.')
         }
       })
@@ -1344,6 +1365,7 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
             wakeWords={wakeWords}
             loading={wakeWordsLoading}
             inventoryError={wakeWordInventoryError}
+            preferredWakeWordMissing={preferredWakeWordMissing}
             previewing={wakeWordPreviewing}
             samplePlayed={wakeWordSamplePlayed}
             previewError={wakeWordPreviewError}
