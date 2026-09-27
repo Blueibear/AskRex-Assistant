@@ -1,6 +1,10 @@
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { describe, expect, it } from 'vitest'
+import {
+  hasWakeWordSample,
+  resolveSetupWakeWordId
+} from '../src/pages/setupWizardModel'
 
 function source(relativePath: string): string {
   return readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), 'utf8')
@@ -33,14 +37,20 @@ describe('US-125 setup wake-word UX', () => {
   it('does not silently replace unavailable Hey Rex with an unrelated wake word', () => {
     expect(pageSource).toContain("const PREFERRED_WAKE_WORD_ID = 'hey_rex'")
     expect(pageSource).toContain('setPreferredWakeWordMissing(!preferredAvailable)')
-    expect(pageSource).toContain("return { ...previous, wakeWordId: '' }")
-    expect(pageSource).not.toContain("wakeWordId: available[0]?.id ?? ''")
     expect(pageSource).toContain('explicitly choose another supported wake word')
+    expect(resolveSetupWakeWordId([{ id: 'hey_jarvis' }], 'hey_rex')).toBe('')
+    expect(resolveSetupWakeWordId([{ id: 'hey_jarvis' }], 'hey_jarvis')).toBe('hey_jarvis')
   })
 
   it('only exposes the sample preview when the selected wake word has a sample', () => {
-    expect(pageSource).toContain('const canPreviewSample = selectedWakeWord?.has_sample === true')
+    expect(pageSource).toContain('const canPreviewSample = hasWakeWordSample(selectedWakeWord)')
     expect(pageSource).toContain('{canPreviewSample && (')
+    expect(hasWakeWordSample({ id: 'hey_jarvis', name: 'Hey Jarvis', engine: 'openwakeword' })).toBe(
+      false
+    )
+    expect(
+      hasWakeWordSample({ id: 'hey_rex', name: 'Hey Rex', engine: 'custom_onnx', has_sample: true })
+    ).toBe(true)
   })
 
   it('checks canonical readiness for the currently selected setup wake word', () => {

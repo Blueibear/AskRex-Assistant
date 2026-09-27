@@ -3,7 +3,9 @@ import type { SetupAudioDevice, VoiceInfo, WakeWordInfo, WakeWordStatus } from '
 import {
   buildSetupSubmission,
   createVoiceVerificationState,
+  hasWakeWordSample,
   reduceVoiceVerification,
+  resolveSetupWakeWordId,
   type VoiceVerificationEvent,
   type VoiceVerificationStage,
   type VoiceVerificationState
@@ -428,7 +430,7 @@ function StepWakeWord({
   onWakeWordChange
 }: WakeWordStepProps): React.ReactElement {
   const selectedWakeWord = wakeWords.find((wakeWord) => wakeWord.id === data.wakeWordId)
-  const canPreviewSample = selectedWakeWord?.has_sample === true
+  const canPreviewSample = hasWakeWordSample(selectedWakeWord)
 
   return (
     <div className="space-y-4">
@@ -938,8 +940,8 @@ export function SetupWizardPage({ onComplete }: SetupWizardPageProps): React.Rea
         )
         setPreferredWakeWordMissing(!preferredAvailable)
         setData((previous) => {
-          if (available.some((wakeWord) => wakeWord.id === previous.wakeWordId)) return previous
-          return { ...previous, wakeWordId: '' }
+          const wakeWordId = resolveSetupWakeWordId(available, previous.wakeWordId)
+          return wakeWordId === previous.wakeWordId ? previous : { ...previous, wakeWordId }
         })
       })
       .catch(() => {

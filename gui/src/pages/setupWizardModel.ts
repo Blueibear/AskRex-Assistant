@@ -1,4 +1,9 @@
-import type { SetupCompletePayload, TurnStatusUpdate, VoiceTranscriptEntry } from '../types/ipc'
+import type {
+  SetupCompletePayload,
+  TurnStatusUpdate,
+  VoiceTranscriptEntry,
+  WakeWordInfo
+} from '../types/ipc'
 
 export interface SetupFormData {
   username: string
@@ -21,6 +26,17 @@ export interface SetupFormData {
 
 export interface SetupSubmissionOptions {
   deferHomeAssistant?: boolean
+}
+
+export function resolveSetupWakeWordId(
+  available: readonly Pick<WakeWordInfo, 'id'>[],
+  requestedId: string
+): string {
+  return available.some((wakeWord) => wakeWord.id === requestedId) ? requestedId : ''
+}
+
+export function hasWakeWordSample(wakeWord: WakeWordInfo | undefined): boolean {
+  return wakeWord?.has_sample === true
 }
 
 export type VoiceVerificationStage = 'wake' | 'capture' | 'stt' | 'turn' | 'tts' | 'playback'
