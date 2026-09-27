@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from scripts.dev_orchestrator.evidence import EvidenceError, _git, build_review_evidence
+from scripts.dev_orchestrator.evidence import (
+    EvidenceError,
+    _git,
+    _outgoing_coordination,
+    build_review_evidence,
+)
 from scripts.dev_orchestrator.types import OrchestratorConfig, TaskItem, WorkerState
 from scripts.dev_orchestrator.validation import (
     load_validation_receipt,
@@ -289,6 +294,54 @@ def test_review_evidence_includes_roadmap_task_issue_status(tmp_path: Path) -> N
     assert "### issues/ROADMAP-US086-MOBILE-ATTACHMENTS.md" in bundle.text
     assert "Status: open" in bundle.text
     assert "Owner: both" in bundle.text
+
+
+def test_outgoing_coordination_prioritizes_exact_named_messages_over_references(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "backend"
+    _git_repo(repo)
+    config = _config(tmp_path, repo, [sys.executable, "-c", "print('OK')"])
+    mobile_box = config.coordination_root / "mailbox" / "mobile"
+    supervisor_box = config.coordination_root / "mailbox" / "supervisor"
+    mobile_box.mkdir(parents=True)
+    supervisor_box.mkdir(parents=True)
+
+    exact_a = mobile_box / "MSG-aaa111-backend.md"
+    exact_b = mobile_box / "MSG-bbb222-backend.md"
+    exact_a.write_text(
+        "# AskRex Coordination Message\n\n"
+        "From: backend\nTo: mobile\nRelated: ROADMAP-US086-MOBILE-ATTACHMENTS\n\n"
+        "## Message\nEXACT-A-BODY\n",
+        encoding="utf-8",
+    )
+    exact_b.write_text(
+        "# AskRex Coordination Message\n\n"
+        "From: backend\nTo: mobile\nRelated: ROADMAP-US086-MOBILE-ATTACHMENTS\n\n"
+        "## Message\nEXACT-B-BODY\n",
+        encoding="utf-8",
+    )
+    for index in range(12):
+        (supervisor_box / f"MSG-ref-{index:02d}-backend.md").write_text(
+            "# AskRex Coordination Message\n\n"
+            "From: backend\nTo: supervisor\nRelated: ROADMAP-US086-MOBILE-ATTACHMENTS\n\n"
+            "## Message\n"
+            "Please mirror MSG-aaa111-backend.md and MSG-bbb222-backend.md.\n",
+            encoding="utf-8",
+        )
+
+    task = TaskItem(
+        "backend-roadmap-us086-evidence-packet-completion-003",
+        (
+            "Complete ROADMAP-US086-MOBILE-ATTACHMENTS using full "
+            "MSG-aaa111-backend.md and MSG-bbb222-backend.md."
+        ),
+    )
+
+    outgoing = _outgoing_coordination(config, "backend", task)
+
+    assert "EXACT-A-BODY" in outgoing
+    assert "EXACT-B-BODY" in outgoing
 
 
 def test_review_evidence_includes_task_relevant_outgoing_coordination(tmp_path: Path) -> None:

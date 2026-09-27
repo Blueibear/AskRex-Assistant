@@ -138,7 +138,17 @@ def _outgoing_coordination(config: OrchestratorConfig, role: str, task: TaskItem
                 searchable = f"{path.name.casefold()}\n{related}\n{text.casefold()}"
                 if not any(anchor in searchable for anchor in anchors):
                     continue
-                explicit = int(any(anchor in searchable for anchor in explicit_message_anchors))
+                filename = path.name.casefold()
+                exact_explicit = int(
+                    any(
+                        filename == anchor or filename == f"{anchor}.md"
+                        for anchor in explicit_message_anchors
+                    )
+                )
+                referenced_explicit = int(
+                    any(anchor in searchable for anchor in explicit_message_anchors)
+                )
+                explicit = (exact_explicit * 2) + referenced_explicit
                 messages.append((explicit, path.stat().st_mtime_ns, path, text))
     except OSError as exc:
         raise EvidenceError("cannot read task-relevant coordination evidence") from exc
