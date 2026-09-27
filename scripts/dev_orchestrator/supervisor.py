@@ -441,11 +441,15 @@ class Supervisor:
         if self.config.observe_only:
             return
 
+        task_context_text = ""
+        if state.task is not None:
+            task_context_text = f"{state.task.task_id}\n{state.task.prompt}\n{state.task.feedback}"
         context = build_coordination_context(
             self.root,
             role,
             deferred_issue_ids=self.config.deferred_issue_ids,
             deferred_task_prefixes=self.config.deferred_task_prefixes,
+            task_text=task_context_text,
         )
         if state.task is None:
             queued = self._dequeue(role)
@@ -456,6 +460,13 @@ class Supervisor:
                     task_base_head=self._capture_task_base_head(role),
                     status=WorkerStatus.IMPLEMENTING,
                     idle_context_fingerprint="",
+                )
+                context = build_coordination_context(
+                    self.root,
+                    role,
+                    deferred_issue_ids=self.config.deferred_issue_ids,
+                    deferred_task_prefixes=self.config.deferred_task_prefixes,
+                    task_text=f"{queued.task_id}\n{queued.prompt}\n{queued.feedback}",
                 )
             else:
                 # IDLE is a transient scheduling state in an active campaign.

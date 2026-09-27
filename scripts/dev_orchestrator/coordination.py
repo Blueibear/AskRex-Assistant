@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import uuid
 from pathlib import Path
 
@@ -22,12 +23,65 @@ def _bounded_read(path: Path, max_chars: int = 12000) -> str:
     return text[:max_chars] + "\n[truncated by supervisor]\n"
 
 
+def _task_context_anchors(task_text: str) -> tuple[str, ...]:
+    lowered = task_text.casefold()
+    anchors: set[str] = set()
+    for pattern in (
+        r"(?i)\bROADMAP-US\d+(?:-[A-Z0-9-]+)?\b",
+        r"(?i)\bROADMAP-US\d+\b",
+        r"(?i)\bUS-?\d+\b",
+        r"(?i)\bTEST-\d+\b",
+        r"(?i)\bSTORY-S\d+(?:-[A-Z0-9-]+)?\b",
+        r"(?i)\bMSG-[A-Za-z0-9-]+(?:\.md)?\b",
+        r"(?i)\b[a-f0-9]{40}\b",
+    ):
+        for match in re.finditer(pattern, task_text):
+            anchors.add(match.group(0).casefold())
+    for match in re.finditer(r"(?i)\b[A-Za-z0-9_.-]+\.(?:md|json|txt)\b", task_text):
+        anchors.add(match.group(0).casefold())
+    if "roadmap-us" in lowered:
+        for match in re.finditer(r"(?i)\bROADMAP-US\d+\b", task_text):
+            anchors.add(match.group(0).casefold())
+    return tuple(sorted(anchor for anchor in anchors if anchor))
+
+
+def _rank_task_files(
+    paths: list[Path],
+    *,
+    task_text: str,
+    anchors: tuple[str, ...],
+    max_chars: int,
+    limit: int,
+) -> list[tuple[Path, str]]:
+    if not paths:
+        return []
+    task_lower = task_text.casefold()
+    ranked: list[tuple[int, int, int, Path, str]] = []
+    for path in paths:
+        text = _bounded_read(path, max_chars)
+        if not text:
+            continue
+        searchable = f"{path.name.casefold()}\n{text.casefold()}"
+        explicit = int(path.name.casefold() in task_lower)
+        hits = sum(1 for anchor in anchors if anchor in searchable)
+        if task_text and not explicit and hits == 0:
+            continue
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            mtime_ns = 0
+        ranked.append((explicit, hits, mtime_ns, path, text))
+    ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    return [(path, text) for _explicit, _hits, _mtime, path, text in ranked[:limit]]
+
+
 def build_coordination_context(
     root: Path,
     role: str,
     *,
     deferred_issue_ids: tuple[str, ...] = (),
     deferred_task_prefixes: tuple[str, ...] = (),
+    task_text: str = "",
 ) -> str:
     if role not in _ROLE_FILES:
         raise ValueError(f"unsupported coordination role: {role}")
@@ -48,10 +102,54 @@ def build_coordination_context(
         if deferred_task_prefixes:
             constraints.append("Deferred task prefixes: " + ", ".join(deferred_task_prefixes))
         sections.append("\n".join(constraints))
+    anchors = _task_context_anchors(task_text)
     mailbox = root / "mailbox" / role
     if mailbox.is_dir():
-        for path in sorted(mailbox.glob("*.md"))[-20:]:
-            sections.extend((f"## mailbox/{role}/{path.name}", _bounded_read(path, 6000)))
+        mailbox_paths = list(mailbox.glob("*.md"))
+        selected_mailbox: list[tuple[Path, str]] = []
+        seen_mailbox: set[Path] = set()
+        if task_text:
+            for path, text in _rank_task_files(
+                mailbox_paths,
+                task_text=task_text,
+                anchors=anchors,
+                max_chars=6000,
+                limit=12,
+            ):
+                selected_mailbox.append((path, text))
+                seen_mailbox.add(path)
+        recent_mailbox = sorted(
+            mailbox_paths,
+            key=lambda path: path.stat().st_mtime_ns if path.exists() else 0,
+            reverse=True,
+        )
+        for path in recent_mailbox:
+            if path in seen_mailbox:
+                continue
+            selected_mailbox.append((path, _bounded_read(path, 6000)))
+            seen_mailbox.add(path)
+            if len(selected_mailbox) >= 20:
+                break
+        for path, text in selected_mailbox[:20]:
+            sections.extend((f"## mailbox/{role}/{path.name}", text))
+
+    if task_text and anchors:
+        for directory, pattern, limit, max_chars in (
+            ("evidence", "*", 8, 5000),
+            ("validation", "*.json", 4, 5000),
+        ):
+            task_root = root / directory
+            if not task_root.is_dir():
+                continue
+            paths = [path for path in task_root.glob(pattern) if path.is_file()]
+            for path, text in _rank_task_files(
+                paths,
+                task_text=task_text,
+                anchors=anchors,
+                max_chars=max_chars,
+                limit=limit,
+            ):
+                sections.extend((f"## {directory}/{path.name}", text))
 
     deferred = {value.strip().lower() for value in deferred_issue_ids if value.strip()}
     issues = root / "issues"

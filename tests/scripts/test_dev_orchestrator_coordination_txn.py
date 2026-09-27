@@ -63,6 +63,64 @@ def test_coordination_context_strips_utf8_bom_from_external_markdown(tmp_path: P
     assert "# Message" in context
 
 
+def test_coordination_context_prioritizes_task_named_mail_and_matching_evidence(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "coord"
+    mailbox = root / "mailbox" / "backend"
+    evidence = root / "evidence"
+    validation = root / "validation"
+    mailbox.mkdir(parents=True)
+    evidence.mkdir()
+    validation.mkdir()
+    (root / "PROTOCOL.md").write_text("# Protocol\n", encoding="utf-8")
+    (root / "AGENT_BACKEND.md").write_text("Role: backend\n", encoding="utf-8")
+
+    for index in range(25):
+        (mailbox / f"MSG-recent-{index:02d}.md").write_text(
+            f"# Message\n\nUnrelated recent message {index}.\n",
+            encoding="utf-8",
+        )
+    named = mailbox / "MSG-explicit-us086.md"
+    named.write_text(
+        "# Message\n\nROADMAP-US086-MOBILE-ATTACHMENTS exact contract.\n",
+        encoding="utf-8",
+    )
+    receipt = evidence / "ROADMAP-US086-evidence-packet-operator-receipt.json"
+    receipt.write_text(
+        '{"story":"ROADMAP-US086-MOBILE-ATTACHMENTS","status":"incomplete_external_dependency"}',
+        encoding="utf-8",
+    )
+    opening = evidence / "ROADMAP-US086-opening-coordination-output.txt"
+    opening.write_text(
+        "ROADMAP-US086-MOBILE-ATTACHMENTS opening coordination exit 0",
+        encoding="utf-8",
+    )
+    unrelated = evidence / "TEST-999-unrelated.txt"
+    unrelated.write_text("TEST-999 unrelated", encoding="utf-8")
+    implementation_receipt = validation / "backend-roadmap-us086-mobile-attachments.json"
+    implementation_receipt.write_text(
+        '{"task_id":"roadmap-us086-mobile-attachments","head":"5ba14d1"}',
+        encoding="utf-8",
+    )
+
+    context = build_coordination_context(
+        root,
+        "backend",
+        task_text=(
+            "backend-roadmap-us086-evidence-packet-completion-003\n"
+            "Complete ROADMAP-US086-MOBILE-ATTACHMENTS using MSG-explicit-us086.md "
+            "and the authoritative evidence packet."
+        ),
+    )
+
+    assert "mailbox/backend/MSG-explicit-us086.md" in context
+    assert "evidence/ROADMAP-US086-evidence-packet-operator-receipt.json" in context
+    assert "evidence/ROADMAP-US086-opening-coordination-output.txt" in context
+    assert "validation/backend-roadmap-us086-mobile-attachments.json" in context
+    assert "evidence/TEST-999-unrelated.txt" not in context
+
+
 def test_coordination_context_omits_deferred_issue_and_shows_owner_constraints(
     tmp_path: Path,
 ) -> None:
@@ -97,8 +155,6 @@ def test_issue_update_must_match_reviewed_task_and_prevalidate_all_effects(tmp_p
 
     assert list((root / "mailbox" / "mobile").glob("*.md")) == []
     assert "Status: open" in issue.read_text(encoding="utf-8")
-
-
 
 
 def test_issue_update_accepts_descriptive_task_id_with_exact_issue_token(tmp_path: Path) -> None:
