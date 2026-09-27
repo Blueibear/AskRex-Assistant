@@ -79,6 +79,7 @@ _COORDINATION_ONLY_MARKERS = (
     "evidence audit",
     "evidence reaudit",
     "evidence re audit",
+    "evidence packet",
     "read only bounded audit",
     "read only bounded reaudit",
     "read only bounded re audit",
@@ -86,6 +87,7 @@ _COORDINATION_ONLY_MARKERS = (
 
 _NO_PRODUCT_MUTATION_MARKERS = (
     "do not change the accepted implementation",
+    "do not change backend source",
     "do not modify backend source tests",
     "do not modify source tests",
     "do not modify source",

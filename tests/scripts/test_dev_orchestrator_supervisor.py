@@ -470,6 +470,20 @@ def test_read_only_evidence_audit_with_punctuation_variants_is_coordination_only
     assert _is_coordination_only_task(task) is True
 
 
+def test_evidence_packet_completion_with_backend_source_freeze_is_coordination_only() -> None:
+    task = TaskItem(
+        "backend-roadmap-us086-evidence-packet-completion-003",
+        (
+            "Complete the bounded ROADMAP-US086-MOBILE-ATTACHMENTS evidence packet for the exact revision. "
+            "Do not change backend source, touch deferred issues, or reopen accepted findings. "
+            "Supply or persist the canonical issue/status, focused contract outputs, saved coordination checks, "
+            "and an authoritative receipt."
+        ),
+    )
+
+    assert _is_coordination_only_task(task) is True
+
+
 def test_audit_without_explicit_no_mutation_boundary_is_not_coordination_only() -> None:
     task = TaskItem(
         "backend-security-audit-001",
