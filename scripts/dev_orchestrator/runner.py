@@ -1300,7 +1300,14 @@ class CliAgentInvoker:
         prompt = task.prompt.casefold()
         if any(
             marker in task_id
-            for marker in ("evidence-closeout", "coordination-closeout", "coordination-only")
+            for marker in (
+                "evidence-closeout",
+                "evidence-audit",
+                "evidence-reaudit",
+                "evidence-packet",
+                "coordination-closeout",
+                "coordination-only",
+            )
         ):
             return False
         read_only = "read-only" in prompt or "read only" in prompt

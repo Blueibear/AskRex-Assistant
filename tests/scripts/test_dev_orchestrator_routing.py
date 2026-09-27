@@ -2068,6 +2068,20 @@ def test_run_command_environment_override_is_child_local(tmp_path: Path, monkeyp
     assert os.getenv("CLAUDE_CODE_OAUTH_TOKEN") is None
 
 
+def test_evidence_packet_completion_never_dispatches_to_cloud() -> None:
+    from scripts.dev_orchestrator.runner import CliAgentInvoker
+
+    task = TaskItem(
+        "backend-roadmap-us086-evidence-packet-completion-003",
+        (
+            "Complete the bounded evidence packet for the accepted revision. "
+            "Do not change backend source; persist coordination evidence only."
+        ),
+    )
+
+    assert CliAgentInvoker._cloud_task_allowed(task) is False
+
+
 def test_read_only_evidence_closeout_never_dispatches_to_cloud(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
