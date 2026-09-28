@@ -201,6 +201,10 @@ def test_runtime_probe_uses_absolute_isolated_managed_python_and_complete_import
         "torch",
         "whisper",
         "imageio_ffmpeg",
+        "openwakeword",
+        "scipy",
+        "onnxruntime",
+        "sklearn",
     ):
         assert module_name in probe_code
     kwargs = observed["kwargs"]
@@ -235,3 +239,14 @@ def test_packaged_runtime_uses_platform_specific_credential_backends() -> None:
     requirements = (ROOT / "requirements-electron-runtime.txt").read_text(encoding="utf-8")
     assert "pywin32==311; sys_platform == 'win32'" in requirements
     assert "keyring>=25.6.0; sys_platform == 'darwin'" in requirements
+
+
+def test_voice_runtime_includes_the_supported_wake_word_stack() -> None:
+    requirements = (ROOT / "requirements-electron-voice.txt").read_text(encoding="utf-8")
+    for requirement in (
+        "openwakeword==0.6.0",
+        "scipy==1.15.3",
+        "onnxruntime==1.22.0",
+        "scikit-learn==1.6.1",
+    ):
+        assert requirement in requirements

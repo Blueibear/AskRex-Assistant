@@ -61,6 +61,10 @@ REQUIRED_VOICE_DIST_INFO_PREFIXES = (
     "torch-",
     "openai_whisper-",
     "imageio_ffmpeg-",
+    "openwakeword-",
+    "scipy-",
+    "onnxruntime-",
+    "scikit_learn-",
 )
 REQUIRED_RUNTIME_IMPORTS = (
     "rex.background.supervisor",
@@ -70,6 +74,10 @@ REQUIRED_RUNTIME_IMPORTS = (
     "torch",
     "whisper",
     "imageio_ffmpeg",
+    "openwakeword",
+    "scipy",
+    "onnxruntime",
+    "sklearn",
 )
 RuntimeProbe = Callable[[Path], list[str]]
 
