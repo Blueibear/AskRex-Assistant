@@ -4078,7 +4078,7 @@ grep -n "askrex.app\|Cloudflare\|CORS\|rate limit\|revocation" docs/deployment.m
 - [ ] A macOS managed-runtime builder produces the packaged Python 3.11 runtime and required AskRex dependencies without relying on the Windows-only PowerShell runtime builder.
 - [ ] Packaged bridge resolution uses the bundled macOS Python runtime and writable `app.getPath('userData')` runtime/data roots; no source checkout or system Python is required.
 - [x] The credential authority has a native macOS Keychain backend, rejects non-native/plaintext keyring backends, preserves household/user/context isolation, and never writes secret values to the local index.
-- [ ] GitHub CI on a real macOS runner installs the project and passes an actual Keychain write/read/list/delete roundtrip. The new `macos-keychain-vault` job exists, but this box remains unchecked until that CI run is green on the delivery commit.
+- [x] GitHub CI on a real macOS runner installs the project and passes an actual Keychain write/read/list/delete roundtrip. Verified twice on the security delivery branch, including updated code head `38bb4fd`.
 - [ ] A macOS artifact CI job builds the distributable and runs package-content/bridge smoke checks against the artifact rather than the source tree.
 - [ ] Clean-install acceptance on a MacBook proves first launch, profile/session setup, provider credential save/readback through Keychain, typed chat, and clean quit/relaunch without terminal commands.
 - [ ] Voice features truthfully expose only what is supported by the packaged macOS audio/runtime dependencies; unsupported always-on/background behavior is clearly labeled rather than silently inherited from the Windows contract.
