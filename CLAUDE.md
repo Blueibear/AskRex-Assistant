@@ -191,6 +191,7 @@ The final consumer voice/runtime contract is `docs/architecture/end-user-install
 - Ralph completed-task duplicate identity is derived from the task ID, not arbitrary issue/story references inside the task prompt. Prompts routinely mention completed prerequisites and context; those references must not cause a genuinely new task to be rejected as already completed.
 - Ralph's OpenAI API worker is a subscription-availability fallback, not a generic local-runner fallback. Codex usage-limit/auth failures may use the API path when enabled; transient runner, timeout, invalid-output, and ordinary failed-invocation errors must stay on the subscription recovery path so a local Codex failure cannot silently consume API budget.
 - Ralph planning context must stay bounded and current. When no task is active, include only a small recent mailbox window; do not dump long historical mailbox traffic into every planner turn. Task-bound implementation/review context may use the broader anchor-ranked evidence path.
+- Ralph reset bookkeeping mirrors explicit platform-confirmed state. `confirm-resets` may move the cached remaining count down after consumption or up after platform replenishment; automatic usage-limit handling must never decrement, replenish, or invent resets on its own, and the final-reset reserve remains enforced unless the operator explicitly changes that policy.
 - Prefer clear, testable functions over clever code.
 - Keep changes small and reviewable.
 - Add logging for non-trivial behavior.

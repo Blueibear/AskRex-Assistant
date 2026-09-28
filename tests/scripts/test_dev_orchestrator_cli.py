@@ -703,6 +703,10 @@ def test_pause_activate_and_confirmed_reset_update_config(tmp_path: Path) -> Non
     assert load_config(root).observe_only is True
     record_confirmed_resets(root, 2)
     assert load_config(root).banked_resets_remaining == 2
+    record_confirmed_resets(root, 0)
+    assert load_config(root).banked_resets_remaining == 0
+    record_confirmed_resets(root, 1)
+    assert load_config(root).banked_resets_remaining == 1
 
 
 def test_main_status_activate_pause_and_confirm_resets(tmp_path: Path, capsys) -> None:

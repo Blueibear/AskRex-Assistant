@@ -71,8 +71,10 @@ def test_confirmed_reset_count_changes_only_from_confirmed_value() -> None:
     budget = UsageBudget()
     unchanged = budget.with_confirmed_remaining(3)
     consumed = budget.with_confirmed_remaining(2)
+    replenished = UsageBudget(banked_resets_remaining=0).with_confirmed_remaining(1)
     assert unchanged.banked_resets_remaining == 3
     assert consumed.banked_resets_remaining == 2
+    assert replenished.banked_resets_remaining == 1
 
 
 def test_claude_usage_limit_requests_user_without_spending_codex_reset(tmp_path: Path) -> None:

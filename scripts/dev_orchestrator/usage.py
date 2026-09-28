@@ -15,10 +15,14 @@ class UsageBudget:
     reserve_last_reset: bool = True
 
     def with_confirmed_remaining(self, remaining: int) -> "UsageBudget":
+        """Replace the cached count with an operator-confirmed platform value.
+
+        The platform can replenish resets, so a fresh confirmed count may move
+        either down after consumption or up after replenishment. Automatic
+        usage-limit handling never calls this method to invent or spend resets.
+        """
         if remaining < 0:
             raise ValueError("confirmed reset count cannot be negative")
-        if remaining > self.banked_resets_remaining:
-            raise ValueError("confirmed reset count cannot increase")
         return replace(self, banked_resets_remaining=remaining)
 
 
