@@ -182,9 +182,23 @@ export function registerSetupPreviewHandlers(): void {
     }
   })
 
-  ipcMain.handle('rex:previewWakeWordSample', async (_event, wakeWordId: string) =>
-    callJsonBridge('rex_wakeword_sample_bridge.py', { wake_word_id: wakeWordId })
-  )
+  ipcMain.handle('rex:previewWakeWordSample', async (_event, wakeWordId: string) => {
+    const selectedWakeWord = setupWakeWordInventory.get(wakeWordId)
+    if (!selectedWakeWord) {
+      return {
+        ok: false,
+        error: 'Choose a wake word from the available setup list before previewing it.'
+      }
+    }
+    if (selectedWakeWord.has_sample !== true) {
+      return {
+        ok: false,
+        has_sample: false,
+        error: 'No wake-word sample is available for this choice.'
+      }
+    }
+    return callJsonBridge('rex_wakeword_sample_bridge.py', { wake_word_id: wakeWordId })
+  })
 
   ipcMain.handle('rex:getSetupWakeWordStatus', (_event, wakeWordId: string): WakeWordStatus => {
     const selectedWakeWord = setupWakeWordInventory.get(wakeWordId)

@@ -26,4 +26,11 @@ describe('US-125 pre-auth setup preview boundary', () => {
     expect(source).toContain('allowedVoiceIds?.has(voiceId)')
     expect(source).toContain('Choose a voice from the available setup list before previewing it.')
   })
+
+  it('does not invoke the sample bridge for wake words without a declared sample', () => {
+    expect(source).toContain("ipcMain.handle('rex:previewWakeWordSample'")
+    expect(source).toContain('const selectedWakeWord = setupWakeWordInventory.get(wakeWordId)')
+    expect(source).toContain('selectedWakeWord.has_sample !== true')
+    expect(source).toContain('No wake-word sample is available for this choice.')
+  })
 })
