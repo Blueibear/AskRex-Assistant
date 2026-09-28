@@ -9,6 +9,8 @@ from .runner import AgentInvocationError
 from .storage import AtomicJsonStore
 from .types import AgentResult, OrchestratorConfig, TaskItem, WorkerState
 
+_SUBSCRIPTION_API_FALLBACK_KINDS = frozenset({"usage_limit", "auth"})
+
 
 def escalation_episode_key(role: str, task: TaskItem, state: WorkerState) -> str:
     return hashlib.sha256(f"{role}\0{task.task_id}\0{state.task_base_head}".encode()).hexdigest()
@@ -61,8 +63,11 @@ class ProviderRoutingInvoker:
         )
         try:
             return self.cli_invoker.review(role, state, task, context, selected_model)
-        except AgentInvocationError:
-            if not self.config.openai_worker_enabled:
+        except AgentInvocationError as exc:
+            if (
+                not self.config.openai_worker_enabled
+                or exc.kind not in _SUBSCRIPTION_API_FALLBACK_KINDS
+            ):
                 raise
             return self.openai_worker.review(
                 role,
@@ -75,8 +80,11 @@ class ProviderRoutingInvoker:
     def _sol_lead(self, role, state, context, task: TaskItem | None) -> AgentResult:
         try:
             subscription_result = self.cli_invoker.lead(role, state, context, task=task)
-        except AgentInvocationError:
-            if not self.config.openai_worker_enabled:
+        except AgentInvocationError as exc:
+            if (
+                not self.config.openai_worker_enabled
+                or exc.kind not in _SUBSCRIPTION_API_FALLBACK_KINDS
+            ):
                 raise
             subscription_result = None
         else:

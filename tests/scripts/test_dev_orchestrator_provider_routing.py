@@ -467,3 +467,36 @@ def test_done_claim_final_verification_bypasses_openai_even_when_enabled(
     assert openai.calls == []
     assert cli.calls == [("review", "backend", "FINAL-VERIFY-backend", SOL_MODEL)]
     assert supervisor.load_state("backend").status is WorkerStatus.DONE
+
+
+@pytest.mark.parametrize("kind", ["timeout", "transient", "invalid_output", "failed"])
+def test_review_does_not_spend_api_budget_for_local_codex_failures(
+    tmp_path: Path, kind: str
+) -> None:
+    cli = _FakeCli(review=[AgentInvocationError("codex", kind, "local runner failure")])
+    openai = _FakeOpenAI(review=[_result("pass")])
+    router, _config, cli, openai, _budget = _router(tmp_path, cli=cli, openai=openai)
+    task = TaskItem("B-1", "Review")
+
+    with pytest.raises(AgentInvocationError) as caught:
+        router.review("backend", WorkerState("backend"), task, "ctx", TERRA_MODEL)
+
+    assert caught.value.provider == "codex"
+    assert caught.value.kind == kind
+    assert openai.calls == []
+
+
+@pytest.mark.parametrize("kind", ["timeout", "transient", "invalid_output", "failed"])
+def test_planning_does_not_spend_api_budget_for_local_codex_failures(
+    tmp_path: Path, kind: str
+) -> None:
+    cli = _FakeCli(lead=[AgentInvocationError("codex", kind, "local runner failure")])
+    openai = _FakeOpenAI(lead=[_result("assign")])
+    router, _config, cli, openai, _budget = _router(tmp_path, cli=cli, openai=openai)
+
+    with pytest.raises(AgentInvocationError) as caught:
+        router.lead("backend", WorkerState("backend"), "ctx")
+
+    assert caught.value.provider == "codex"
+    assert caught.value.kind == kind
+    assert openai.calls == []
