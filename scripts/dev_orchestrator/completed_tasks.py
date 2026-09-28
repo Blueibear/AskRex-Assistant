@@ -9,7 +9,6 @@ from typing import Any
 from .storage import AtomicJsonStore
 from .types import TaskItem
 
-
 _WORK_KEY_PATTERNS = (
     ("US", re.compile(r"(?i)(?<![A-Z0-9])US[-_ ]?(\d{1,4})(?!\d)")),
     ("TEST", re.compile(r"(?i)(?<![A-Z0-9])TEST[-_ ]?(\d{1,4})(?!\d)")),
@@ -19,10 +18,16 @@ _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
 def canonical_work_keys(task: TaskItem) -> tuple[str, ...]:
-    text = f"{task.task_id}\n{task.prompt}"
-    keys = [f"TASK:{task.task_id.strip().casefold()}"]
+    """Return stable identity keys derived from the task identifier only.
+
+    Planner prompts routinely mention completed prerequisite or context issues.
+    Those references are descriptive context, not task identity, and must not
+    cause a genuinely new task to be rejected as already completed.
+    """
+    task_id = task.task_id.strip()
+    keys = [f"TASK:{task_id.casefold()}"]
     for prefix, pattern in _WORK_KEY_PATTERNS:
-        for match in pattern.finditer(text):
+        for match in pattern.finditer(task_id):
             keys.append(f"{prefix}-{int(match.group(1))}")
     return tuple(dict.fromkeys(keys))
 

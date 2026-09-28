@@ -188,6 +188,7 @@ The final consumer voice/runtime contract is `docs/architecture/end-user-install
 
 - Tests must not write, rewrite, or normalize tracked repository files (including generated reports and fixtures). Generate evidence in memory or temporary paths and compare it with tracked artifacts instead; a test run must leave the working tree unchanged.
 - Ralph iteration validation must stay proportional to the task diff. Small Python-only changes with changed regression tests may use scoped pytest/Ruff/syntax gates; small GUI TypeScript-only changes with changed GUI regression tests may use scoped Vitest/typecheck/ESLint gates. Mixed, broad, packaging, or otherwise unsupported diffs must fall back to the configured broader validation profile rather than silently weakening coverage.
+- Ralph completed-task duplicate identity is derived from the task ID, not arbitrary issue/story references inside the task prompt. Prompts routinely mention completed prerequisites and context; those references must not cause a genuinely new task to be rejected as already completed.
 - Prefer clear, testable functions over clever code.
 - Keep changes small and reviewable.
 - Add logging for non-trivial behavior.

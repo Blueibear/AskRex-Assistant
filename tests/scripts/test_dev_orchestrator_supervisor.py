@@ -1691,3 +1691,54 @@ def test_completed_task_remains_closed_when_reviewed_head_is_ancestor(
     )
     assert record is not None
     assert record["completed_head"] == completed_head
+
+
+def test_completed_task_prompt_reference_does_not_define_new_task_identity(
+    tmp_path: Path,
+) -> None:
+    config = make_config(tmp_path, observe_only=False)
+    repo = config.backend_root
+    assert repo is not None
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "tests@example.invalid"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "AskRex Tests"], cwd=repo, check=True)
+    (repo / "tracked.txt").write_text("baseline\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "baseline"], cwd=repo, check=True, capture_output=True)
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+
+    supervisor = Supervisor(config, FakeInvoker())
+    supervisor.completed_tasks.record(
+        "backend",
+        TaskItem("TEST-012", "Finish the first-run wake-word repair."),
+        completed_head=head,
+        source="independent_review",
+    )
+
+    security_task = TaskItem(
+        "backend-security-ha-macos-integration",
+        "TEST-012 has left active implementation. Integrate SECURITY-HA-MACOS next.",
+    )
+    assert (
+        supervisor.completed_tasks.matching_record(
+            "backend",
+            security_task,
+            repo=repo,
+            current_head=head,
+        )
+        is None
+    )
+
+    actual_reopen = TaskItem(
+        "backend-test-012-reopen",
+        "Investigate a genuine new TEST-012 regression.",
+    )
+    assert (
+        supervisor.completed_tasks.matching_record(
+            "backend",
+            actual_reopen,
+            repo=repo,
+            current_head=head,
+        )
+        is not None
+    )
