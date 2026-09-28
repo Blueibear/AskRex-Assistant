@@ -7,7 +7,7 @@ network exposure, service auth, packaging, or security controls.
 
 - Runtime settings belong in `config/rex_config.json`.
 - Secrets belong in the OS-backed credential vault (`rex.credential_vault`,
-  Windows DPAPI) — never in `rex_config.json` or GUI settings files. Plaintext
+  Windows DPAPI or macOS Keychain) — never in `rex_config.json` or GUI settings files. Plaintext
   reads require explicit unpackaged legacy/operator mode; packaged Electron
   strips and rejects that mode. New secret writes always use the vault.
 - Do not put secrets in source-controlled JSON config.
@@ -101,26 +101,16 @@ blank secret fields plus `hasCredential`/reference metadata.
 
 ## Credential Vault (S4)
 
-`rex/credential_vault.py` — Windows DPAPI-backed (`pywin32`'s `win32crypt`).
-Guarded exactly like `rex/windows_service.py`'s optional-pywin32 pattern:
-`VaultUnavailableError` on non-Windows or when pywin32 is missing on Windows.
+`rex/credential_vault.py` is the OS-backed desktop credential authority. Windows uses DPAPI (`pywin32`'s `win32crypt`); macOS uses the native Keychain through `keyring.backends.macOS`. Unsupported platforms fail closed with `VaultUnavailableError`.
 
 - **Scopes**: `"household"` (installation-wide secrets) and
   pre-vault global behavior for every existing unscoped caller) and
   `"user"` + a validated `user_id` (bound to one Rex profile). Each scope
-  encrypts with DPAPI entropy derived from scope, validated owner, opaque ref,
-  integration, authorized account, and slot. Stored metadata is checked
+  binds secrets to scope, validated owner, opaque ref,
+  integration, authorized account, and slot. Windows uses DPAPI entropy; macOS stores the same validated metadata inside the Keychain item. Stored metadata is checked
   against caller-expected context; swapping any dimension fails closed.
-- **Storage**: one JSON file of base64 DPAPI ciphertext + non-secret metadata
-  (key, integration, account, scope, owner, timestamps) per scope, under
-  `rex.runtime_paths`' existing household/private directories:
-  `<household_data_dir()>/credentials/vault.json` or
-  `<user_data_dir(user_id)>/credentials/vault.json`.
-- **Backend selection**: `get_credential_vault(scope=..., user_id=...)` picks
-  the real DPAPI backend on `win32`; every other platform raises
-  `VaultUnavailableError` — there is no implicit fallback in a production
-  code path. `InMemoryCredentialVault` exists only for tests
-  (`backend="memory"`), never selected implicitly.
+- **Storage**: Windows keeps base64 DPAPI ciphertext plus non-secret metadata in `vault.json` under the household/private runtime-data credentials directory. macOS keeps secret payloads in Keychain and stores only opaque credential references in `keychain-index.json` under the corresponding runtime-data directory.
+- **Backend selection**: `get_credential_vault(scope=..., user_id=...)` picks DPAPI on `win32` and the native macOS Keychain backend on `darwin`. The macOS path verifies that `keyring` actually selected `keyring.backends.macOS`; alternate/plaintext keyring backends fail closed. Unsupported platforms raise `VaultUnavailableError`. `InMemoryCredentialVault` exists only for tests (`backend="memory"`) and is never selected implicitly.
 - **Vault key convention**: the mapped env-var name from
   `CredentialManager.DEFAULT_CREDENTIAL_MAPPING` when one exists (e.g.
   service `openai` → key `OPENAI_API_KEY`), else the raw service/credential_ref
@@ -131,9 +121,9 @@ Guarded exactly like `rex/windows_service.py`'s optional-pywin32 pattern:
   `gui/src/main/credentialVault.ts` wraps the bridge call as a promise and
   rejects clearly on any failure (bridge spawn failure, non-zero exit,
   malformed JSON, or `{ok:false}` — never resolves on failure).
-- **Integrity**: interprocess locking prevents lost updates; writes use a
+- **Integrity**: Windows DPAPI storage uses interprocess locking; writes use a
   temporary file, flush/fsync, atomic replacement, and restrictive Windows ACL
-  verification. ACL hardening failure aborts the write.
+  verification. ACL hardening failure aborts the write. macOS keeps secret-bearing payloads in Keychain; its local index contains opaque references only.
 - **Migration**: `scripts/migrate_credentials_to_vault.py` is dry-run by
   default. Apply verifies ciphertext and registry readback before atomic source
   sanitation. It creates no plaintext backup or secret-derived output.

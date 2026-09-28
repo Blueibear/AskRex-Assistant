@@ -57,9 +57,10 @@ dependencies = [
     "edge-tts>=6.1.9",
     "pyttsx3>=2.90",
 
-    # Windows-only OS-backed credential vault (S4): DPAPI via pywin32.
-    # No effect on macOS/Linux installs (see rex/credential_vault.py).
+    # Windows DPAPI backend; macOS uses the native Keychain via keyring below.
     "pywin32>=311; sys_platform == 'win32'",
+    # Native macOS Keychain backend. The marker keeps it out of Windows/Linux installs.
+    "keyring>=25.6.0; sys_platform == 'darwin'",
 
     # OpenAI SDK: required base dependency, not an ML-only extra. It backs
     # both the cloud OpenAI/OpenRouter providers and the OpenAI-compatible

@@ -268,7 +268,7 @@ class Assistant:
         self._ha_bridge: HABridge | None = None
         if self._settings.ha_base_url and self._settings.ha_token:
             try:
-                self._ha_bridge = HABridge()
+                self._ha_bridge = HABridge(user_id=self._user_id)
                 logger.info("Home Assistant bridge initialized")
             except Exception as exc:
                 logger.warning("Failed to initialize Home Assistant bridge: %s", exc)

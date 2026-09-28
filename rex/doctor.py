@@ -231,8 +231,36 @@ def check_env_file(root: Path | None) -> CheckResult:
     )
 
 
+def check_credential_vault_backend() -> CheckResult:
+    """Report whether this platform has a production OS-backed credential vault."""
+    from rex.credential_vault import VaultUnavailableError, get_credential_vault
+
+    try:
+        vault = get_credential_vault()
+    except VaultUnavailableError as exc:
+        return CheckResult(
+            name="Credential Vault",
+            status=Status.WARNING,
+            message="Production credential vault unavailable",
+            details=str(exc),
+        )
+
+    backend_name = type(vault).__name__
+    if sys.platform == "darwin":
+        message = "macOS Keychain credential vault available"
+    elif sys.platform == "win32":
+        message = "Windows DPAPI credential vault available"
+    else:
+        message = f"OS-backed credential vault available ({backend_name})"
+    return CheckResult(
+        name="Credential Vault",
+        status=Status.OK,
+        message=message,
+    )
+
+
 def check_environment_variables() -> CheckResult:
-    """Check for presence of commonly required environment variables."""
+    """Check for legacy plaintext API-key environment variables."""
     # List of common API key environment variables
     # We don't hardcode specific key names, just check common patterns
     api_key_patterns = [
@@ -256,12 +284,12 @@ def check_environment_variables() -> CheckResult:
 
     if not present:
         return CheckResult(
-            name="API Keys",
-            status=Status.WARNING,
-            message="No API keys configured",
+            name="Legacy API Key Environment",
+            status=Status.INFO,
+            message="No plaintext API-key environment variables configured",
             details=(
-                "At least one API key is needed for full functionality. "
-                f"Missing: {', '.join(missing[:3])}..."
+                "This is expected when credentials are stored in the OS-backed vault. "
+                f"Legacy environment values absent: {', '.join(missing[:3])}..."
             ),
         )
 
@@ -1227,6 +1255,7 @@ def run_diagnostics(
     report.add(check_config_file(project_root))
     report.add(check_config_types(project_root))
     report.add(check_env_file(project_root))
+    report.add(check_credential_vault_backend())
     report.add(check_environment_variables())
     report.add(check_config_permissions(project_root))
 

@@ -103,7 +103,8 @@ Use this order for task selection after the reconciliation above. Select the fir
 65. `US-128`
 66. `US-129`
 67. `US-130`
-68. `US-118`
+68. `US-131`
+69. `US-118`
 
 **Dependency/security notes:** TurnEngine work must preserve the already-implemented explicit, fail-closed user identity contract from its first event. US-087 later proves the broader user/household model and James/Cole concurrency invariants. OpenClaw metadata never widens local authority. Mobile remains desktop-paired and least-privilege. All benchmark evidence must label whether it is deterministic/mock, local source runtime, live provider, packaged Windows artifact, or physical hardware/device.
 
@@ -4066,6 +4067,30 @@ grep -n "askrex.app\|Cloudflare\|CORS\|rate limit\|revocation" docs/deployment.m
 
 ---
 
+### US-131: Ship and verify the supported macOS desktop artifact
+
+**Priority:** P0 | **Workstream:** Release / macOS / Packaging / Security | **Dependencies:** US-015, US-033, US-124, and the OS-backed credential-vault security boundary. This story must complete before US-118 final production-readiness closure.
+
+**Description:** Make the advertised macOS desktop path real for household users. The supported MacBook experience must use a packaged Electron artifact with a managed Python 3.11 runtime, native macOS Keychain credential storage, and the same canonical Rex/TurnEngine/security boundaries as Windows; normal users must not need Homebrew, Python, Node.js, Git, a repository checkout, or plaintext credential fallback.
+
+**Acceptance Criteria:**
+- [ ] `gui/package.json` defines an explicit supported macOS Electron target and app icon/metadata; the produced artifact is installable on the supported Mac architecture(s).
+- [ ] A macOS managed-runtime builder produces the packaged Python 3.11 runtime and required AskRex dependencies without relying on the Windows-only PowerShell runtime builder.
+- [ ] Packaged bridge resolution uses the bundled macOS Python runtime and writable `app.getPath('userData')` runtime/data roots; no source checkout or system Python is required.
+- [x] The credential authority has a native macOS Keychain backend, rejects non-native/plaintext keyring backends, preserves household/user/context isolation, and never writes secret values to the local index.
+- [ ] GitHub CI on a real macOS runner installs the project and passes an actual Keychain write/read/list/delete roundtrip. The new `macos-keychain-vault` job exists, but this box remains unchecked until that CI run is green on the delivery commit.
+- [ ] A macOS artifact CI job builds the distributable and runs package-content/bridge smoke checks against the artifact rather than the source tree.
+- [ ] Clean-install acceptance on a MacBook proves first launch, profile/session setup, provider credential save/readback through Keychain, typed chat, and clean quit/relaunch without terminal commands.
+- [ ] Voice features truthfully expose only what is supported by the packaged macOS audio/runtime dependencies; unsupported always-on/background behavior is clearly labeled rather than silently inherited from the Windows contract.
+- [ ] README, INSTALL, RUNNING, `SURFACE-CLASSIFICATION.md`, and platform docs distinguish Windows household-voice requirements from the verified macOS desktop capabilities.
+- [ ] All required GitHub checks pass on the exact artifact-producing commit.
+
+**Validation commands/evidence:** macOS CI Keychain roundtrip; macOS Electron artifact build; packaged bridge smoke; clean-install MacBook acceptance record; `python -m rex doctor` showing `macOS Keychain credential vault available`.
+
+**Release rule:** Do not claim the macOS desktop app is supported merely because the Python package imports on macOS or because Electron dependencies contain Darwin binaries. A real packaged artifact plus native Keychain and clean-install evidence are required.
+
+---
+
 ### US-115: Compose capability gaps declaratively
 
 **Priority:** P1 | **Workstream:** Capabilities / Planning / Self-extension | **Dependencies:** US-078, US-107, US-109, US-108.
@@ -4211,6 +4236,7 @@ A story is not done until all of these CI jobs are green on the PR that delivers
 | `integration` | `pytest -m integration -q` | Existing CI. |
 | `gui-typecheck` | `cd gui && npm run typecheck` | Existing CI. |
 | `gui-build` | `cd gui && npm run build` | Existing CI. |
+| `macos-keychain-vault` | macOS runner: credential-vault tests + real Keychain write/read/list/delete roundtrip | Required for credential-vault/platform changes and US-131. |
 | `electron-smoke` | `bash tests/smoke/test_electron_package.sh` | Promoted to required for renderer/bridge changes. |
 | `wheel-smoke` | `python scripts/check_wheel_contents.py` | Introduced by US-015/US-033. |
 | `console-scripts-smoke` | `pytest tests/test_console_scripts_smoke.py` | Introduced by US-019. |

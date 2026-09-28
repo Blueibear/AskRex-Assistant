@@ -152,11 +152,11 @@ class TestHABridgeConfirmationAndUndo:
         assert result is not None
         assert "bedroom" in result.lower() or "turn on" in result.lower()
 
-    def test_process_transcript_pushes_to_history(self):
+    def test_process_transcript_does_not_record_unverified_action(self):
         bridge = _make_bridge()
         bridge._session.request.return_value = MagicMock(status_code=200, json=lambda: {})
         bridge.process_transcript("turn on the bedroom light")
-        assert len(bridge._command_history) == 1
+        assert len(bridge._command_history) == 0
 
     def test_undo_last_reverses_command(self):
         bridge = _make_bridge()

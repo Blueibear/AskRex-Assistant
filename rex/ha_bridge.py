@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import importlib.util
 import logging
 import re
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +20,13 @@ from rex.ha.command_history import CommandHistory
 from rex.ha.device_aliases import AliasResolver
 from rex.ha.device_state import get_device_state
 from rex.ha.error_recovery import suggest_alternatives
+from rex.ha.mutation_service import (
+    HAMutation,
+    HAMutationService,
+    HAOutcome,
+    HARisk,
+    classify_ha_risk,
+)
 
 try:
     import requests as _imported_requests
@@ -80,6 +89,29 @@ class IntentMatch:
     source: str
 
 
+@dataclass(frozen=True)
+class _PendingHAConfirmation:
+    """One action-bound confirmation that may be consumed by the next user turn."""
+
+    mutation: HAMutation
+    token: str
+    intent: IntentMatch
+
+
+class _BridgeMutationClient:
+    """Adapter that gives HAMutationService the minimal HA client contract."""
+
+    def __init__(self, bridge: HABridge) -> None:
+        self._bridge = bridge
+
+    def call_service(self, domain: str, service: str, data: dict[str, Any]) -> None:
+        self._bridge._request("POST", f"/api/services/{domain}/{service}", json=data)
+
+    def get_state(self, entity_id: str) -> dict[str, Any] | None:
+        value = self._bridge._request("GET", f"/api/states/{entity_id}")
+        return value if isinstance(value, dict) else None
+
+
 class HABridge:
     """Translate Rex intents into Home Assistant service calls."""
 
@@ -108,6 +140,14 @@ class HABridge:
     _LOCK_PATTERN = re.compile(
         r"\b(lock|unlock)\s+(?:the\s+)?(?P<entity>[a-z0-9\s]+)", re.IGNORECASE
     )
+    _CONFIRM_PATTERN = re.compile(
+        r"^\s*(?:yes[\s,]+)?confirm(?:\s+(?:it|that|action))?[.!]?\s*$",
+        re.IGNORECASE,
+    )
+    _CANCEL_PATTERN = re.compile(
+        r"^\s*(?:no[\s,]+)?(?:cancel|never mind|nevermind)[.!]?\s*$",
+        re.IGNORECASE,
+    )
 
     SUPPORTED_INTENTS = [
         {"intent": "turn_on", "description": "Turn on a light, switch, or scene"},
@@ -127,6 +167,8 @@ class HABridge:
         verify_ssl: bool | None = None,
         timeout: float | None = None,
         entity_map: dict[str, str] | None = None,
+        user_id: str | None = None,
+        mutation_service: HAMutationService | None = None,
     ) -> None:
         cfg = settings
         cfg_base_url = getattr(cfg, "ha_base_url", "") or ""
@@ -157,6 +199,12 @@ class HABridge:
         self._clarification = ClarificationHandler(
             AliasResolver(_aliases_path) if _aliases_path else AliasResolver()
         )
+        self._user_id = str(user_id or getattr(cfg, "user_id", "") or "default")
+        # Lazily construct the canonical mutation service. Many HABridge users
+        # only need read/media helpers, and construction must not create state.
+        self._mutation_service = mutation_service
+        self._pending_confirmation: _PendingHAConfirmation | None = None
+        self._pending_confirmation_lock = threading.Lock()
 
     @staticmethod
     def _request_exception() -> type[Exception]:
@@ -181,19 +229,37 @@ class HABridge:
     # Transcript and response handling
     # ------------------------------------------------------------------ #
 
-    def process_transcript(self, transcript: str) -> str | None:
-        """Detect and execute intents from a user transcript."""
-        if not self.enabled:
-            return None
-        clarification = self._clarification.check(transcript)
-        if clarification is not None:
-            return clarification
-        match = self._match_transcript(transcript)
-        if not match:
-            return None
-        success, message = self._execute_intent(match)
-        self._log_event(match, success, message)
-        if success:
+    def _get_mutation_service(self) -> HAMutationService:
+        service = getattr(self, "_mutation_service", None)
+        if service is None:
+            token = str(getattr(self, "_token", ""))
+            confirmation_secret = hashlib.sha256(
+                f"askrex-ha-confirmation:{token}".encode()
+            ).digest()
+            service = HAMutationService(
+                _BridgeMutationClient(self),
+                confirmation_secret=confirmation_secret,
+            )
+            self._mutation_service = service
+        return service
+
+    @staticmethod
+    def _non_actionable_transcript(transcript: str) -> bool:
+        text = transcript.strip().lower()
+        if not text:
+            return True
+        if "?" in transcript:
+            return True
+        return bool(
+            re.search(
+                r"\b(?:don't|do not|should i|could i|would i|what if|is it|did i)\b",
+                text,
+            )
+        )
+
+    def _render_mutation_result(self, match: IntentMatch, result: Any) -> str:
+        self._log_event(match, result.success, result.detail)
+        if result.status == HAOutcome.VERIFIED:
             self._command_history.push(
                 entity_id=match.entity_id,
                 domain=match.domain,
@@ -201,14 +267,99 @@ class HABridge:
                 data=match.data,
                 description=match.description,
             )
-            return message
-        return suggest_alternatives(
-            failed_entity_id=match.entity_id,
-            domain=match.domain,
-            entity_map=self._entity_map,
-            entity_cache=self._entity_cache,
-            recent_entity_ids=self._command_history.recent_entity_ids(),
+        elif result.status == HAOutcome.FAILED:
+            return suggest_alternatives(
+                failed_entity_id=match.entity_id,
+                domain=match.domain,
+                entity_map=self._entity_map,
+                entity_cache=self._entity_cache,
+                recent_entity_ids=self._command_history.recent_entity_ids(),
+            )
+        elif result.status == HAOutcome.CONFIRMATION_REQUIRED:
+            detail = result.detail or "This Home Assistant action requires confirmation."
+            return f"{detail} Say 'confirm' as your next reply to continue."
+        from rex.response.builder import home_assistant_status_message
+
+        return home_assistant_status_message(
+            result.status.value,
+            entity_id=result.entity_id,
+            detail=result.detail,
+            expected=result.expected,
         )
+
+    def _handle_pending_confirmation(self, transcript: str) -> str | None:
+        lock = getattr(self, "_pending_confirmation_lock", None)
+        if lock is None:
+            # A few legacy unit fixtures construct HABridge via __new__.
+            # Production construction always initializes this lock.
+            lock = threading.Lock()
+            self._pending_confirmation_lock = lock
+        with lock:
+            pending = getattr(self, "_pending_confirmation", None)
+            if pending is None:
+                return None
+            if self._CANCEL_PATTERN.fullmatch(transcript):
+                self._pending_confirmation = None
+                friendly = pending.mutation.entity_id.replace("_", " ").replace(".", " ")
+                return f"Canceled. I did not change {friendly}."
+            if not self._CONFIRM_PATTERN.fullmatch(transcript):
+                # Confirmation is intentionally next-turn only. Any intervening
+                # user turn clears it so a later unrelated "confirm" cannot
+                # accidentally authorize a stale action.
+                self._pending_confirmation = None
+                return None
+            self._pending_confirmation = None
+
+        mutation = pending.mutation
+        confirmed = HAMutation(
+            user_id=mutation.user_id,
+            entity_id=mutation.entity_id,
+            domain=mutation.domain,
+            service=mutation.service,
+            parameters=dict(mutation.parameters),
+            request_id=mutation.request_id,
+            confirmation_token=pending.token,
+        )
+        result = self._get_mutation_service().execute(confirmed)
+        return self._render_mutation_result(pending.intent, result)
+
+    def process_transcript(self, transcript: str) -> str | None:
+        """Detect HA intents but execute mutations only through canonical policy."""
+        if not self.enabled:
+            return None
+        pending_reply = self._handle_pending_confirmation(transcript)
+        if pending_reply is not None:
+            return pending_reply
+        if self._non_actionable_transcript(transcript):
+            return None
+        clarification = self._clarification.check(transcript)
+        if clarification is not None:
+            return clarification
+        match = self._match_transcript(transcript)
+        if not match:
+            return None
+
+        mutation = HAMutation(
+            user_id=str(getattr(self, "_user_id", "") or "default"),
+            entity_id=match.entity_id,
+            domain=match.domain,
+            service=match.service,
+            parameters=dict(match.data),
+            request_id=uuid.uuid4().hex,
+        )
+        result = self._get_mutation_service().execute(mutation)
+        if result.status == HAOutcome.CONFIRMATION_REQUIRED:
+            token = result.confirmation_token
+            if not isinstance(token, str) or not token:
+                logger.error("HA confirmation result omitted its action-bound token")
+                return "I did not perform that Home Assistant action because confirmation failed."
+            with self._pending_confirmation_lock:
+                self._pending_confirmation = _PendingHAConfirmation(
+                    mutation=mutation,
+                    token=token,
+                    intent=match,
+                )
+        return self._render_mutation_result(match, result)
 
     def undo_last(self, window: float = 30.0) -> str:
         """Reverse the most recent reversible command if within *window* seconds.
@@ -231,48 +382,45 @@ class HABridge:
             description=f"undo: {inverse.replace('_', ' ')} {candidate.entity_id}",
             source="undo",
         )
-        success, message = self._execute_intent(undo_intent)
-        self._log_event(undo_intent, success, message)
-        if success:
+        result = self._get_mutation_service().execute(
+            HAMutation(
+                user_id=str(getattr(self, "_user_id", "") or "default"),
+                entity_id=undo_intent.entity_id,
+                domain=undo_intent.domain,
+                service=undo_intent.service,
+                parameters=dict(undo_intent.data),
+                request_id=uuid.uuid4().hex,
+            )
+        )
+        self._log_event(undo_intent, result.success, result.detail)
+        if result.status == HAOutcome.VERIFIED:
             inv_friendly = inverse.replace("_", " ")
             return f"Undone. {inv_friendly.capitalize()} {candidate.entity_id.split('.')[-1]}."
-        return f"Could not undo: {message}"
+        from rex.response.builder import home_assistant_status_message
+
+        return home_assistant_status_message(
+            result.status.value,
+            entity_id=result.entity_id,
+            detail=result.detail,
+            expected=result.expected,
+        )
 
     def post_process_response(self, response: str) -> str:
-        """Execute inline HA commands embedded in an LLM response."""
-        if not self.enabled or "[[ha:" not in response.lower():
+        """Strip legacy model-emitted HA tags without granting execution authority."""
+        if "[[ha:" not in response.lower():
             return response
 
-        messages: list[str] = []
+        tags = list(self._TAG_PATTERN.finditer(response))
+        if not tags:
+            return response
         sanitized = response
-
-        for tag in list(self._TAG_PATTERN.finditer(response)):
-            domain = tag.group("domain").lower()
-            service = tag.group("service").lower()
-            params = self._parse_params(tag.group("params") or "")
-            entity_id = params.pop("entity_id", None)
-            if not entity_id:
-                continue
-            match = IntentMatch(
-                domain=domain,
-                service=service,
-                entity_id=entity_id,
-                data={"entity_id": entity_id, **params},
-                description=f"{domain}.{service} {entity_id}",
-                source="response",
-            )
-            success, message = self._execute_intent(match)
-            self._log_event(match, success, message)
+        for tag in tags:
             sanitized = sanitized.replace(tag.group(0), "").strip()
-            if success:
-                messages.append(message)
-            else:
-                messages.append(f"Home Assistant error: {message}")
-
-        if messages:
-            " ".join(messages)
-            sanitized = f"{sanitized.rstrip()} {' '.join(messages)}".strip()
-        return sanitized
+        logger.warning(
+            "Suppressed model-emitted Home Assistant command syntax",
+            extra={"event": "assistant_ha_model_tag_suppressed", "count": len(tags)},
+        )
+        return sanitized or "I did not execute that Home Assistant command."
 
     # ------------------------------------------------------------------ #
     # HTTP endpoints helpers
@@ -430,15 +578,28 @@ class HABridge:
         return {"success": success, "message": message, "entity_id": entity_id}
 
     def call_script(
-        self, script_id: str, variables: dict[str, Any] | None = None
+        self,
+        script_id: str,
+        variables: dict[str, Any] | None = None,
+        *,
+        confirmation_token: str | None = None,
     ) -> dict[str, Any]:
+        """Execute a script only through the canonical sensitive-mutation gate."""
         if not script_id:
             raise ValueError("script identifier is required")
-        return self._request(  # type: ignore[no-any-return]
-            "POST",
-            "/api/services/script/turn_on",
-            json={"entity_id": script_id, "variables": variables or {}},
+        entity_id = script_id.strip().lower()
+        if not entity_id.startswith("script."):
+            entity_id = f"script.{entity_id}"
+        mutation = HAMutation(
+            user_id=str(getattr(self, "_user_id", "") or "default"),
+            entity_id=entity_id,
+            domain="script",
+            service="turn_on",
+            parameters={"entity_id": entity_id, "variables": variables or {}},
+            request_id=uuid.uuid4().hex,
+            confirmation_token=confirmation_token,
         )
+        return self._get_mutation_service().execute(mutation).to_dict()
 
     # ------------------------------------------------------------------ #
     # Internal helpers
@@ -549,6 +710,15 @@ class HABridge:
         return None
 
     def _execute_intent(self, intent: IntentMatch) -> tuple[bool, str]:
+        # This legacy helper is intentionally safe-domain only. Sensitive or
+        # prohibited mutations must flow through HAMutationService so
+        # confirmation, verification, and audit semantics cannot be bypassed by
+        # a new internal caller.
+        if classify_ha_risk(intent.domain, intent.service) != HARisk.SAFE:
+            return (
+                False,
+                "Sensitive Home Assistant actions require the canonical confirmation path.",
+            )
         try:
             self._request(
                 "POST",
@@ -582,22 +752,28 @@ class HABridge:
         return data
 
     def _resolve_entity(self, name: str) -> str | None:
+        """Resolve only exact aliases/friendly names on the legacy regex path.
+
+        Fuzzy or substring resolution is intentionally not authoritative for
+        mutations: ambiguous language must fall through to the canonical
+        capability/tool path where clarification and policy are available.
+        """
         key = name.strip().lower()
         if not key:
             return None
         if key in self._entity_map:
             return self._entity_map[key]
-        for alias, entity_id in self._entity_map.items():
-            if key in alias or alias in key:
-                return entity_id
+        if re.fullmatch(r"[a-z0-9_]+\.[a-z0-9_]+", key):
+            mapped_ids = set(self._entity_map.values())
+            if key in mapped_ids:
+                return key
 
         self._refresh_entity_cache()
         if key in self._entity_cache:
             return self._entity_cache[key]
-
-        for alias, entity_id in self._entity_cache.items():
-            if key in alias or alias in key:
-                return entity_id
+        if re.fullmatch(r"[a-z0-9_]+\.[a-z0-9_]+", key):
+            if key in set(self._entity_cache.values()):
+                return key
         return None
 
     def _refresh_entity_cache(self, force: bool = False) -> None:
@@ -740,8 +916,26 @@ def create_blueprint(bridge: HABridge | None = None) -> Blueprint:
         if not isinstance(variables, dict):
             return error_response(BAD_REQUEST, "variables must be an object", 400)
         try:
-            bridge.call_script(script_id, variables)
-            return jsonify({"status": "ok", "script": script_id})
+            result = bridge.call_script(script_id, variables)
+            sanitized = dict(result)
+            # The legacy shared-secret route is not a human-confirmation
+            # channel. Never expose the action-bound token here, otherwise an
+            # automated caller could immediately replay it and bypass the
+            # intended user confirmation boundary.
+            sanitized.pop("confirmation_token", None)
+            status = sanitized.get("status")
+            if status == HAOutcome.CONFIRMATION_REQUIRED.value:
+                sanitized["detail"] = (
+                    "This script requires confirmation through an authenticated Rex action flow."
+                )
+                return jsonify(sanitized), 409
+            if status == HAOutcome.VERIFIED.value:
+                return jsonify(sanitized), 200
+            if status == HAOutcome.ATTEMPTED_UNVERIFIED.value:
+                return jsonify(sanitized), 202
+            if status == HAOutcome.DENIED.value:
+                return jsonify(sanitized), 403
+            return jsonify(sanitized), 503
         except Exception as exc:
             logger.warning("Failed to execute Home Assistant script: %s", exc)
             return error_response(INTERNAL_ERROR, str(exc), 500)

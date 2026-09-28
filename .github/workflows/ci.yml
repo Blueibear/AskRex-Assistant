@@ -107,6 +107,50 @@ jobs:
         run: |
           mypy rex --ignore-missing-imports
 
+  macos-keychain-vault:
+    name: macOS Keychain Vault
+    runs-on: macos-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install AskRex and test runner
+        run: |
+          python -m pip install --upgrade "pip>=26.1"
+          pip install -e . pytest
+
+      - name: Run credential-vault unit tests
+        run: pytest -q tests/test_credential_vault.py
+
+      - name: Verify real macOS Keychain roundtrip
+        run: |
+          python - <<'PY'
+          import tempfile
+          from pathlib import Path
+          from rex.credential_vault import generate_credential_ref, get_credential_vault
+
+          ref = generate_credential_ref()
+          with tempfile.TemporaryDirectory() as tmp:
+              vault = get_credential_vault(vault_path_override=Path(tmp) / "index.json")
+              try:
+                  vault.set_secret(ref, "askrex-ci-keychain-roundtrip", integration="ci", account=None, slot="token")
+                  assert vault.get_secret(ref, integration="ci", account=None, slot="token") == "askrex-ci-keychain-roundtrip"
+                  assert any(entry.key == ref for entry in vault.list_entries())
+              finally:
+                  try:
+                      vault.delete_secret(ref, integration="ci", account=None, slot="token")
+                  except Exception:
+                      pass
+          print("macOS Keychain roundtrip passed")
+          PY
+
   gui-lint:
     name: GUI ESLint
     runs-on: ubuntu-latest

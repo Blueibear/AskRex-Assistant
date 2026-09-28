@@ -64,8 +64,7 @@ The runtime count is intentionally separate from the executable source-site coun
 | `tests/test_calendar_service.py` | 518 | `skipif` | CalendarService.get_all_events not available in this build. | `temporary-bug-skip` | `fix` | `US-089` |
 | `tests/test_calendar_service.py` | 529 | `skipif` | Mock-file calendar service tests apply to the newer implementation only. | `temporary-bug-skip` | `fix` | `US-089` |
 | `tests/test_calendar_service.py` | 553 | `skipif` | CalendarEvent serialization test applies to the newer implementation only. | `temporary-bug-skip` | `fix` | `US-089` |
-| `tests/test_credential_vault.py` | 134 | `pytest.skip` | This assertion applies to non-Windows production | `platform-skip` | `keep` | permanent: platform/runtime-specific guard |
-| `tests/test_credential_vault.py` | 139 | `skipif` | DPAPI vault is Windows-only | `platform-skip` | `keep` | permanent: platform/runtime-specific guard |
+| `tests/test_credential_vault.py` | 210 | `skipif` | DPAPI vault is Windows-only | `platform-skip` | `keep` | permanent: platform/runtime-specific guard |
 | `tests/test_email_account_isolation.py` | 67 | `skipif` | Real DPAPI isolation is Windows-only | `platform-skip` | `keep` | permanent: platform/runtime-specific guard |
 | `tests/test_email_service.py` | 96 | `skipif` | EmailService event-bus style API not available in this build. | `temporary-bug-skip` | `fix` | `US-090` |
 | `tests/test_email_service.py` | 187 | `skipif` | EmailSummary pydantic-style model not available in this build. | `temporary-bug-skip` | `fix` | `US-090` |

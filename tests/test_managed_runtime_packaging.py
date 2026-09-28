@@ -229,3 +229,9 @@ def test_runtime_probe_reports_bounded_module_name_without_raw_stderr(
     errors = verifier.probe_managed_runtime(python_exe)
     assert errors == ["managed runtime import failed: torch"]
     assert all("private provider" not in error for error in errors)
+
+
+def test_packaged_runtime_uses_platform_specific_credential_backends() -> None:
+    requirements = (ROOT / "requirements-electron-runtime.txt").read_text(encoding="utf-8")
+    assert "pywin32==311; sys_platform == 'win32'" in requirements
+    assert "keyring>=25.6.0; sys_platform == 'darwin'" in requirements

@@ -126,3 +126,23 @@ class TestSecretSetAllowsRegistrationAndEnforces:
         client = self._app_with_ha_blueprint("[test-ha-secret-placeholder]").test_client()
         resp = client.post("/ha/script", json={"script": "script.test"})
         assert resp.status_code == 403
+
+    def test_script_with_valid_secret_cannot_bypass_human_confirmation(self) -> None:
+        """Shared-secret legacy route must not dispatch sensitive script actions."""
+        bridge = _make_bridge(secret="[test-ha-secret-placeholder]")
+        _stub_response(bridge, {})
+        app = flask.Flask(__name__)
+        app.register_blueprint(create_blueprint(bridge))
+        client = app.test_client()
+
+        resp = client.post(
+            "/ha/script",
+            json={"script": "script.test"},
+            headers={"HASS_SECRET": "[test-ha-secret-placeholder]"},
+        )
+
+        assert resp.status_code == 409
+        payload = resp.get_json()
+        assert payload["status"] == "confirmation_required"
+        assert "confirmation_token" not in payload
+        bridge._session.request.assert_not_called()

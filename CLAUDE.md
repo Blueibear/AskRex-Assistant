@@ -131,6 +131,7 @@ Search providers:
 Home Assistant safety:
 
 - `lock`, `cover`, `alarm_control_panel`, broad `script.*`, and broad `scene.*` mutations are sensitive and must use the canonical short-lived confirmation-token gate before dispatch. The first unconfirmed call must have no side effect. Keep `automation`, `python_script`, `shell_command`, `update`, and unknown domains fail-closed unless a later reviewed policy explicitly changes them.
+- Legacy `HABridge` transcript parsing, `/ha/script`, and model-emitted `[[ha:...]]` syntax must never be an execution bypass. All transcript-origin mutations route through `HAMutationService`; sensitive chat/voice actions require an action-bound short-lived token plus an explicit immediate-next-turn `confirm`; any intervening turn clears the pending confirmation. Model-emitted HA tags are untrusted text and are stripped/suppressed rather than executed. The shared-secret `/ha/script` route may report that confirmation is required but must not expose the confirmation token or dispatch a sensitive script. Negated, interrogative, or fuzzy/substring-only legacy matches must not dispatch a mutation.
 
 ### Consumer installation and always-on household voice
 
@@ -197,7 +198,7 @@ The final consumer voice/runtime contract is `docs/architecture/end-user-install
 Never commit secrets.
 
 Desktop secrets (API keys, tokens, passwords) belong in the OS-backed credential
-vault (`rex.credential_vault`, Windows DPAPI), not in plaintext `.env` or JSON.
+vault (`rex.credential_vault`: Windows DPAPI, macOS Keychain), not in plaintext `.env` or JSON.
 Plaintext environment/config reads are disabled by default. Unpackaged
 operator and CI runs may explicitly opt in with
 `REX_ALLOW_PLAINTEXT_CREDENTIAL_FALLBACK=1`; packaged Electron strips and
@@ -255,20 +256,17 @@ application archive, or packaged resources.
 
 #### Credential vault (S4)
 
-`rex/credential_vault.py` is the Windows DPAPI-backed credential vault.
-Values are encrypted at rest (`win32crypt.CryptProtectData`/`CryptUnprotectData`
-via `pywin32`); config files only ever hold the vault *key*, never a secret
-value.
+`rex/credential_vault.py` is the OS-backed desktop credential authority.
+Windows uses DPAPI (`win32crypt.CryptProtectData`/`CryptUnprotectData` via
+`pywin32`); macOS uses the native Keychain through the `keyring` macOS backend.
+Config files only ever hold the vault *key*, never a secret value.
 
 - Two scopes, mirroring the household/private data split above:
   `scope="household"` (installation-wide secrets â€” OpenAI/HA/search keys;
   default, matches pre-vault global behavior) and `scope="user"` + a
   validated `user_id` (bound to one Rex profile, e.g. a personal email
-  account `credential_ref`). Each scope encrypts with different DPAPI
-  entropy, so one Rex user cannot decrypt another's entries even when both
-  share one Windows login.
-- Storage: `<household_data_dir()>/credentials/vault.json` or
-  `<user_data_dir(user_id)>/credentials/vault.json` (via `rex.runtime_paths`).
+  account `credential_ref`). Windows binds each entry to scope/owner/context with DPAPI entropy. macOS stores the same validated scope/owner/integration/account/slot metadata inside the Keychain item so copied or swapped references fail closed.
+- Storage: Windows uses `<household_data_dir()>/credentials/vault.json` or `<user_data_dir(user_id)>/credentials/vault.json`. macOS stores secret payloads in Keychain and keeps only an opaque-reference `keychain-index.json` under the corresponding runtime-data credentials directory.
 - `CredentialManager` (`rex/credentials.py`) is vault-only by default. In
   explicit unpackaged legacy/operator mode, process environment and legacy
   config may override the vault. `set_token(..., persist=True)` always writes
@@ -279,9 +277,7 @@ value.
 - Electron never performs vault cryptography. `bridge/rex_credential_vault_bridge.py`
   is the only path Electron uses to reach it (stdin/stdout JSON, like every
   other bridge); `gui/src/main/credentialVault.ts` wraps that bridge call.
-- Non-Windows dev/CI: `get_credential_vault()` raises `VaultUnavailableError`
-  (no implicit fallback). `InMemoryCredentialVault` exists only for tests â€”
-  never selected by a production code path.
+- Backend selection is fail-closed: Windows uses DPAPI; macOS requires the native `keyring.backends.macOS` Keychain backend; unsupported platforms such as Linux raise `VaultUnavailableError` unless a later reviewed OS-backed backend is added. `InMemoryCredentialVault` exists only for tests and is never selected by a production code path.
 - One-time migration of existing plaintext `.env` / `config/credentials.json`
   secrets: `scripts/migrate_credentials_to_vault.py` (dry-run by default; <!-- pragma: allowlist secret -->
   `--apply` verifies the vault write and opaque-reference registry before
@@ -365,7 +361,7 @@ Bridge compatibility wrappers (17) â€” exec canonical `bridge/<name>.py` in
 - `gui/src/pages/settings/integrations/` owns the Settings > Integrations controller and focused UI components; keep OpenClaw token handling renderer-blind and route all secret persistence through the main-process vault helpers.
 - `gui/src/types/settingsRouting.ts` is the shared parser for Settings deep links such as `#/settings?section=integrations`; invalid or missing sections fail safely to General.
 - Installed Electron artifact smoke may override Electron `userData` only when `ASKREX_ARTIFACT_SMOKE=1` and `ASKREX_ARTIFACT_SMOKE_RUNTIME_ROOT` is set; the PowerShell harness must point Python `ASKREX_RUNTIME_DIR` and Electron userData at the same isolated temp runtime root.
-- rex/credential_vault.py â€” Windows DPAPI-backed credential vault (S4); see "Credential vault (S4)" above
+- rex/credential_vault.py â€” OS-backed credential vault (Windows DPAPI, macOS Keychain) (S4); see "Credential vault (S4)" above
 - rex/email_backends/
 - rex/calendar_backends/
 - rex/messaging_backends/
