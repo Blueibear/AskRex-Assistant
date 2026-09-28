@@ -69,6 +69,17 @@ def test_bridge_falls_back_to_defaults_when_oww_unavailable() -> None:
     assert len(result["wake_words"]) >= 5  # at least the 5 default keywords
 
 
+def test_builtin_fallback_does_not_advertise_rex_or_samples() -> None:
+    """Missing Hey Rex remains explicit and built-ins never promise a sample."""
+    with patch.dict("sys.modules", {"openwakeword": None}):
+        result = _run_bridge()
+
+    builtins = [word for word in result["wake_words"] if word["engine"] == "openwakeword"]
+    builtin_ids = {word["id"] for word in builtins}
+    assert "hey_rex" not in builtin_ids
+    assert all(word["has_sample"] is False for word in builtins)
+
+
 def test_bridge_fallback_does_not_require_wakeword_audio_dependencies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
