@@ -773,7 +773,8 @@ class MacOSKeychainCredentialVault:
             pass
         if _FCNTL_AVAILABLE:
             try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)  # type: ignore[union-attr]
+                fcntl_module: Any = fcntl
+                fcntl_module.flock(handle.fileno(), fcntl_module.LOCK_EX)
             except OSError as exc:
                 handle.close()
                 raise VaultUnavailableError(
@@ -785,7 +786,8 @@ class MacOSKeychainCredentialVault:
     def _release_process_lock(handle: BinaryIO) -> None:
         try:
             if _FCNTL_AVAILABLE:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)  # type: ignore[union-attr]
+                fcntl_module: Any = fcntl
+                fcntl_module.flock(handle.fileno(), fcntl_module.LOCK_UN)
         finally:
             handle.close()
 
