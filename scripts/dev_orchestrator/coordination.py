@@ -108,12 +108,14 @@ def build_coordination_context(
         mailbox_paths = list(mailbox.glob("*.md"))
         selected_mailbox: list[tuple[Path, str]] = []
         seen_mailbox: set[Path] = set()
+        mailbox_limit = 20 if task_text else 6
+        mailbox_max_chars = 6000 if task_text else 2500
         if task_text:
             for path, text in _rank_task_files(
                 mailbox_paths,
                 task_text=task_text,
                 anchors=anchors,
-                max_chars=6000,
+                max_chars=mailbox_max_chars,
                 limit=12,
             ):
                 selected_mailbox.append((path, text))
@@ -126,11 +128,11 @@ def build_coordination_context(
         for path in recent_mailbox:
             if path in seen_mailbox:
                 continue
-            selected_mailbox.append((path, _bounded_read(path, 6000)))
+            selected_mailbox.append((path, _bounded_read(path, mailbox_max_chars)))
             seen_mailbox.add(path)
-            if len(selected_mailbox) >= 20:
+            if len(selected_mailbox) >= mailbox_limit:
                 break
-        for path, text in selected_mailbox[:20]:
+        for path, text in selected_mailbox[:mailbox_limit]:
             sections.extend((f"## mailbox/{role}/{path.name}", text))
 
     if task_text and anchors:

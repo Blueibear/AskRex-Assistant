@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -331,3 +332,29 @@ def test_agent_update_replay_is_idempotent_for_same_invocation(tmp_path: Path) -
     assert len(messages) == 1
     assert "Invocation: coordination-test-invocation" in retests[0].read_text(encoding="utf-8")
     assert "Invocation: coordination-test-invocation" in messages[0].read_text(encoding="utf-8")
+
+
+def test_planning_context_bounds_recent_mailbox_history(tmp_path: Path) -> None:
+    root = tmp_path / "coord"
+    mailbox = root / "mailbox" / "backend"
+    mailbox.mkdir(parents=True)
+    (root / "PROTOCOL.md").write_text("# Protocol\n", encoding="utf-8")
+    (root / "AGENT_BACKEND.md").write_text("Role: backend\n", encoding="utf-8")
+
+    for index in range(8):
+        path = mailbox / f"MSG-{index:02d}.md"
+        path.write_text(
+            f"# Message {index}\n\n" + (f"payload-{index}-" * 400),
+            encoding="utf-8",
+        )
+        os.utime(path, (index + 1, index + 1))
+
+    context = build_coordination_context(root, "backend")
+
+    assert context.count("## mailbox/backend/") == 6
+    assert "mailbox/backend/MSG-07.md" in context
+    assert "mailbox/backend/MSG-02.md" in context
+    assert "mailbox/backend/MSG-01.md" not in context
+    assert "mailbox/backend/MSG-00.md" not in context
+    assert "[truncated by supervisor]" in context
+    assert len(context) < 20000
