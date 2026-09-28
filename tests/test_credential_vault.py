@@ -13,6 +13,7 @@ import pytest
 from rex import credential_vault as vault_module
 from rex.credential_vault import (
     InMemoryCredentialVault,
+    MacOSKeychainCredentialVault,
     VaultCorruptedError,
     VaultUnavailableError,
     generate_credential_ref,
@@ -129,9 +130,79 @@ def test_schema_and_metadata_tampering_fail_closed_without_dpapi():
             vault_module._validate_schema(mutation)
 
 
-def test_non_windows_production_has_no_implicit_backend():
-    if sys.platform == "win32":
-        pytest.skip("This assertion applies to non-Windows production")
+class _FakeKeyring:
+    __module__ = "keyring.backends.macOS"
+
+    def __init__(self):
+        self.values: dict[tuple[str, str], str] = {}
+
+    def get_keyring(self):
+        return self
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        self.values[(service, username)] = password
+
+    def get_password(self, service: str, username: str) -> str | None:
+        return self.values.get((service, username))
+
+    def delete_password(self, service: str, username: str) -> None:
+        self.values.pop((service, username), None)
+
+
+class TestMacOSKeychainCredentialVault:
+    def test_roundtrip_keeps_secret_out_of_local_index(self, tmp_path, monkeypatch):
+        fake = _FakeKeyring()
+        monkeypatch.setattr(vault_module, "_keyring", fake)
+        path = tmp_path / "keychain-index.json"
+        vault = MacOSKeychainCredentialVault(index_path=path)
+        marker = "mac-keychain-secret-marker"
+        vault.set_secret(_ref(), marker, integration="openai", account=None, slot="api_key")
+
+        assert (
+            vault.get_secret(_ref(), integration="openai", account=None, slot="api_key") == marker
+        )
+        assert marker not in path.read_text(encoding="utf-8")
+        assert vault.list_entries()[0].key == _ref()
+
+    def test_context_mismatch_fails_closed(self, tmp_path, monkeypatch):
+        fake = _FakeKeyring()
+        monkeypatch.setattr(vault_module, "_keyring", fake)
+        vault = MacOSKeychainCredentialVault(index_path=tmp_path / "index.json")
+        vault.set_secret(_ref(), "secret", integration="email", account="primary", slot="password")
+        with pytest.raises(VaultCorruptedError):
+            vault.get_secret(
+                _ref(),
+                integration="calendar",
+                account="primary",
+                slot="password",
+            )
+
+    def test_factory_selects_macos_keychain(self, tmp_path, monkeypatch):
+        fake = _FakeKeyring()
+        monkeypatch.setattr(vault_module, "_keyring", fake)
+        monkeypatch.setattr(vault_module.sys, "platform", "darwin")
+        vault = get_credential_vault(vault_path_override=tmp_path / "index.json")
+        assert isinstance(vault, MacOSKeychainCredentialVault)
+
+    def test_non_native_keyring_backend_fails_closed(self, tmp_path, monkeypatch):
+        fake = _FakeKeyring()
+        fake.get_keyring = lambda: object()
+        monkeypatch.setattr(vault_module, "_keyring", fake)
+        with pytest.raises(VaultUnavailableError, match="native macOS Keychain"):
+            MacOSKeychainCredentialVault(index_path=tmp_path / "index.json")
+
+    def test_delete_removes_keychain_secret_and_index(self, tmp_path, monkeypatch):
+        fake = _FakeKeyring()
+        monkeypatch.setattr(vault_module, "_keyring", fake)
+        vault = MacOSKeychainCredentialVault(index_path=tmp_path / "index.json")
+        vault.set_secret(_ref(), "secret", integration="openai", account=None, slot="api_key")
+        assert vault.delete_secret(_ref(), integration="openai", account=None, slot="api_key")
+        assert vault.get_secret(_ref(), integration="openai", account=None, slot="api_key") is None
+        assert vault.list_entries() == []
+
+
+def test_unsupported_platform_production_has_no_implicit_backend(monkeypatch):
+    monkeypatch.setattr(vault_module.sys, "platform", "linux")
     with pytest.raises(VaultUnavailableError):
         get_credential_vault()
 
@@ -245,3 +316,23 @@ class TestWindowsDpapiCredentialVault:
         current_sid, _domain, _type = win32security.LookupAccountName("", win32api.GetUserName())
         ace_sids = [dacl.GetAce(index)[2] for index in range(dacl.GetAceCount())]
         assert ace_sids and all(sid == current_sid for sid in ace_sids)
+
+
+def test_windows_atomic_replace_retries_transient_sharing_errors(monkeypatch, tmp_path):
+    source = tmp_path / "source.tmp"
+    destination = tmp_path / "vault.json"
+    source.write_text("payload", encoding="utf-8")
+    calls = {"count": 0}
+
+    def flaky_replace(_source, _destination):
+        calls["count"] += 1
+        if calls["count"] < 3:
+            exc = PermissionError("transient sharing violation")
+            exc.winerror = 5
+            raise exc
+
+    monkeypatch.setattr(vault_module.os, "replace", flaky_replace)
+    monkeypatch.setattr(vault_module.time, "sleep", lambda _seconds: None)
+
+    vault_module._replace_windows_file_with_retry(source, destination)
+    assert calls["count"] == 3

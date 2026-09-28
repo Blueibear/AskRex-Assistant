@@ -176,17 +176,39 @@ def _make_bridge_with_mocks(
     bridge._match_transcript = MagicMock(return_value=fake_match)
     bridge._log_event = MagicMock()
 
+    from rex.ha.mutation_service import HAMutationResult, HAOutcome, HARisk
+
     if execute_success:
-        bridge._execute_intent = MagicMock(return_value=(True, "Turn on kitchen main."))
+        mutation_result = HAMutationResult(
+            status=HAOutcome.VERIFIED,
+            detail="Verified light.kitchen_main state.",
+            entity_id="light.kitchen_main",
+            domain="light",
+            service="turn_on",
+            request_id="test-request",
+            risk=HARisk.SAFE,
+            expected={"state": "on", "attributes": {}},
+        )
     else:
-        bridge._execute_intent = MagicMock(return_value=(False, "Connection refused"))
+        mutation_result = HAMutationResult(
+            status=HAOutcome.FAILED,
+            detail="Connection refused",
+            entity_id="light.kitchen_main",
+            domain="light",
+            service="turn_on",
+            request_id="test-request",
+            risk=HARisk.SAFE,
+        )
+    bridge._mutation_service = MagicMock()
+    bridge._mutation_service.execute.return_value = mutation_result
+    bridge._user_id = "default"
     return bridge
 
 
-def test_process_transcript_success_returns_message():
+def test_process_transcript_success_returns_verified_message():
     bridge = _make_bridge_with_mocks(execute_success=True)
     result = bridge.process_transcript("turn on the kitchen light")
-    assert result == "Turn on kitchen main."
+    assert result == "Confirmed light kitchen main is on."
 
 
 def test_process_transcript_failure_returns_recovery_message():

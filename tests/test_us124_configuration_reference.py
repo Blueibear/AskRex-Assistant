@@ -139,7 +139,7 @@ class TestConsistencyWithEnvExample:
             "ERROR",
             "CRITICAL",
             # Default value of REX_AGENT_TOKEN_ENV (not itself a configurable var)
-            "REX_AGENT_API_KEY",
+            "REX_AGENT_TOKEN",
         }
 
         missing = config_vars - env_vars - ALLOWLIST

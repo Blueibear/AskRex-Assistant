@@ -64,7 +64,7 @@ under `openrouter.model` (for example, `openai/gpt-4o`). AskRex locks
 `openrouter.base_url` to the official `https://openrouter.ai/api/v1` endpoint so
 an OpenRouter credential cannot be redirected to another host. The desktop
 Settings page stores
-`OPENROUTER_API_KEY` in the Windows credential vault; the key is never written
+`OPENROUTER_API_KEY` in the OS-backed credential vault (Windows DPAPI or macOS Keychain); the key is never written
 to `rex_config.json` and is not reused as the OpenAI credential.
 
 OpenRouter usage can incur charges billed by OpenRouter or the selected model
@@ -154,8 +154,8 @@ use the documented Rex config/credential path below until that UI exists.
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
 | `REX_AGENT_HOST` | `127.0.0.1` | No | Host address the agent server binds to |
-| `REX_AGENT_TOKEN_ENV` | `REX_AGENT_API_KEY` | No | Name of the env var from which the agent auth token is read |
-| `REX_AGENT_ALLOWLIST` | `*` | No | Comma-separated allowlist of permitted agent IDs |
+| `REX_AGENT_TOKEN_ENV` | `REX_AGENT_TOKEN` | No | Name of the env var from which the agent auth token is read |
+| `REX_AGENT_ALLOWLIST` | `whoami` | No | Comma-separated server-side allowlist of command names permitted for remote execution |
 
 ### Plugin System
 

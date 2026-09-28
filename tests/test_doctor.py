@@ -16,6 +16,7 @@ from rex.doctor import (
     check_binary,
     check_config_file,
     check_config_permissions,
+    check_credential_vault_backend,
     check_env_file,
     check_environment_variables,
     check_gpu_availability,
@@ -219,6 +220,30 @@ class TestEnvFileCheck:
             assert "example" in result.message.lower()
 
 
+class TestCredentialVaultBackendCheck:
+    """Tests for platform credential-vault diagnostics."""
+
+    def test_macos_keychain_backend_reported_available(self):
+        with (
+            patch("rex.credential_vault.get_credential_vault", return_value=object()),
+            patch("rex.doctor.sys.platform", "darwin"),
+        ):
+            result = check_credential_vault_backend()
+        assert result.status == Status.OK
+        assert "macos keychain" in result.message.lower()
+
+    def test_unavailable_vault_is_actionable_warning(self):
+        from rex.credential_vault import VaultUnavailableError
+
+        with patch(
+            "rex.credential_vault.get_credential_vault",
+            side_effect=VaultUnavailableError("unsupported platform"),
+        ):
+            result = check_credential_vault_backend()
+        assert result.status == Status.WARNING
+        assert "unsupported platform" in result.details
+
+
 class TestEnvironmentVariablesCheck:
     """Tests for environment variables checking."""
 
@@ -226,7 +251,8 @@ class TestEnvironmentVariablesCheck:
         """Test when no API keys are set."""
         with patch.dict(os.environ, {}, clear=True):
             result = check_environment_variables()
-            assert result.status == Status.WARNING
+            assert result.status == Status.INFO
+            assert "plaintext" in result.message.lower()
 
     def test_some_api_keys(self):
         """Test when some API keys are set."""

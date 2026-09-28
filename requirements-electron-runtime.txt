@@ -15,7 +15,8 @@ bcrypt==5.0.0
 PyJWT==2.13.0
 edge-tts==7.2.8
 pyttsx3==2.99
-pywin32==311
+pywin32==311; sys_platform == 'win32'
+keyring>=25.6.0; sys_platform == 'darwin'
 # OpenAI SDK: required by the OpenAI/OpenRouter cloud providers and the
 # OpenAI-compatible LM Studio endpoint (rex.llm_client). This is a base
 # chat dependency, not ML-profile-specific, so it belongs in every packaged
