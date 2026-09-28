@@ -248,7 +248,7 @@ def _scoped_backend_gates_from_diff(
     base_head: str,
     head: str,
 ) -> tuple[ValidationGate, ...]:
-    """Use changed regression tests for small Python-only backend tasks."""
+    """Use changed regression tests for small Python or GUI-only backend tasks."""
 
     if role != "backend" or not base_head or not head or base_head == head:
         return ()
@@ -288,38 +288,72 @@ def _scoped_backend_gates_from_diff(
     ]
     if not paths or len(paths) > 24:
         return ()
-    if any(not path.endswith(".py") for path in paths):
-        return ()
+    if all(path.endswith(".py") for path in paths):
+        tests = [
+            path
+            for path in paths
+            if path.startswith("tests/") and Path(path).name.startswith("test_")
+        ]
+        if not tests or len(tests) > 12:
+            return ()
 
-    tests = [
-        path
-        for path in paths
-        if path.startswith("tests/") and Path(path).name.startswith("test_")
-    ]
-    if not tests or len(tests) > 12:
-        return ()
-
-    sources = [path for path in paths if path not in tests]
-    gates: list[ValidationGate] = [
-        ValidationGate(
-            "scoped changed regression tests",
-            ("py", "-3.11", "-m", "pytest", "-q", *tests),
-            timeout_seconds=900,
-        ),
-        ValidationGate(
-            "scoped changed-file ruff",
-            ("py", "-3.11", "-m", "ruff", "check", *paths),
-            timeout_seconds=300,
-        ),
-    ]
-    if sources:
-        gates.append(
+        sources = [path for path in paths if path not in tests]
+        gates: list[ValidationGate] = [
             ValidationGate(
-                "scoped changed-source syntax",
-                ("py", "-3.11", "-m", "py_compile", *sources),
+                "scoped changed regression tests",
+                ("py", "-3.11", "-m", "pytest", "-q", *tests),
+                timeout_seconds=900,
+            ),
+            ValidationGate(
+                "scoped changed-file ruff",
+                ("py", "-3.11", "-m", "ruff", "check", *paths),
                 timeout_seconds=300,
+            ),
+        ]
+        if sources:
+            gates.append(
+                ValidationGate(
+                    "scoped changed-source syntax",
+                    ("py", "-3.11", "-m", "py_compile", *sources),
+                    timeout_seconds=300,
+                )
             )
-        )
+    elif all(
+        path.startswith("gui/") and Path(path).suffix in {".ts", ".tsx"}
+        for path in paths
+    ):
+        tests = [
+            path.removeprefix("gui/")
+            for path in paths
+            if path.startswith("gui/tests/")
+            and Path(path).name.endswith((".test.ts", ".test.tsx"))
+        ]
+        if not tests or len(tests) > 12:
+            return ()
+        gui_paths = [path.removeprefix("gui/") for path in paths]
+        gates = [
+            ValidationGate(
+                "scoped changed GUI regression tests",
+                ("npm.cmd", "test", "--", *tests),
+                cwd="gui",
+                timeout_seconds=900,
+            ),
+            ValidationGate(
+                "scoped GUI typecheck",
+                ("npm.cmd", "run", "typecheck"),
+                cwd="gui",
+                timeout_seconds=900,
+            ),
+            ValidationGate(
+                "scoped changed GUI lint",
+                ("npx.cmd", "eslint", *gui_paths),
+                cwd="gui",
+                timeout_seconds=300,
+            ),
+        ]
+    else:
+        return ()
+
     gates.append(
         ValidationGate(
             "scoped task diff check",

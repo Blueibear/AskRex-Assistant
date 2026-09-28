@@ -127,6 +127,44 @@ def test_scoped_backend_profile_uses_changed_python_regressions(tmp_path: Path) 
     assert "module.py" in gates[1].command
 
 
+def test_scoped_backend_profile_uses_changed_gui_regressions(tmp_path: Path) -> None:
+    import subprocess
+    config = _config(tmp_path)
+    config.metadata["iteration_validation"]["backend"]["scoped_default_from_diff"] = True
+    repo = config.backend_root
+    assert repo is not None
+    base = _init_git_repo(repo)
+    gui = repo / "gui"
+    (gui / "src").mkdir(parents=True)
+    (gui / "tests").mkdir()
+    (gui / "src" / "SetupWizardPage.tsx").write_text(
+        "export const value = 1;\n", encoding="utf-8"
+    )
+    (gui / "tests" / "setupWakeWordWizardUX.test.ts").write_text(
+        "test('wake word', () => {});\n", encoding="utf-8"
+    )
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "gui change"], cwd=repo, check=True)
+    head = _git(repo, "rev-parse", "HEAD")
+
+    gates = _scoped_backend_gates_from_diff(
+        config,
+        "backend",
+        base_head=base,
+        head=head,
+    )
+
+    assert [gate.name for gate in gates] == [
+        "scoped changed GUI regression tests",
+        "scoped GUI typecheck",
+        "scoped changed GUI lint",
+        "scoped task diff check",
+    ]
+    assert gates[0].cwd == "gui"
+    assert "tests/setupWakeWordWizardUX.test.ts" in gates[0].command
+    assert "src/SetupWizardPage.tsx" in gates[2].command
+
+
 def test_scoped_backend_profile_falls_back_for_non_python_change(tmp_path: Path) -> None:
     import subprocess
     config = _config(tmp_path)
