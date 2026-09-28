@@ -168,7 +168,13 @@ def test_packaged_bridges_do_not_require_a_source_checkout() -> None:
 
 
 def test_packaged_resources_reject_non_executable_managed_runtime(tmp_path: Path) -> None:
-    errors = verify(packaged_resources(tmp_path))
+    # This assertion covers verifier behavior after a probe failure.  Do not
+    # spawn the deliberately invalid placeholder python.exe here: on Windows
+    # it can wait for the production probe timeout instead of failing promptly.
+    errors = verify(
+        packaged_resources(tmp_path),
+        runtime_probe=lambda _: ["managed runtime import probe could not execute"],
+    )
     assert any("runtime import probe" in error for error in errors)
 
 
