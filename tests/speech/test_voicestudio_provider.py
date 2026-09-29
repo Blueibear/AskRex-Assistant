@@ -23,11 +23,11 @@ from rex.speech.contracts import (
     SpeechProviderUnavailableError,
 )
 from rex.speech.providers.voicestudio import (
-    _NoRedirectHandler,
     UrllibVoiceStudioTransport,
     VoiceStudioConfig,
     VoiceStudioSTTProvider,
     VoiceStudioTTSProvider,
+    _NoRedirectHandler,
     is_loopback_url,
 )
 
