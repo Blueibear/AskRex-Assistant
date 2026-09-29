@@ -59,8 +59,8 @@ class _RedirectServers:
             ("127.0.0.1", 0), self._source_handler()
         )
         self._threads = [
-            threading.Thread(target=server.serve_forever, daemon=True)
-            for server in (self._target, self._source)
+            threading.Thread(target=self._target.serve_forever, daemon=True),
+            threading.Thread(target=self._source.serve_forever, daemon=True),
         ]
 
     @property
