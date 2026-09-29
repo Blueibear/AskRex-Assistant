@@ -154,6 +154,14 @@ class TestSpeechRouter:
         assert stt_health == {"native": True}
         assert tts_health == {"native": False}
 
+    def test_health_includes_the_provider_locality_used_by_policy(self) -> None:
+        native_stt = FakeSTTProvider("native", available=True, is_local=True)
+        cloud_tts = FakeTTSProvider("cloud", available=True, is_local=False)
+        router = _router(stt={"native": native_stt}, tts={"cloud": cloud_tts})
+
+        assert router.stt_health()[0].is_local is True
+        assert router.tts_health()[0].is_local is False
+
     def test_transcribe_file_recovers_to_next_permitted_provider_on_runtime_failure(
         self,
     ) -> None:

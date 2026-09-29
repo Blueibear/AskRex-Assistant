@@ -36,10 +36,7 @@ class ProviderHealth:
     provider_id: str
     available: bool
     reason: str
-    @property
-    def is_local(self) -> bool:
-        """Whether this provider keeps audio on the local machine."""
-        ...
+    is_local: bool
 
 
 @dataclass(frozen=True)
@@ -88,7 +85,10 @@ class TextToSpeechProvider(Protocol):
     """Provider-neutral TTS contract."""
 
     provider_id: str
-    is_local: bool
+    @property
+    def is_local(self) -> bool:
+        """Whether this provider keeps audio on the local machine."""
+        ...
 
     def availability(self) -> tuple[bool, str]:
         """Return ``(available, reason)`` without triggering a network call."""
