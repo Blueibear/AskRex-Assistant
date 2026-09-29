@@ -31,9 +31,9 @@ from rex.model_router import ModelRouter, ProviderRouteCandidate  # noqa: E402
 from rex.provider_reliability import ProviderFailureKind, ProviderReliability  # noqa: E402
 from rex.rexbench import BenchmarkSample, build_report  # noqa: E402
 from rex.runtime.warm import WarmComponentSpec, WarmRuntimeManager  # noqa: E402
+from rex.tools.dispatcher import ToolDispatcher  # noqa: E402
 from rex.tools.execution import ToolOperation  # noqa: E402
 from rex.tools.protocol import ToolResult  # noqa: E402
-from rex.tools.dispatcher import ToolDispatcher  # noqa: E402
 from rex.tools.registry import Tool, ToolRegistry  # noqa: E402
 from rex.voice_loop import VoiceLoop  # noqa: E402
 

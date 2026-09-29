@@ -96,7 +96,7 @@ INCLUDE_EXTENSIONS = {
 # optionally followed by a space and branch name)
 MERGE_MARKERS = re.compile(r"^(<{7}|={7}|>{7})( .*)?$")
 PLACEHOLDER_MARKERS = re.compile(
-    r"TRUNCAT|TBD|TODO|FIXME|PLACEHOLDER|INSERT HERE|REPLACE ME|\bWIP\b|COMING SOON|CUT HERE",
+    r"\bTRUNCATED\s*(?:\.\.\.|$)|TBD|TODO|FIXME|PLACEHOLDER|INSERT HERE|REPLACE ME|\bWIP\b|COMING SOON|CUT HERE",
     re.IGNORECASE,
 )
 
@@ -368,23 +368,6 @@ def scan_file(
                 # Skip: function/class definitions whose name contains the marker word
                 # (e.g. `def test_placeholder`, `class TestOutputTruncation`)
                 if re.match(r"\s*(def|class)\s+\w*(placeholder|truncat)\w*", lowered):
-                    continue
-
-                # Skip: truncation as a legitimate output/data-size limiting feature
-                if "truncat" in lowered and any(
-                    w in lowered
-                    for w in [
-                        "output",
-                        "file",
-                        "query",
-                        "bytes",
-                        "chars",
-                        "size",
-                        "limit",
-                        "body",
-                        "bodies",
-                    ]
-                ):
                     continue
 
                 placeholder_issues.append(f"{filepath}:{i}: {line.strip()[:80]}")

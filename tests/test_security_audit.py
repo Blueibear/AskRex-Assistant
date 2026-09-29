@@ -259,6 +259,26 @@ class TestPlaceholderClassification:
         assert security_audit.classify_placeholder_finding(finding) == "needs-review"
 
 
+class TestTruncationPlaceholderDetection:
+    """Detect incomplete truncation markers without flagging valid truncation logic."""
+
+    def test_detects_a_standalone_truncated_marker(self, tmp_path: Path):
+        target = tmp_path / "incomplete.py"
+        target.write_text("# TRUNCATED\n", encoding="utf-8")
+
+        _, placeholders, _ = security_audit.scan_file(target)
+
+        assert len(placeholders) == 1
+
+    def test_ignores_a_real_truncated_data_description(self, tmp_path: Path):
+        target = tmp_path / "parser.py"
+        target.write_text("# Reject a truncated container.\n", encoding="utf-8")
+
+        _, placeholders, _ = security_audit.scan_file(target)
+
+        assert placeholders == []
+
+
 class TestScanPathExclusions:
     """Tests for directory exclusion logic in should_scan_file."""
 

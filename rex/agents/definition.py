@@ -204,7 +204,7 @@ class AgentDefinition:
         return json.dumps(self.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
     @classmethod
-    def from_dict(cls, payload: object) -> "AgentDefinition":
+    def from_dict(cls, payload: object) -> AgentDefinition:
         if not isinstance(payload, dict):
             raise AgentDefinitionValidationError("agent definition must be an object")
         if set(payload) != cls._PERSISTED_FIELDS:
