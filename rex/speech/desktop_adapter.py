@@ -72,7 +72,8 @@ class RoutedDesktopSTT:
 
                 wav_bytes = _to_wav_buffer(audio, sample_rate)
 
-                return await asyncio.to_thread(provider.transcribe, wav_bytes)
+                transcribe = provider.transcribe
+                return await asyncio.to_thread(transcribe, wav_bytes)
             except _RECOVERABLE_PROVIDER_ERRORS as exc:
                 last_error = exc
                 continue

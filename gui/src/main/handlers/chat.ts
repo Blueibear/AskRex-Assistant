@@ -65,7 +65,10 @@ function callConversationBackend(
   payload: Record<string, unknown> = {}
 ): unknown {
   const result = spawnSync(resolvePythonCommand(), [resolveBridgePath('rex_conversation_bridge.py')], {
-    ...bridgeSpawnOptions(), input: JSON.stringify(privateSessionPayload(session, { action, ...payload })), encoding: 'utf8', timeout: 10_000
+    ...bridgeSpawnOptions(),
+    input: JSON.stringify(privateSessionPayload(session, { action, ...payload })),
+    encoding: 'utf8',
+    timeout: 10_000
   })
   const response = JSON.parse((result.stdout || '').trim()) as { ok: boolean; result?: unknown; error?: string }
   if (result.status !== 0 || !response.ok) throw new Error(response.error || 'Conversation request failed')
