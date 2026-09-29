@@ -1128,6 +1128,64 @@ def test_completion_retest_block_reconciles_after_testing_verifies(tmp_path: Pat
     assert resumed.task is not None and resumed.task.task_id == "B-NEXT"
 
 
+def test_completion_retest_block_accepts_backticked_status(tmp_path: Path) -> None:
+    config = make_config(tmp_path, observe_only=False)
+    supervisor = Supervisor(config, FakeInvoker())
+    issue = config.coordination_root / "issues" / "TEST-778.md"
+    issue.write_text(
+        "# TEST-778\n\nStatus: `fixed-needs-retest`\nOwner: backend\n",
+        encoding="utf-8",
+    )
+
+    supervisor._done_claim("backend", WorkerState("backend"), "ctx")
+
+    state = supervisor.load_state("backend")
+    assert state.status is WorkerStatus.BLOCKED_USER
+    assert state.blocker_kind == "retest"
+    assert state.task is not None and state.task.task_id == "TEST-778"
+
+
+def test_done_claim_skips_reviewed_fixed_needs_retest_issue(tmp_path: Path) -> None:
+    config = make_config(tmp_path, observe_only=False)
+    repo = config.backend_root
+    assert repo is not None
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "tests@example.invalid"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "AskRex Tests"], cwd=repo, check=True)
+    (repo / "tracked.txt").write_text("reviewed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "reviewed"], cwd=repo, check=True, capture_output=True)
+    reviewed_head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=repo, text=True
+    ).strip()
+
+    supervisor = Supervisor(config, FakeInvoker())
+    reviewed_issue = config.coordination_root / "issues" / "TEST-012.md"
+    reviewed_issue.write_text(
+        "# TEST-012\n\nStatus: `fixed-needs-retest`\nOwner: backend\n",
+        encoding="utf-8",
+    )
+    open_issue = config.coordination_root / "issues" / "TEST-900.md"
+    open_issue.write_text(
+        "# TEST-900\n\nStatus: open\nOwner: backend\n",
+        encoding="utf-8",
+    )
+    supervisor.completed_tasks.record(
+        "backend",
+        TaskItem("TEST-012", "Reviewed implementation"),
+        completed_head=reviewed_head,
+        invocation_id="reviewed-test-012",
+        source="independent_review",
+    )
+
+    supervisor._done_claim("backend", WorkerState("backend"), "ctx")
+
+    state = supervisor.load_state("backend")
+    assert state.status is WorkerStatus.IMPLEMENTING
+    assert state.task is not None
+    assert state.task.task_id == "TEST-900"
+
+
 def test_owner_defer_releases_existing_retest_block(tmp_path: Path) -> None:
     invoker = FakeInvoker()
     invoker.add(

@@ -570,29 +570,40 @@ class Supervisor:
         issues = active_owned_issues(
             self.root, role, deferred_issue_ids=self.config.deferred_issue_ids
         )
-        if issues:
-            first = issues[0]
-            text = first.read_text(encoding="utf-8", errors="replace")
-            if "status: fixed-needs-retest" in text.lower():
+        for issue in issues:
+            text = issue.read_text(encoding="utf-8", errors="replace")
+            status = _issue_status(text)
+            candidate = TaskItem(
+                issue.stem,
+                f"Resolve remaining owned issue {issue.stem}.\n\n{text[:6000]}",
+            )
+
+            # A reviewed task stays completed while its reviewed checkpoint is
+            # still an ancestor of the current branch. Canonical issue files may
+            # remain fixed-needs-retest while physical testing owns acceptance;
+            # that status must not resurrect implementation work.
+            if self._completed_assignment(role, candidate) is not None:
+                continue
+
+            if status == "fixed-needs-retest":
                 self.save_state(
                     replace(
                         state,
                         status=WorkerStatus.BLOCKED_USER,
-                        task=TaskItem(first.stem, "Await canonical testing verification"),
+                        task=TaskItem(issue.stem, "Await canonical testing verification"),
                         task_base_head=self._capture_task_base_head(role),
-                        blocked_reason=f"{first.stem} requires testing/retest before completion",
+                        blocked_reason=f"{issue.stem} requires testing/retest before completion",
                         blocker_kind="retest",
                         resume_status=WorkerStatus.PLANNING,
                     )
                 )
                 return
+
             self.save_state(
                 replace(
                     state,
                     status=WorkerStatus.IMPLEMENTING,
-                    task=TaskItem(
-                        first.stem, f"Resolve remaining owned issue {first.stem}.\n\n{text[:6000]}"
-                    ),
+                    task=candidate,
                     task_base_head=self._capture_task_base_head(role),
                     blocked_reason="",
                 )
