@@ -16,6 +16,14 @@ class _Msvcrt(Protocol):
     def locking(self, fd: int, mode: int, nbytes: int) -> None: ...
 
 
+class _Fcntl(Protocol):
+    LOCK_EX: int
+    LOCK_NB: int
+    LOCK_UN: int
+
+    def flock(self, fd: int, operation: int) -> None: ...
+
+
 class AlreadyRunningError(RuntimeError):
     """Raised when another process already owns the runtime lock."""
 
@@ -77,6 +85,10 @@ class SingleInstanceLock:
         return cast(_Msvcrt, importlib.import_module("msvcrt"))
 
     @staticmethod
+    def _fcntl() -> _Fcntl:
+        return cast(_Fcntl, importlib.import_module("fcntl"))
+
+    @staticmethod
     def _lock_handle(handle: BinaryIO) -> None:
         if os.name == "nt":
             msvcrt = SingleInstanceLock._msvcrt()
@@ -88,7 +100,7 @@ class SingleInstanceLock:
                 raise
             return
 
-        import fcntl
+        fcntl = SingleInstanceLock._fcntl()
 
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -105,6 +117,6 @@ class SingleInstanceLock:
             msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
             return
 
-        import fcntl
+        fcntl = SingleInstanceLock._fcntl()
 
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)

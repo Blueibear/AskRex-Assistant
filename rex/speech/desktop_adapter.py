@@ -77,7 +77,7 @@ class RoutedDesktopSTT:
             except _RECOVERABLE_PROVIDER_ERRORS as exc:
                 last_error = exc
                 continue
-            except BaseException as exc:
+            except Exception as exc:
                 # The desktop native path is the live ``rex.voice.stt``
                 # instance, not the normalizing provider wrapper, so its
                 # legacy ``SpeechToTextError``/engine failures are normalized

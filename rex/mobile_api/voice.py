@@ -164,7 +164,10 @@ def synthesize_for_request(
     """
     routed = getattr(service, "synthesize_request", None)
     if callable(routed):
-        return routed(text, requested_voice)
+        result = routed(text, requested_voice)
+        if isinstance(result, SynthesizedSpeech):
+            return result
+        raise TypeError("Routed text-to-speech service returned an invalid result")
     voice_id = service.resolve_voice(requested_voice)
     audio = service.synthesize(text, voice_id)
     return SynthesizedSpeech(audio=audio, mime_type=service.mime_type(), voice_id=voice_id)

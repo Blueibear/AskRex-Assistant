@@ -375,10 +375,25 @@ class MobileWebSocketServer:
             )
             return True
 
+        device_id = principal.paired_device_id
+        if device_id is None:
+            services.message_store.fail(
+                principal.user_id, chat_request.message_id, merr.PAIRING_INVALID
+            )
+            self._send(
+                ws,
+                mev.error_event(
+                    merr.PAIRING_INVALID,
+                    "A paired device is required to send chat messages.",
+                    message_id=chat_request.message_id,
+                ),
+            )
+            return True
+
         try:
             attachments = services.attachment_store.validate_references(
                 user_id=principal.user_id,
-                device_id=principal.paired_device_id,
+                device_id=device_id,
                 conversation_id=chat_request.conversation_id,
                 attachment_ids=chat_request.attachment_ids,
             )

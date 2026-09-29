@@ -6,7 +6,36 @@ is covered by the shared limiter tests in test_app.py).
 
 from __future__ import annotations
 
+import pytest
+
+from rex.mobile_api.voice import synthesize_for_request
 from tests.mobile_api.conftest import auth_header, create_user, paired_login_tokens
+
+
+class _InvalidRoutedTts:
+    def availability(self) -> tuple[bool, str]:
+        return True, "ok"
+
+    def require_available(self) -> None:
+        return None
+
+    def mime_type(self) -> str:
+        return "audio/wav"
+
+    def resolve_voice(self, requested: str | None) -> str:
+        return "test-voice"
+
+    def synthesize(self, text: str, voice_id: str) -> bytes:
+        return b"audio"
+
+    def synthesize_request(self, text: str, requested_voice: str | None) -> object:
+        return object()
+
+
+def test_routed_tts_invalid_result_fails_closed() -> None:
+    """A routed TTS implementation cannot return untyped or malformed audio metadata."""
+    with pytest.raises(TypeError, match="invalid result"):
+        synthesize_for_request(_InvalidRoutedTts(), "hello", None)
 
 
 def _authed(client, username: str = "james", password: str = "pw-123456") -> dict:

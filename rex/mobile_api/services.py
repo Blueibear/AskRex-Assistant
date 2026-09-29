@@ -153,6 +153,15 @@ class MobileApiServices:
         default_tts: MobileTextToSpeechService | None = None
         if stt is None or tts is None:
             default_stt, default_tts = _default_speech_services()
+        if stt is None:
+            if default_stt is None:
+                raise RuntimeError("Default speech-to-text service was not initialized")
+            stt = default_stt
+        if tts is None:
+            if default_tts is None:
+                raise RuntimeError("Default text-to-speech service was not initialized")
+            tts = default_tts
+
         return cls(
             config=cfg,
             db_path=resolved_db_path,
@@ -177,8 +186,8 @@ class MobileApiServices:
                 id_generator=id_generator,
             ),
             chat_service=chat_service or MobileChatService(),
-            stt=stt or default_stt,
-            tts=tts or default_tts,
+            stt=stt,
+            tts=tts,
             id_generator=id_generator or _default_id_generator,
             tls_material=tls_material,
             transport_binding=transport_binding,

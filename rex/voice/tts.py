@@ -1103,7 +1103,10 @@ class TextToSpeech:
         voice_id = provider.resolve_voice(None)
 
         def _synthesize() -> bytes:
-            return provider.synthesize(text, voice_id)
+            audio = provider.synthesize(text, voice_id)
+            if not isinstance(audio, bytes):
+                raise TextToSpeechError("VoiceStudio returned invalid audio data")
+            return audio
 
         audio_bytes = await asyncio.to_thread(_synthesize)
         if not audio_bytes:

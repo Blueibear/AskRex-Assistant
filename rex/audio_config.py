@@ -60,6 +60,11 @@ def _normalize_device_name(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
 
 
+def _choice_index(value: object) -> int:
+    """Return a validated picker index for deterministic sorting."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else -1
+
+
 def build_audio_device_diagnostic(
     device_kind: str,
     error: BaseException | str,
@@ -283,7 +288,7 @@ def _build_device_picker_choices(
     # without ever replacing the canonical PortAudio index used for playback.
     return sorted(
         choices,
-        key=lambda choice: (str(choice["name"]).casefold(), int(choice["index"])),
+        key=lambda choice: (str(choice["name"]).casefold(), _choice_index(choice["index"])),
     )
 
 
