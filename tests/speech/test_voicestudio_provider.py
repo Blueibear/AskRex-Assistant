@@ -7,11 +7,11 @@ deterministically.
 
 from __future__ import annotations
 
+from email.message import Message
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import threading
 import urllib.request
-from email.message import Message
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from unittest.mock import Mock, patch
 
