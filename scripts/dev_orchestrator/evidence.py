@@ -103,7 +103,9 @@ def _message_field(text: str, field: str) -> str:
     return ""
 
 
-def _task_coordination_anchors(task: TaskItem) -> tuple[str, ...]:
+def _task_coordination_anchors(
+    config: OrchestratorConfig, task: TaskItem
+) -> tuple[str, ...]:
     anchors = {task.task_id.casefold()}
     task_text = f"{task.task_id}\n{task.prompt}\n{task.feedback}"
     for pattern in (
@@ -116,6 +118,27 @@ def _task_coordination_anchors(task: TaskItem) -> tuple[str, ...]:
     ):
         for match in re.finditer(pattern, task_text):
             anchors.add(match.group(0).casefold())
+
+    # Canonical coordination issue names are not limited to TEST-/US-/STORY-
+    # prefixes (for example SECURITY-HA-MACOS). Include only issue stems that
+    # actually exist under the shared coordination root and are explicitly
+    # referenced by the task text, so matching stays bounded to real issues.
+    issues_root = config.coordination_root / "issues"
+    task_text_folded = task_text.casefold()
+    if issues_root.is_dir():
+        try:
+            for path in issues_root.glob("*.md"):
+                stem = path.stem.casefold()
+                if not stem:
+                    continue
+                if re.search(
+                    rf"(?<![a-z0-9]){re.escape(stem)}(?![a-z0-9])",
+                    task_text_folded,
+                ):
+                    anchors.add(stem)
+        except OSError as exc:
+            raise EvidenceError("cannot read canonical issue anchors") from exc
+
     return tuple(sorted(anchor for anchor in anchors if anchor))
 
 
@@ -124,7 +147,7 @@ def _outgoing_coordination(config: OrchestratorConfig, role: str, task: TaskItem
     if not mailbox_root.is_dir():
         return "No task-relevant outgoing coordination messages were recorded."
 
-    anchors = _task_coordination_anchors(task)
+    anchors = _task_coordination_anchors(config, task)
     explicit_message_anchors = tuple(anchor for anchor in anchors if anchor.startswith("msg-"))
     messages: list[tuple[int, int, Path, str]] = []
     try:
@@ -169,7 +192,7 @@ def _task_issue_contents(config: OrchestratorConfig, task: TaskItem) -> str:
     if not issues_root.is_dir():
         return "No task-matching canonical issue files were found."
 
-    anchors = _task_coordination_anchors(task)
+    anchors = _task_coordination_anchors(config, task)
     rendered: list[str] = []
     try:
         for path in sorted(issues_root.glob("*.md")):
@@ -288,7 +311,7 @@ def _validated_artifact_contents(
     if not candidates:
         return "No validated coordination artifacts were referenced by gate output."
 
-    anchors = _task_coordination_anchors(task)
+    anchors = _task_coordination_anchors(config, task)
     explicit_message_anchors = tuple(anchor for anchor in anchors if anchor.startswith("msg-"))
     ranked: list[tuple[int, int, int, Path, str]] = []
     for path in candidates:

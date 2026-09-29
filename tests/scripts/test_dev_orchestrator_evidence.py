@@ -296,6 +296,66 @@ def test_review_evidence_includes_roadmap_task_issue_status(tmp_path: Path) -> N
     assert "Owner: both" in bundle.text
 
 
+def test_review_evidence_includes_named_canonical_issue_referenced_in_prompt(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "backend-security"
+    base = _git_repo(repo)
+    head = _commit(repo, "base\nchanged\n")
+    config = _config(tmp_path, repo, [sys.executable, "-c", "print('OK')"])
+    task_id = "backend-security-ha-macos-integration-001"
+    assert run_iteration_validation(
+        config,
+        "backend",
+        task_id,
+        base_head=base,
+        head=head,
+    ).passed
+
+    issue = config.coordination_root / "issues" / "SECURITY-HA-MACOS.md"
+    issue.parent.mkdir(parents=True, exist_ok=True)
+    issue.write_text(
+        "# SECURITY-HA-MACOS\n\n"
+        "Status: integrated-needs-retest\n"
+        "Owner: backend\n",
+        encoding="utf-8",
+    )
+    mailbox = config.coordination_root / "mailbox" / "testing"
+    mailbox.mkdir(parents=True, exist_ok=True)
+    message = mailbox / "MSG-security-ha-macos-integrated-backend.md"
+    message.write_text(
+        "# AskRex Coordination Message\n\n"
+        "From: backend\n"
+        "To: testing\n"
+        "Related: SECURITY-HA-MACOS\n\n"
+        "## Message\n"
+        "Retest the integrated macOS credential-vault path.\n",
+        encoding="utf-8",
+    )
+    state = WorkerState(
+        role="backend",
+        task=TaskItem(
+            task_id,
+            "Integrate SECURITY-HA-MACOS after TEST-012 leaves active implementation.",
+        ),
+        task_base_head=base,
+    )
+
+    bundle = build_review_evidence(
+        config,
+        "backend",
+        state,
+        state.task,
+        "coordination snapshot",
+        "inv-security-named-issue",
+    )
+
+    assert "### issues/SECURITY-HA-MACOS.md" in bundle.text
+    assert "Status: integrated-needs-retest" in bundle.text
+    assert "MSG-security-ha-macos-integrated-backend.md" in bundle.text
+    assert "Retest the integrated macOS credential-vault path." in bundle.text
+
+
 def test_outgoing_coordination_prioritizes_exact_named_messages_over_references(
     tmp_path: Path,
 ) -> None:
