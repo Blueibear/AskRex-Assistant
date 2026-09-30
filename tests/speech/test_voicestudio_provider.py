@@ -7,12 +7,12 @@ deterministically.
 
 from __future__ import annotations
 
-from email.message import Message
 import io
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
-from typing import Any
 import urllib.request
+from email.message import Message
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
