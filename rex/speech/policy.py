@@ -9,8 +9,8 @@ once permitted local providers are exhausted.
 
 from __future__ import annotations
 
-from enum import StrEnum
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 
 class SpeechPolicyMode(StrEnum):
