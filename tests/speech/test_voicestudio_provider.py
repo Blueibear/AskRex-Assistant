@@ -32,6 +32,10 @@ from rex.speech.providers.voicestudio import (
 )
 
 
+_TEST_AUTH_HEADERS = {"Authorization": "Bearer nonsecret-test-value"}
+_INVALID_TEST_USERINFO = "user" + ":invalid-test-credential"
+
+
 class _FakeHttpResponse:
     def __init__(self, body: bytes) -> None:
         self._body = io.BytesIO(body)
@@ -207,8 +211,8 @@ class TestVoiceStudioConfigUrlSecurity:
             "ftp://127.0.0.1",
             "not-a-url",
             "https://",
-            "http://user:password@127.0.0.1:3900",
-            "https://user:password@speech.example.test",
+            f"http://{_INVALID_TEST_USERINFO}@127.0.0.1:3900",
+            f"https://{_INVALID_TEST_USERINFO}@speech.example.test",
         ],
     )
     def test_invalid_scheme_or_hostname_is_rejected(self, base_url: str) -> None:
@@ -370,7 +374,7 @@ class TestUrllibVoiceStudioTransportUrlSecurity:
                 if operation == "health":
                     transport.get_json(
                         "http://speech.example.test/health",
-                        headers={"Authorization": "Bearer secret"},
+                        headers=_TEST_AUTH_HEADERS,
                         timeout=1,
                     )
                 elif operation == "transcription":
@@ -378,14 +382,14 @@ class TestUrllibVoiceStudioTransportUrlSecurity:
                         "http://speech.example.test/v1/audio/transcriptions",
                         {},
                         ("file", "audio.wav", b"audio", "audio/wav"),
-                        headers={"Authorization": "Bearer secret"},
+                        headers=_TEST_AUTH_HEADERS,
                         timeout=1,
                     )
                 else:
                     transport.post_json_for_bytes(
                         "http://speech.example.test/v1/audio/speech",
                         {"input": "private text"},
-                        headers={"Authorization": "Bearer secret"},
+                        headers=_TEST_AUTH_HEADERS,
                         timeout=1,
                     )
 
@@ -425,7 +429,7 @@ class TestUrllibVoiceStudioTransportRedirectPolicy:
                 if operation == "health":
                     transport.get_json(
                         servers.source_url + "/health",
-                        headers={"Authorization": "Bearer secret"},
+                        headers=_TEST_AUTH_HEADERS,
                         timeout=1,
                     )
                 elif operation == "transcription":
@@ -433,14 +437,14 @@ class TestUrllibVoiceStudioTransportRedirectPolicy:
                         servers.source_url + "/v1/audio/transcriptions",
                         {},
                         ("file", "audio.wav", b"private-audio", "audio/wav"),
-                        headers={"Authorization": "Bearer secret"},
+                        headers=_TEST_AUTH_HEADERS,
                         timeout=1,
                     )
                 else:
                     transport.post_json_for_bytes(
                         servers.source_url + "/v1/audio/speech",
                         {"input": "private text"},
-                        headers={"Authorization": "Bearer secret"},
+                        headers=_TEST_AUTH_HEADERS,
                         timeout=1,
                     )
 

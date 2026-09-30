@@ -30,7 +30,7 @@ from tests.mobile_api.conftest import (
 )
 
 
-def _authed(client, username="james", password="pw-123456"):
+def _authed(client, username="james", password="pw-123456"):  # pragma: allowlist secret
     user_id = create_user(username, password)
     tokens = paired_login_tokens(
         client, username, password, scopes=["chat.send", "attachments.upload"]
