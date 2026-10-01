@@ -76,7 +76,7 @@ def test_provider_selected_anthropic(monkeypatch):
         llm_model=None,
         llm_provider="anthropic",
         anthropic_model="claude-test",
-        anthropic_api_key="key",
+        anthropic_api_key="key",  # pragma: allowlist secret
     )
     model = LanguageModel(cfg)
     assert isinstance(model.strategy, AnthropicStrategy)

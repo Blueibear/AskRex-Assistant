@@ -264,7 +264,7 @@ class TestLoginRequestModel:
 
     def test_valid_password(self) -> None:
         m = LoginRequest(password="secret")  # pragma: allowlist secret -- validation fixture
-        assert m.password == "secret"
+        assert m.password == "secret"  # pragma: allowlist secret
 
     def test_too_long_raises(self) -> None:
         with pytest.raises(Exception, match="password"):

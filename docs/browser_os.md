@@ -122,7 +122,7 @@ Store credentials for a site:
 ```bash
 # Set via environment variables
 export REX_GITHUB_USERNAME="your_username"
-export REX_GITHUB_PASSWORD="your_password"
+export REX_GITHUB_PASSWORD="your_password" # pragma: allowlist secret
 
 # Or add to config/credentials.json
 {

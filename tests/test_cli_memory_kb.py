@@ -173,7 +173,7 @@ class TestMemoryCLI:
         args.user = "alice"
         args.memory_command = "add"
         args.category = "secrets"
-        args.content = '{"api_key": "secret"}'
+        args.content = '{"api_key": "secret"}'  # pragma: allowlist secret
         args.ttl = None
         args.sensitive = True
 
@@ -272,7 +272,7 @@ class TestMemoryCLI:
         ltm = LongTermMemory(storage_path=storage)
         ltm.add_entry(
             category="secrets",
-            content={"password": "secret123"},
+            content={"password": "secret123"},  # pragma: allowlist secret
             sensitive=True,
         )
         set_long_term_memory(ltm, user_id="alice")

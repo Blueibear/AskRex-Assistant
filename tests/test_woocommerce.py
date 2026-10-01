@@ -192,7 +192,7 @@ class TestWooCommerceConfig:
                         "id": "myshop",
                         "base_url": "https://example.com",
                         "consumer_key_ref": "wc:myshop:key",
-                        "consumer_secret_ref": "wc:myshop:secret",
+                        "consumer_secret_ref": "wc:myshop:secret",  # pragma: allowlist secret
                     }
                 ]
             }
@@ -349,7 +349,7 @@ class TestWooCommerceClientOrders:
         return WooCommerceClient(
             "https://example.com",
             consumer_key="ck_testkey",
-            consumer_secret="cs_testsecret",
+            consumer_secret="cs_testsecret",  # pragma: allowlist secret
             site_id="myshop",
         )
 
@@ -847,7 +847,7 @@ class TestWooCommerceClientSecurity:
         """Embedded credentials in base_url are rejected."""
         with pytest.raises(ValueError, match="embedded credentials"):
             WooCommerceClient(
-                "https://user:pass@example.com",
+                "https://user:pass@example.com",  # pragma: allowlist secret
                 consumer_key="ck_testkey",
                 consumer_secret="cs_testsecret",
             )

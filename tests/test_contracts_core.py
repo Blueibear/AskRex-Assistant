@@ -324,7 +324,7 @@ class TestRedactSensitiveKeys:
         """Should redact keys regardless of case."""
         data = {
             "API_KEY": "secret",  # pragma: allowlist secret -- redaction fixture
-            "Password": "hunter2",
+            "Password": "hunter2",  # pragma: allowlist secret
             "TOKEN": "abc",
         }
         result = redact_sensitive_keys(data)
@@ -334,7 +334,7 @@ class TestRedactSensitiveKeys:
 
     def test_custom_redacted_value(self):
         """Should support custom redaction placeholder."""
-        data = {"password": "secret"}
+        data = {"password": "secret"}  # pragma: allowlist secret
         result = redact_sensitive_keys(data, redacted_value="***")
         assert result["password"] == "***"
 

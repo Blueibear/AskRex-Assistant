@@ -40,7 +40,7 @@ def auth_header(flask_client: object) -> dict[str, str]:
     )
     resp = flask_client.post(  # type: ignore[attr-defined]
         "/api/auth/login",
-        json={"username": "testuser", "password": "s3cr3t"},
+        json={"username": "testuser", "password": "s3cr3t"},  # pragma: allowlist secret
     )
     token = resp.get_json()["token"]
     return {"Authorization": f"Bearer {token}"}

@@ -45,7 +45,7 @@ def auth_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         )
         login = c.post(
             "/api/auth/login",
-            json={"username": "testuser", "password": "Password1!"},
+            json={"username": "testuser", "password": "Password1!"},  # pragma: allowlist secret
         )
         token = login.get_json()["token"]
         yield c, token

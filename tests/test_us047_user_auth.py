@@ -174,7 +174,7 @@ class TestRegisterEndpoint:
         # Second registration of the same username: user_count>0, no token needed.
         resp = flask_client.post(  # type: ignore[attr-defined]
             "/api/auth/register",
-            json={"username": "ivan", "password": "pass"},
+            json={"username": "ivan", "password": "pass"},  # pragma: allowlist secret
         )
         assert resp.status_code == 409
 
@@ -200,7 +200,7 @@ class TestLoginEndpoint:
         )
         resp = flask_client.post(  # type: ignore[attr-defined]
             "/api/auth/login",
-            json={"username": "kate", "password": "secret"},
+            json={"username": "kate", "password": "secret"},  # pragma: allowlist secret
         )
         assert resp.status_code == 200
         data = resp.get_json()

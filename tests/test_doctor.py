@@ -258,7 +258,7 @@ class TestEnvironmentVariablesCheck:
         """Test when some API keys are set."""
         with patch.dict(
             os.environ,
-            {"OPENAI_API_KEY": "sk-test123"},
+            {"OPENAI_API_KEY": "sk-test123"},  # pragma: allowlist secret
             clear=True,
         ):
             result = check_environment_variables()
@@ -267,11 +267,11 @@ class TestEnvironmentVariablesCheck:
     def test_all_api_keys(self):
         """Test when all common API keys are set."""
         env_vars = {
-            "OPENAI_API_KEY": "sk-test",
-            "OLLAMA_API_KEY": "ollama-test",
-            "BRAVE_API_KEY": "brave-test",
+            "OPENAI_API_KEY": "sk-test",  # pragma: allowlist secret
+            "OLLAMA_API_KEY": "ollama-test",  # pragma: allowlist secret
+            "BRAVE_API_KEY": "brave-test",  # pragma: allowlist secret
             "SERPAPI_KEY": "serp-test",  # pragma: allowlist secret -- environment fixture
-            "GOOGLE_API_KEY": "google-test",
+            "GOOGLE_API_KEY": "google-test",  # pragma: allowlist secret
             "HA_TOKEN": "ha-test",
         }
         with patch.dict(os.environ, env_vars, clear=True):

@@ -119,7 +119,7 @@ class TestSetupComplete:
         """After setup completes the token is consumed; re-running returns 403."""
         payload = {
             "username": "carol",
-            "password": "securepass1",
+            "password": "securepass1",  # pragma: allowlist secret
             "llm_provider": "local",
             "tts_provider": "none",
         }

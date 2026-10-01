@@ -84,7 +84,7 @@ Add a `woocommerce.sites[]` section to `config/rex_config.json`:
         "base_url": "https://example.com",
         "enabled": true,
         "consumer_key_ref": "wc:myshop:key",
-        "consumer_secret_ref": "wc:myshop:secret",
+        "consumer_secret_ref": "wc:myshop:secret", # pragma: allowlist secret
         "timeout_seconds": 30
       }
     ]
@@ -115,7 +115,7 @@ Store them in `.env` or `config/credentials.json`:
 ```json
 {
   "wc:myshop:key": "ck_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-  "wc:myshop:secret": "cs_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   "wc:myshop:secret": "cs_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" # pragma: allowlist secret
 }
 ```
 
