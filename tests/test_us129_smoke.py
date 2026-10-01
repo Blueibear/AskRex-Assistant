@@ -137,8 +137,10 @@ class TestAuthentication:
         resp = requests.post(
             f"{live_server}/api/dashboard/login",
             json={
-                "password": "smoke-test-invalid-password"
-            },  # pragma: allowlist secret -- invalid-login fixture
+                "password": (
+                    "smoke-test-invalid-password"  # pragma: allowlist secret -- invalid-login fixture
+                )
+            },
             timeout=REQUEST_TIMEOUT,
         )
         # Any of these is valid: success, bad credentials, validation error

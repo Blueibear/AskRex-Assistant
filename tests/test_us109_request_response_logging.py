@@ -153,8 +153,8 @@ class TestRequestLogging:
             client.post(
                 "/echo",
                 json={
-                    "secret": "should-not-appear"
-                },  # pragma: allowlist secret -- redaction fixture
+                    "secret": "should-not-appear"  # pragma: allowlist secret -- redaction fixture
+                },
                 environ_base={"REMOTE_ADDR": "10.0.0.1"},
             )
         all_logged = " ".join(str(c) for c in mock_logger.info.call_args_list)

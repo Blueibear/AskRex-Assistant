@@ -61,8 +61,8 @@ class TestSetupStatus:
             "/api/auth/register",
             json={
                 "username": "alice",
-                "password": "pass1234",
-            },  # pragma: allowlist secret -- registration fixture
+                "password": "pass1234",  # pragma: allowlist secret -- registration fixture
+            },
             headers={"X-Setup-Token": _setup_token(flask_client)},
         )
         resp = flask_client.get("/api/setup/status")
@@ -102,7 +102,7 @@ class TestSetupComplete:
     def test_missing_username_returns_400(self, flask_client) -> None:  # type: ignore[override]
         resp = flask_client.post(
             "/api/setup/complete",
-            json={"password": "securepass1"},
+            json={"password": "securepass1"},  # pragma: allowlist secret -- validation fixture
             headers={"X-Setup-Token": _setup_token(flask_client)},
         )
         assert resp.status_code == 400

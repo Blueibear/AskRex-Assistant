@@ -270,7 +270,7 @@ class TestEnvironmentVariablesCheck:
             "OPENAI_API_KEY": "sk-test",
             "OLLAMA_API_KEY": "ollama-test",
             "BRAVE_API_KEY": "brave-test",
-            "SERPAPI_KEY": "serp-test",
+            "SERPAPI_KEY": "serp-test",  # pragma: allowlist secret -- environment fixture
             "GOOGLE_API_KEY": "google-test",
             "HA_TOKEN": "ha-test",
         }

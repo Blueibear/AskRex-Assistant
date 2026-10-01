@@ -256,7 +256,7 @@ class TestWooCommerceClientAddOrderNote:
         return WooCommerceClient(
             "https://example.com",
             consumer_key="ck_testkey",
-            consumer_secret="cs_testsecret",
+            consumer_secret="cs_testsecret",  # pragma: allowlist secret -- client fixture
             site_id="myshop",
         )
 

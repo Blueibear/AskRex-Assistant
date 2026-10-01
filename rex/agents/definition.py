@@ -7,7 +7,7 @@ import math
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar
 
 from rex.identity import validate_user_id
 
@@ -230,7 +230,7 @@ class AgentDefinition:
         return json.dumps(self.to_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
     @classmethod
-    def from_dict(cls, payload: object) -> Self:
+    def from_dict(cls, payload: object) -> AgentDefinition:
         if not isinstance(payload, dict):
             raise AgentDefinitionValidationError("agent definition must be an object")
         if set(payload) != cls._PERSISTED_FIELDS:

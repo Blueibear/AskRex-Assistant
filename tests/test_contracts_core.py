@@ -243,14 +243,20 @@ class TestRedactSensitiveKeys:
 
     def test_redacts_password(self):
         """Should redact 'password' key."""
-        data = {"password": "hunter2", "username": "admin"}
+        data = {
+            "password": "hunter2",  # pragma: allowlist secret -- redaction fixture
+            "username": "admin",
+        }
         result = redact_sensitive_keys(data)
         assert result["password"] == "[REDACTED]"
         assert result["username"] == "admin"
 
     def test_redacts_api_key(self):
         """Should redact 'api_key' key."""
-        data = {"api_key": "sk-xxx", "endpoint": "https://api.example.com"}
+        data = {
+            "api_key": "sk-xxx",  # pragma: allowlist secret -- redaction fixture
+            "endpoint": "https://api.example.com",
+        }
         result = redact_sensitive_keys(data)
         assert result["api_key"] == "[REDACTED]"
         assert result["endpoint"] == "https://api.example.com"
@@ -258,7 +264,7 @@ class TestRedactSensitiveKeys:
     def test_redacts_secret(self):
         """Should redact keys containing 'secret'."""
         data = {
-            "client_secret": "secret123",
+            "client_secret": "secret123",  # pragma: allowlist secret -- redaction fixture
             "client_id": "abc",
         }  # pragma: allowlist secret -- redaction fixture
         result = redact_sensitive_keys(data)
@@ -316,7 +322,11 @@ class TestRedactSensitiveKeys:
 
     def test_case_insensitive_redaction(self):
         """Should redact keys regardless of case."""
-        data = {"API_KEY": "secret", "Password": "hunter2", "TOKEN": "abc"}
+        data = {
+            "API_KEY": "secret",  # pragma: allowlist secret -- redaction fixture
+            "Password": "hunter2",
+            "TOKEN": "abc",
+        }
         result = redact_sensitive_keys(data)
         assert result["API_KEY"] == "[REDACTED]"
         assert result["Password"] == "[REDACTED]"

@@ -34,8 +34,8 @@ def auth_header(flask_client: object) -> dict[str, str]:
         "/api/auth/register",
         json={
             "username": "testuser",
-            "password": "s3cr3t",
-        },  # pragma: allowlist secret -- registration fixture
+            "password": "s3cr3t",  # pragma: allowlist secret -- registration fixture
+        },
         headers={"X-Setup-Token": setup_token},
     )
     resp = flask_client.post(  # type: ignore[attr-defined]

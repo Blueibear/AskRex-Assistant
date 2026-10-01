@@ -152,8 +152,8 @@ class TestRegisterEndpoint:
             "/api/auth/register",
             json={
                 "username": "henry",
-                "password": "passw0rd",
-            },  # pragma: allowlist secret -- registration fixture
+                "password": "passw0rd",  # pragma: allowlist secret -- registration fixture
+            },
             headers={"X-Setup-Token": _get_setup_token(flask_client)},
         )
         assert resp.status_code == 201
@@ -167,8 +167,8 @@ class TestRegisterEndpoint:
             "/api/auth/register",
             json={
                 "username": "ivan",
-                "password": "pass",
-            },  # pragma: allowlist secret -- registration fixture
+                "password": "pass",  # pragma: allowlist secret -- registration fixture
+            },
             headers={"X-Setup-Token": _get_setup_token(flask_client)},
         )
         # Second registration of the same username: user_count>0, no token needed.
@@ -194,8 +194,8 @@ class TestLoginEndpoint:
             "/api/auth/register",
             json={
                 "username": "kate",
-                "password": "secret",
-            },  # pragma: allowlist secret -- registration fixture
+                "password": "secret",  # pragma: allowlist secret -- registration fixture
+            },
             headers={"X-Setup-Token": _get_setup_token(flask_client)},
         )
         resp = flask_client.post(  # type: ignore[attr-defined]
@@ -211,16 +211,16 @@ class TestLoginEndpoint:
             "/api/auth/register",
             json={
                 "username": "leo",
-                "password": "correct",
-            },  # pragma: allowlist secret -- registration fixture
+                "password": "correct",  # pragma: allowlist secret -- registration fixture
+            },
             headers={"X-Setup-Token": _get_setup_token(flask_client)},
         )
         resp = flask_client.post(  # type: ignore[attr-defined]
             "/api/auth/login",
             json={
                 "username": "leo",
-                "password": "wrong",
-            },  # pragma: allowlist secret -- invalid-login fixture
+                "password": "wrong",  # pragma: allowlist secret -- invalid-login fixture
+            },
         )
         assert resp.status_code == 401
 

@@ -39,8 +39,8 @@ def auth_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "/api/auth/register",
             json={
                 "username": "testuser",
-                "password": "Password1!",
-            },  # pragma: allowlist secret -- registration fixture
+                "password": "Password1!",  # pragma: allowlist secret -- registration fixture
+            },
             headers={"X-Setup-Token": setup_token},
         )
         login = c.post(

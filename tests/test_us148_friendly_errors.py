@@ -146,7 +146,7 @@ def test_language_model_generate_raises_lm_studio_error_on_connection_refused() 
     mock_config.llm_provider = "openai"
     mock_config.openai_model = "local-model"
     mock_config.llm_model = "local-model"
-    mock_config.openai_api_key = "test-key"
+    mock_config.openai_api_key = "test-key"  # pragma: allowlist secret -- error fixture
     mock_config.anthropic_api_key = None
     mock_config.ollama_api_key = None
     mock_config.ollama_base_url = "http://localhost:11434"
@@ -282,7 +282,7 @@ def test_language_model_connection_error_without_base_url_propagates() -> None:
     mock_config.llm_provider = "openai"
     mock_config.openai_model = "gpt-4"
     mock_config.llm_model = "gpt-4"
-    mock_config.openai_api_key = "sk-real-key"
+    mock_config.openai_api_key = "sk-real-key"  # pragma: allowlist secret -- error fixture
     mock_config.anthropic_api_key = None
     mock_config.ollama_api_key = None
     mock_config.ollama_base_url = "http://localhost:11434"

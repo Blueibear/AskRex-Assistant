@@ -412,7 +412,8 @@ class TestWordPressClientSecurity:
     def test_rejects_embedded_credentials_in_base_url(self):
         """Embedded credentials in base_url are rejected."""
         with pytest.raises(ValueError, match="embedded credentials"):
-            WordPressClient("https://user:pass@example.com")
+            url = "https://user:pass@example.com"  # pragma: allowlist secret -- URL validation fixture
+            WordPressClient(url)
 
     def test_timeout_error_message_sanitized(self):
         """Timeout errors are normalized without leaking request details."""

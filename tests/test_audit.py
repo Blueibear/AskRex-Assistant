@@ -392,8 +392,8 @@ class TestRedactionInAuditLog:
                 tool="login",
                 tool_call_args={
                     "username": "admin",
-                    "password": "hunter2",
-                },  # pragma: allowlist secret -- audit redaction fixture
+                    "password": "hunter2",  # pragma: allowlist secret -- audit redaction fixture
+                },
                 policy_decision="allowed",
             )
             logger.log(entry)
@@ -413,9 +413,9 @@ class TestRedactionInAuditLog:
                 tool_call_args={},
                 policy_decision="allowed",
                 tool_result={
-                    "api_key": "sk-secret",
+                    "api_key": "sk-secret",  # pragma: allowlist secret -- audit redaction fixture
                     "endpoint": "https://api.example.com",
-                },  # pragma: allowlist secret -- audit redaction fixture
+                },
             )
             logger.log(entry)
 

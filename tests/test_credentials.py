@@ -119,8 +119,12 @@ class TestCredentialManager:
     def test_load_from_env_without_prefix(self):
         """Test loading credentials from environment without prefix."""
         with patch.dict(
-            os.environ, {"OPENAI_API_KEY": "openai_key_123"}, clear=False
-        ):  # pragma: allowlist secret -- environment fixture
+            os.environ,
+            {
+                "OPENAI_API_KEY": "openai_key_123"  # pragma: allowlist secret -- environment fixture
+            },
+            clear=False,
+        ):
             manager = CredentialManager()
             token = manager.get_token("openai")
             assert token == "openai_key_123"
