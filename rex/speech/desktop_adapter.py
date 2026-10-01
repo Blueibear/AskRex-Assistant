@@ -87,9 +87,7 @@ class RoutedDesktopSTT:
                 # legacy ``SpeechToTextError``/engine failures are normalized
                 # here. Cancellation and interpreter-exit signals are never
                 # normalized and propagate immediately.
-                normalized = normalize_legacy_error(
-                    exc, context=f"{provider_id} speech-to-text"
-                )
+                normalized = normalize_legacy_error(exc, context=f"{provider_id} speech-to-text")
                 if normalized is exc:
                     raise
                 last_error = normalized
