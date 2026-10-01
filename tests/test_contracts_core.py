@@ -257,7 +257,7 @@ class TestRedactSensitiveKeys:
 
     def test_redacts_secret(self):
         """Should redact keys containing 'secret'."""
-        data = {"client_secret": "secret123", "client_id": "abc"}
+        data = {"client_secret": "secret123", "client_id": "abc"}  # pragma: allowlist secret -- redaction fixture
         result = redact_sensitive_keys(data)
         assert result["client_secret"] == "[REDACTED]"
         assert result["client_id"] == "abc"
@@ -272,7 +272,7 @@ class TestRedactSensitiveKeys:
         """Should redact sensitive keys in nested dictionaries."""
         data = {
             "config": {
-                "api_key": "secret",
+                "api_key": "secret",  # pragma: allowlist secret -- redaction fixture
                 "timeout": 30,
             },
             "name": "test",
@@ -301,7 +301,7 @@ class TestRedactSensitiveKeys:
             "level1": {
                 "level2": {
                     "level3": {
-                        "password": "deep_secret",
+                        "password": "deep_secret",  # pragma: allowlist secret -- redaction fixture
                         "value": 42,
                     }
                 }

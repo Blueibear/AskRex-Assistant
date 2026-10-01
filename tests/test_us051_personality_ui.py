@@ -37,7 +37,7 @@ def auth_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         setup_token = app.config.get("SETUP_TOKEN") or ""
         c.post(
             "/api/auth/register",
-            json={"username": "testuser", "password": "Password1!"},
+            json={"username": "testuser", "password": "Password1!"},  # pragma: allowlist secret -- registration fixture
             headers={"X-Setup-Token": setup_token},
         )
         login = c.post(

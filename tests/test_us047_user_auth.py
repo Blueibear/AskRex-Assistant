@@ -150,7 +150,7 @@ class TestRegisterEndpoint:
     def test_register_returns_201_with_user(self, flask_client: object) -> None:
         resp = flask_client.post(  # type: ignore[attr-defined]
             "/api/auth/register",
-            json={"username": "henry", "password": "passw0rd"},
+            json={"username": "henry", "password": "passw0rd"},  # pragma: allowlist secret -- registration fixture
             headers={"X-Setup-Token": _get_setup_token(flask_client)},
         )
         assert resp.status_code == 201
@@ -162,7 +162,7 @@ class TestRegisterEndpoint:
         # First user requires the setup token.
         flask_client.post(  # type: ignore[attr-defined]
             "/api/auth/register",
-            json={"username": "ivan", "password": "pass"},
+            json={"username": "ivan", "password": "pass"},  # pragma: allowlist secret -- registration fixture
             headers={"X-Setup-Token": _get_setup_token(flask_client)},
         )
         # Second registration of the same username: user_count>0, no token needed.
@@ -186,7 +186,7 @@ class TestLoginEndpoint:
     def test_login_returns_token(self, flask_client: object) -> None:
         flask_client.post(  # type: ignore[attr-defined]
             "/api/auth/register",
-            json={"username": "kate", "password": "secret"},
+            json={"username": "kate", "password": "secret"},  # pragma: allowlist secret -- registration fixture
             headers={"X-Setup-Token": _get_setup_token(flask_client)},
         )
         resp = flask_client.post(  # type: ignore[attr-defined]
@@ -200,12 +200,12 @@ class TestLoginEndpoint:
     def test_login_bad_password_returns_401(self, flask_client: object) -> None:
         flask_client.post(  # type: ignore[attr-defined]
             "/api/auth/register",
-            json={"username": "leo", "password": "correct"},
+            json={"username": "leo", "password": "correct"},  # pragma: allowlist secret -- registration fixture
             headers={"X-Setup-Token": _get_setup_token(flask_client)},
         )
         resp = flask_client.post(  # type: ignore[attr-defined]
             "/api/auth/login",
-            json={"username": "leo", "password": "wrong"},
+            json={"username": "leo", "password": "wrong"},  # pragma: allowlist secret -- invalid-login fixture
         )
         assert resp.status_code == 401
 

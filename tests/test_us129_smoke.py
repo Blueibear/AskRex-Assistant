@@ -136,7 +136,7 @@ class TestAuthentication:
         """Login endpoint must accept POST and respond (not 404/405)."""
         resp = requests.post(
             f"{live_server}/api/dashboard/login",
-            json={"password": "smoke-test-invalid-password"},
+            json={"password": "smoke-test-invalid-password"},  # pragma: allowlist secret -- invalid-login fixture
             timeout=REQUEST_TIMEOUT,
         )
         # Any of these is valid: success, bad credentials, validation error

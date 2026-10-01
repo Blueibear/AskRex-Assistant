@@ -59,7 +59,7 @@ class TestSetupStatus:
     def test_needs_setup_false_after_registration(self, flask_client) -> None:  # type: ignore[override]
         flask_client.post(
             "/api/auth/register",
-            json={"username": "alice", "password": "pass1234"},
+            json={"username": "alice", "password": "pass1234"},  # pragma: allowlist secret -- registration fixture
             headers={"X-Setup-Token": _setup_token(flask_client)},
         )
         resp = flask_client.get("/api/setup/status")
@@ -85,7 +85,7 @@ class TestSetupComplete:
             "/api/setup/complete",
             json={
                 "username": "bob",
-                "password": "securepass1",
+                "password": "securepass1",  # pragma: allowlist secret -- registration fixture
                 "llm_provider": "local",
                 "tts_provider": "none",
             },
@@ -170,7 +170,7 @@ class TestSetupComplete:
         )
 
         assert captured["values"] == {
-            "OPENAI_API_KEY": "sk-test-key",
+            "OPENAI_API_KEY": "sk-test-key",  # pragma: allowlist secret -- environment fixture
         }
         assert captured["config"] == {
             "llm": {"provider": "openai"},

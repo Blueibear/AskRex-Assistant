@@ -152,7 +152,7 @@ class TestRequestLogging:
         with patch("rex.request_logging.logger") as mock_logger:
             client.post(
                 "/echo",
-                json={"secret": "should-not-appear"},
+                json={"secret": "should-not-appear"},  # pragma: allowlist secret -- redaction fixture
                 environ_base={"REMOTE_ADDR": "10.0.0.1"},
             )
         all_logged = " ".join(str(c) for c in mock_logger.info.call_args_list)
@@ -316,7 +316,7 @@ class TestBodyNotLogged:
         return app.test_client()
 
     def test_request_body_not_in_logs(self, client: Any) -> None:
-        secret_payload = '{"password": "super-secret-value-12345"}'
+        secret_payload = '{"password": "super-secret-value-12345"}'  # pragma: allowlist secret -- redaction fixture
         with patch("rex.request_logging.logger") as mock_logger:
             client.post(
                 "/echo",

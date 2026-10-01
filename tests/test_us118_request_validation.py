@@ -263,7 +263,7 @@ class TestLoginRequestModel:
         assert m.password == ""
 
     def test_valid_password(self) -> None:
-        m = LoginRequest(password="secret")
+        m = LoginRequest(password="secret")  # pragma: allowlist secret -- validation fixture
         assert m.password == "secret"
 
     def test_too_long_raises(self) -> None:

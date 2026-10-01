@@ -390,7 +390,7 @@ class TestRedactionInAuditLog:
             entry = LogEntry(
                 action_id="act_001",
                 tool="login",
-                tool_call_args={"username": "admin", "password": "hunter2"},
+                tool_call_args={"username": "admin", "password": "hunter2"},  # pragma: allowlist secret -- audit redaction fixture
                 policy_decision="allowed",
             )
             logger.log(entry)
@@ -409,7 +409,7 @@ class TestRedactionInAuditLog:
                 tool="get_credentials",
                 tool_call_args={},
                 policy_decision="allowed",
-                tool_result={"api_key": "sk-secret", "endpoint": "https://api.example.com"},
+                tool_result={"api_key": "sk-secret", "endpoint": "https://api.example.com"},  # pragma: allowlist secret -- audit redaction fixture
             )
             logger.log(entry)
 
@@ -429,7 +429,7 @@ class TestRedactionInAuditLog:
                     "config": {
                         "database": {
                             "host": "localhost",
-                            "password": "db_secret",
+                            "password": "db_secret",  # pragma: allowlist secret -- audit redaction fixture
                         }
                     }
                 },

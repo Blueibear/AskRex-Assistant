@@ -10,7 +10,7 @@ Example config fragment::
             "base_url": "https://example.com",
             "enabled": true,
             "consumer_key_ref": "wc:myshop:key",
-            "consumer_secret_ref": "wc:myshop:secret",
+            "consumer_secret_ref": "wc:myshop:secret",  # pragma: allowlist secret -- credential reference example
             "timeout_seconds": 30
           }
         ]

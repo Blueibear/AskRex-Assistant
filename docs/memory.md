@@ -136,7 +136,7 @@ entry = ltm.add_entry(
 # Add sensitive data
 entry = ltm.add_entry(
     category="secrets",
-    content={"api_key": "secret123"},
+    content={"api_key": "secret123"},  # pragma: allowlist secret -- documentation example
     sensitive=True,
 )
 
@@ -175,7 +175,7 @@ rex memory add "preferences" '{"theme": "dark"}' --user james
 rex memory add "temp" '{"key": "value"}' --ttl=7d --user james
 
 # Add sensitive entry
-rex memory add "secrets" '{"api_key": "xxx"}' --sensitive --user james
+rex memory add "secrets" '{"api_key": "xxx"}' --sensitive --user james  # pragma: allowlist secret -- documentation example
 
 # Search entries (this user's entries only)
 rex memory search "theme" --user james

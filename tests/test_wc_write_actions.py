@@ -90,7 +90,7 @@ def _make_site_config(
         base_url=base_url,
         enabled=True,
         consumer_key_ref="wc:myshop:key",
-        consumer_secret_ref="wc:myshop:secret",
+        consumer_secret_ref="wc:myshop:secret",  # pragma: allowlist secret -- credential reference fixture
     )
 
 
@@ -186,7 +186,7 @@ class TestWooCommerceClientSetOrderStatus:
         return WooCommerceClient(
             "https://example.com",
             consumer_key="ck_testkey",
-            consumer_secret="cs_testsecret",
+            consumer_secret="cs_testsecret",  # pragma: allowlist secret -- test credential fixture
             site_id="myshop",
         )
 
@@ -1228,7 +1228,7 @@ class TestWcWriteSecuritySsrf:
     def test_embedded_credentials_rejected(self):
         with pytest.raises(ValueError, match="embedded credentials"):
             WooCommerceClient(
-                "https://user:pass@example.com",
+                "https://user:pass@example.com",  # pragma: allowlist secret -- invalid basic-auth fixture
                 consumer_key="ck_testkey",
                 consumer_secret="cs_testsecret",
             )

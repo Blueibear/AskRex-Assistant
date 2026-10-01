@@ -66,7 +66,7 @@ def _check_torch_cuda() -> CheckResult:
 def _check_env_vars() -> list[CheckResult]:
     checks: list[CheckResult] = []
     required = {
-        "REX_SPEAK_API_KEY": "Required for /speak TTS endpoint authentication.",
+        "REX_SPEAK_API_KEY": "Required for /speak TTS endpoint authentication.",  # pragma: allowlist secret -- environment-variable name
     }
     for key, why in required.items():
         if os.getenv(key):
@@ -75,7 +75,7 @@ def _check_env_vars() -> list[CheckResult]:
             checks.append((key, False, f"not set ({why})"))
 
     optional = {
-        "OPENAI_API_KEY": "Needed for OpenAI-backed chat responses.",
+        "OPENAI_API_KEY": "Needed for OpenAI-backed chat responses.",  # pragma: allowlist secret -- environment-variable name
         "REX_LLM_MODEL": "Overrides default local LLM.",
     }
     for key, why in optional.items():

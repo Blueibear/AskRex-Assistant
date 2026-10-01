@@ -153,7 +153,7 @@ class TestCommitsTriggered:
         fake_response.status_code = 200
         fake_response.json.return_value = {
             "commit": {
-                "sha": "abc123def456",
+                "sha": "abc123def456",  # pragma: allowlist secret -- commit identifier fixture
                 "html_url": "https://github.com/alice/my-repo/commit/abc123def456",
             }
         }

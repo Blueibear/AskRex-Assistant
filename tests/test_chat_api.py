@@ -32,7 +32,7 @@ def auth_header(flask_client: object) -> dict[str, str]:
     setup_token = flask_client.application.config.get("SETUP_TOKEN") or ""  # type: ignore[attr-defined]
     flask_client.post(  # type: ignore[attr-defined]
         "/api/auth/register",
-        json={"username": "testuser", "password": "s3cr3t"},
+        json={"username": "testuser", "password": "s3cr3t"},  # pragma: allowlist secret -- registration fixture
         headers={"X-Setup-Token": setup_token},
     )
     resp = flask_client.post(  # type: ignore[attr-defined]
