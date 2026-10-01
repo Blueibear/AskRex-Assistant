@@ -23,14 +23,13 @@ from rex.speech.contracts import (
     SpeechProviderUnavailableError,
 )
 from rex.speech.providers.voicestudio import (
-    _NoRedirectHandler,
     UrllibVoiceStudioTransport,
     VoiceStudioConfig,
     VoiceStudioSTTProvider,
     VoiceStudioTTSProvider,
+    _NoRedirectHandler,
     is_loopback_url,
 )
-
 
 _TEST_AUTH_HEADERS = {"Authorization": "Bearer nonsecret-test-value"}
 _INVALID_TEST_USERINFO = "user" + ":invalid-test-credential"
@@ -56,12 +55,8 @@ class _RedirectServers:
     def __init__(self) -> None:
         self.source_requests: list[tuple[str, dict[str, str], bytes]] = []
         self.target_requests: list[tuple[str, dict[str, str], bytes]] = []
-        self._target = ThreadingHTTPServer(
-            ("127.0.0.1", 0), self._target_handler()
-        )
-        self._source = ThreadingHTTPServer(
-            ("127.0.0.1", 0), self._source_handler()
-        )
+        self._target = ThreadingHTTPServer(("127.0.0.1", 0), self._target_handler())
+        self._source = ThreadingHTTPServer(("127.0.0.1", 0), self._source_handler())
         self._threads = [
             threading.Thread(target=self._target.serve_forever, daemon=True),
             threading.Thread(target=self._source.serve_forever, daemon=True),
@@ -223,9 +218,7 @@ class TestVoiceStudioConfigUrlSecurity:
 class TestVoiceStudioSTTProvider:
     def test_is_local_reflects_base_url(self) -> None:
         local = VoiceStudioSTTProvider(VoiceStudioConfig(base_url="http://127.0.0.1:8020"))
-        remote = VoiceStudioSTTProvider(
-            VoiceStudioConfig(base_url="https://example.com")
-        )
+        remote = VoiceStudioSTTProvider(VoiceStudioConfig(base_url="https://example.com"))
         assert local.is_local is True
         assert remote.is_local is False
 
@@ -341,9 +334,7 @@ class TestUrllibVoiceStudioTransportResponseBounds:
         with patch.object(transport._opener, "open", return_value=response):
             with pytest.raises(SpeechProviderResponseError, match="response exceeded"):
                 if operation == "health":
-                    transport.get_json(
-                        "http://127.0.0.1:3900/health", headers={}, timeout=1
-                    )
+                    transport.get_json("http://127.0.0.1:3900/health", headers={}, timeout=1)
                 elif operation == "transcription":
                     transport.post_multipart_for_json(
                         "http://127.0.0.1:3900/v1/audio/transcriptions",
@@ -363,9 +354,7 @@ class TestUrllibVoiceStudioTransportResponseBounds:
 
 class TestUrllibVoiceStudioTransportUrlSecurity:
     @pytest.mark.parametrize("operation", ["health", "transcription", "tts"])
-    def test_remote_plaintext_url_is_rejected_before_transport(
-        self, operation: str
-    ) -> None:
+    def test_remote_plaintext_url_is_rejected_before_transport(self, operation: str) -> None:
         transport = UrllibVoiceStudioTransport()
         open_request = Mock()
 
@@ -402,9 +391,7 @@ class TestUrllibVoiceStudioTransportRedirectPolicy:
     def test_transport_installs_a_handler_that_refuses_redirects(self) -> None:
         transport = UrllibVoiceStudioTransport()
         handler = next(
-            item
-            for item in transport._opener.handlers
-            if isinstance(item, _NoRedirectHandler)
+            item for item in transport._opener.handlers if isinstance(item, _NoRedirectHandler)
         )
 
         assert (
@@ -420,9 +407,7 @@ class TestUrllibVoiceStudioTransportRedirectPolicy:
         )
 
     @pytest.mark.parametrize("operation", ["health", "transcription", "tts"])
-    def test_redirect_is_rejected_without_contacting_remote_target(
-        self, operation: str
-    ) -> None:
+    def test_redirect_is_rejected_without_contacting_remote_target(self, operation: str) -> None:
         transport = UrllibVoiceStudioTransport()
         with _RedirectServers() as servers:
             with pytest.raises(SpeechProviderResponseError, match="redirects are not allowed"):
