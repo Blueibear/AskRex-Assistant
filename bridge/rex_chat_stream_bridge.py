@@ -50,7 +50,12 @@ def main() -> None:
             from rex.runtime_paths import household_data_path
 
             user_id = validate_user_id(user_id)
-            if not any(item["id"] == str(conversation_id) for item in HistoryStore(household_data_path("history.db")).list_conversations(user_id)):
+            if not any(
+                item["id"] == str(conversation_id)
+                for item in HistoryStore(household_data_path("history.db")).list_conversations(
+                    user_id
+                )
+            ):
                 raise PermissionError("Unknown private conversation")
     except Exception as exc:
         emit({"type": "error", "error": f"Bad input: {exc}"})

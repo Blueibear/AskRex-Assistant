@@ -51,7 +51,9 @@ def test_complete_schema_has_deterministic_versioned_round_trip() -> None:
     assert restored.to_json() == definition.to_json()
 
 
-@pytest.mark.parametrize("owner, workspace", [("../other", "project"), ("james", "../project"), ("james", "")])
+@pytest.mark.parametrize(
+    "owner, workspace", [("../other", "project"), ("james", "../project"), ("james", "")]
+)
 def test_owner_and_workspace_are_validated(owner: str, workspace: str) -> None:
     with pytest.raises((AgentDefinitionValidationError, ValueError)):
         _definition(owner_user_id=owner, workspace_scope=workspace)

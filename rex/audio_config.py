@@ -104,7 +104,9 @@ _HOSTAPI_INPUT_PRIORITY = {
     "windows wdm ks": 10,
 }
 
-_LOOPBACK_INPUT_NAME_RE = re.compile(r"\b(?:loopback|stereo\s+mix|what\s+u\s+hear)\b", re.IGNORECASE)
+_LOOPBACK_INPUT_NAME_RE = re.compile(
+    r"\b(?:loopback|stereo\s+mix|what\s+u\s+hear)\b", re.IGNORECASE
+)
 # MME sometimes truncates a long Windows endpoint name. A short shared
 # prefix, however, is common enough to be an unsafe alias signal. Keep this
 # deliberately above generic names such as "Microphone (Studio" while

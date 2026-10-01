@@ -152,8 +152,13 @@ def test_canonical_conversations_are_persisted_and_isolated(store: HistoryStore)
     assert {row["title"] for row in store.list_conversations("alice")} == {"First", "Second"}
     # Reopening the first canonical ID restores its complete transcript, so
     # continuing that conversation cannot leak the selected second thread.
-    assert [row["content"] for row in store.load_history("alice", conversation_id=first["id"])] == ["first message", "first reply"]
-    assert [row["content"] for row in store.load_history("alice", conversation_id=second["id"])] == ["second message"]
+    assert [row["content"] for row in store.load_history("alice", conversation_id=first["id"])] == [
+        "first message",
+        "first reply",
+    ]
+    assert [
+        row["content"] for row in store.load_history("alice", conversation_id=second["id"])
+    ] == ["second message"]
     assert store.list_conversations("bob") == []
 
 
@@ -166,7 +171,10 @@ def test_conversation_rename_and_archive_hide_only_that_conversation(store: Hist
 
     assert renamed["title"] == "Renamed"
     assert [row["id"] for row in store.list_conversations("alice")] == [first["id"]]
-    assert {row["id"] for row in store.list_conversations("alice", include_archived=True)} == {first["id"], second["id"]}
+    assert {row["id"] for row in store.list_conversations("alice", include_archived=True)} == {
+        first["id"],
+        second["id"],
+    }
 
 
 def test_archived_or_foreign_conversation_cannot_receive_new_turns(store: HistoryStore) -> None:
@@ -185,8 +193,7 @@ def test_legacy_turns_are_migrated_to_a_reopenable_canonical_conversation(tmp_pa
     first = datetime(2026, 1, 1, tzinfo=UTC).isoformat()
     second = datetime(2026, 1, 2, tzinfo=UTC).isoformat()
     with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE turns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
@@ -194,11 +201,13 @@ def test_legacy_turns_are_migrated_to_a_reopenable_canonical_conversation(tmp_pa
                 content TEXT NOT NULL,
                 timestamp TEXT NOT NULL
             )
-            """
-        )
+            """)
         conn.executemany(
             "INSERT INTO turns (user_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
-            [("alice", "user", "legacy question", first), ("alice", "assistant", "legacy reply", second)],
+            [
+                ("alice", "user", "legacy question", first),
+                ("alice", "assistant", "legacy reply", second),
+            ],
         )
 
     store = HistoryStore(db_path=db_path)
@@ -207,7 +216,9 @@ def test_legacy_turns_are_migrated_to_a_reopenable_canonical_conversation(tmp_pa
     assert len(conversations) == 1
     assert conversations[0]["title"] == "Previous conversation"
     conversation_id = conversations[0]["id"]
-    assert [row["content"] for row in store.load_history("alice", conversation_id=conversation_id)] == [
+    assert [
+        row["content"] for row in store.load_history("alice", conversation_id=conversation_id)
+    ] == [
         "legacy question",
         "legacy reply",
     ]

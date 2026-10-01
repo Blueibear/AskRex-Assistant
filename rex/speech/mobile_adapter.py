@@ -83,9 +83,7 @@ def _unknown_voice_error() -> MobileApiError:
 class RoutedSpeechToTextAdapter:
     """STT adapter that resolves its provider through :class:`SpeechRouter`."""
 
-    def __init__(
-        self, router: SpeechRouter, *, decoder: SpeechToTextAdapter | None = None
-    ) -> None:
+    def __init__(self, router: SpeechRouter, *, decoder: SpeechToTextAdapter | None = None) -> None:
         self._router = router
         self._decoder = decoder or SpeechToTextAdapter()
 
@@ -286,9 +284,7 @@ class RoutedTextToSpeechAdapter:
                 retryable=True,
             )
         if len(audio) > MAX_TTS_AUDIO_BYTES:
-            raise MobileApiError(
-                merr.PAYLOAD_TOO_LARGE, "The synthesized audio is too large.", 413
-            )
+            raise MobileApiError(merr.PAYLOAD_TOO_LARGE, "The synthesized audio is too large.", 413)
 
 
 __all__ = ["RoutedSpeechToTextAdapter", "RoutedTextToSpeechAdapter"]

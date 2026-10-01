@@ -29,21 +29,29 @@ def test_bridge_creates_lists_opens_renames_and_archives_canonical_conversation(
     conversation_id = created["id"]
     assert isinstance(conversation_id, str)
 
-    store.save_turn("alice", "user", "Remember this", datetime.now(UTC), conversation_id=conversation_id)
+    store.save_turn(
+        "alice", "user", "Remember this", datetime.now(UTC), conversation_id=conversation_id
+    )
     listed = process_payload(request("list"), store=store)["result"]
     assert isinstance(listed, list)
     assert [(item["id"], item["title"]) for item in listed] == [(conversation_id, "Original")]
 
-    opened = process_payload(request("open", conversation_id=conversation_id), store=store)["result"]
+    opened = process_payload(request("open", conversation_id=conversation_id), store=store)[
+        "result"
+    ]
     assert isinstance(opened, dict)
     assert opened["conversation"]["id"] == conversation_id
     assert [turn["content"] for turn in opened["messages"]] == ["Remember this"]
 
-    renamed = process_payload(request("rename", conversation_id=conversation_id, title="Renamed"), store=store)["result"]
+    renamed = process_payload(
+        request("rename", conversation_id=conversation_id, title="Renamed"), store=store
+    )["result"]
     assert isinstance(renamed, dict)
     assert renamed["title"] == "Renamed"
 
-    assert process_payload(request("archive", conversation_id=conversation_id), store=store)["result"] == {"archived": True}
+    assert process_payload(request("archive", conversation_id=conversation_id), store=store)[
+        "result"
+    ] == {"archived": True}
     assert process_payload(request("list"), store=store)["result"] == []
 
 
@@ -53,7 +61,12 @@ def test_bridge_does_not_disclose_or_open_another_users_conversation(store: Hist
 
     with pytest.raises(KeyError, match="Conversation not found"):
         process_payload(
-            {"action": "open", "user": "bob", "data_scope": "private", "conversation_id": created["id"]},
+            {
+                "action": "open",
+                "user": "bob",
+                "data_scope": "private",
+                "conversation_id": created["id"],
+            },
             store=store,
         )
 
@@ -74,5 +87,7 @@ def test_bridge_lists_and_opens_legacy_history_after_upgrade(tmp_path: Path) -> 
 
     assert isinstance(listed, list)
     assert len(listed) == 1
-    opened = process_payload(request("open", conversation_id=listed[0]["id"]), store=store)["result"]
+    opened = process_payload(request("open", conversation_id=listed[0]["id"]), store=store)[
+        "result"
+    ]
     assert opened["messages"][0]["content"] == "persisted before upgrade"

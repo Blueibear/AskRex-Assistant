@@ -175,9 +175,9 @@ def test_openai_package_is_a_base_dependency():
     """
     pyproject = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     base_deps = pyproject["project"]["dependencies"]
-    assert any(dep.split(">=")[0].split("==")[0].strip() == "openai" for dep in base_deps), (
-        "openai must be declared in [project.dependencies], not only in an optional extra"
-    )
+    assert any(
+        dep.split(">=")[0].split("==")[0].strip() == "openai" for dep in base_deps
+    ), "openai must be declared in [project.dependencies], not only in an optional extra"
 
 
 def test_openai_package_is_in_packaged_electron_runtime():

@@ -62,6 +62,7 @@ class SpeechToTextProvider(Protocol):
     """Provider-neutral STT contract."""
 
     provider_id: str
+
     @property
     def is_local(self) -> bool:
         """Whether this provider keeps audio on the local machine."""
@@ -85,6 +86,7 @@ class TextToSpeechProvider(Protocol):
     """Provider-neutral TTS contract."""
 
     provider_id: str
+
     @property
     def is_local(self) -> bool:
         """Whether this provider keeps audio on the local machine."""

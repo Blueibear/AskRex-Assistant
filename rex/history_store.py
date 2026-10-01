@@ -109,14 +109,12 @@ class HistoryStore:
         non-conversation callers compatible while making the desktop's
         canonical list/open controls able to recover the persisted transcript.
         """
-        legacy_users = conn.execute(
-            """
+        legacy_users = conn.execute("""
             SELECT user_id, MIN(timestamp) AS created_at, MAX(timestamp) AS updated_at
             FROM turns
             WHERE conversation_id IS NULL
             GROUP BY user_id
-            """
-        ).fetchall()
+            """).fetchall()
         for row in legacy_users:
             conversation_id = str(uuid.uuid4())
             conn.execute(
@@ -180,7 +178,9 @@ class HistoryStore:
                         (ts, conversation_id, user_id),
                     )
 
-    def load_history(self, user_id: str, limit: int = 50, conversation_id: str | None = None) -> list[dict]:
+    def load_history(
+        self, user_id: str, limit: int = 50, conversation_id: str | None = None
+    ) -> list[dict]:
         """Return the most recent *limit* turns for *user_id*, oldest first.
 
         Args:
@@ -223,7 +223,13 @@ class HistoryStore:
                     "INSERT INTO conversations (id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
                     (conversation_id, user_id, title, now, now),
                 )
-        return {"id": conversation_id, "title": title, "created_at": now, "updated_at": now, "archived_at": None}
+        return {
+            "id": conversation_id,
+            "title": title,
+            "created_at": now,
+            "updated_at": now,
+            "archived_at": None,
+        }
 
     def list_conversations(self, user_id: str, include_archived: bool = False) -> list[dict]:
         user_id = validate_user_id(user_id)
@@ -246,7 +252,10 @@ class HistoryStore:
         now = datetime.now(UTC).isoformat()
         with self._lock:
             with self._connection() as conn:
-                cursor = conn.execute("UPDATE conversations SET title = ?, updated_at = ? WHERE id = ? AND user_id = ? AND archived_at IS NULL", (title, now, conversation_id, user_id))
+                cursor = conn.execute(
+                    "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ? AND user_id = ? AND archived_at IS NULL",
+                    (title, now, conversation_id, user_id),
+                )
                 if cursor.rowcount != 1:
                     raise KeyError("Conversation not found")
         return {"id": conversation_id, "title": title, "updated_at": now}
@@ -257,7 +266,10 @@ class HistoryStore:
         now = datetime.now(UTC).isoformat()
         with self._lock:
             with self._connection() as conn:
-                cursor = conn.execute("UPDATE conversations SET archived_at = ?, updated_at = ? WHERE id = ? AND user_id = ? AND archived_at IS NULL", (now, now, conversation_id, user_id))
+                cursor = conn.execute(
+                    "UPDATE conversations SET archived_at = ?, updated_at = ? WHERE id = ? AND user_id = ? AND archived_at IS NULL",
+                    (now, now, conversation_id, user_id),
+                )
                 if cursor.rowcount != 1:
                     raise KeyError("Conversation not found")
 

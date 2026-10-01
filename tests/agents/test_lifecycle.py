@@ -14,9 +14,14 @@ def test_canonical_lifecycle_transitions_are_allowed() -> None:
 
 @pytest.mark.parametrize(
     ("current", "target"),
-    [(AgentLifecycle.DRAFT, AgentLifecycle.ACTIVE), (AgentLifecycle.VALIDATED, AgentLifecycle.PAUSED)],
+    [
+        (AgentLifecycle.DRAFT, AgentLifecycle.ACTIVE),
+        (AgentLifecycle.VALIDATED, AgentLifecycle.PAUSED),
+    ],
 )
-def test_lifecycle_invalid_skips_fail_closed(current: AgentLifecycle, target: AgentLifecycle) -> None:
+def test_lifecycle_invalid_skips_fail_closed(
+    current: AgentLifecycle, target: AgentLifecycle
+) -> None:
     with pytest.raises(LifecycleTransitionError):
         transition(current, target)
 
@@ -32,5 +37,8 @@ def test_reactivation_after_revocation_requires_a_new_approval() -> None:
     with pytest.raises(LifecycleTransitionError, match="new approval"):
         transition(AgentLifecycle.REVOKED, AgentLifecycle.ACTIVE)
 
-    assert transition(AgentLifecycle.REVOKED, AgentLifecycle.APPROVED, new_approval=True) is AgentLifecycle.APPROVED
+    assert (
+        transition(AgentLifecycle.REVOKED, AgentLifecycle.APPROVED, new_approval=True)
+        is AgentLifecycle.APPROVED
+    )
     assert transition(AgentLifecycle.APPROVED, AgentLifecycle.ACTIVE) is AgentLifecycle.ACTIVE

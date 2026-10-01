@@ -25,9 +25,7 @@ class TestSpuriousMediaToolRequestIgnored:
         # Reproduces the exact declarative turn: "My test phrase is purple
         # elephant 7319." The completion below is the kind of spurious
         # model-emitted tool call observed on physical LM Studio hardware.
-        llm_text = (
-            'TOOL_REQUEST: {"tool": "media_read", "args": {"query": "purple elephant 7319"}}'
-        )
+        llm_text = 'TOOL_REQUEST: {"tool": "media_read", "args": {"query": "purple elephant 7319"}}'
         model_call_fn = MagicMock(return_value="Got it, purple elephant 7319.")
 
         with patch("rex.openclaw.tool_executor.execute_tool") as mock_execute:

@@ -23,9 +23,7 @@ class _PathLogCapture(logging.Handler):
         self.records.append(record)
 
 
-def test_speculative_dispatcher_failure_retains_only_safe_metadata(
-    tmp_path: Path, caplog
-) -> None:
+def test_speculative_dispatcher_failure_retains_only_safe_metadata(tmp_path: Path, caplog) -> None:
     """A real speculative dispatch never logs or persists private failure text."""
     private_payload = "SPECULATIVE_PRIVATE_PAYLOAD_77"
     private_exception = "SPECULATIVE_PRIVATE_EXCEPTION_88"

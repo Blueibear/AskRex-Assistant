@@ -42,7 +42,9 @@ def _json_value(value: Any, path: str = "") -> Any:
                 raise AgentDefinitionValidationError("policy keys must be text")
             key_lower = key.casefold()
             if any(part in key_lower for part in _SENSITIVE_FIELD_PARTS):
-                raise AgentDefinitionValidationError("agent definitions must not contain raw secret fields")
+                raise AgentDefinitionValidationError(
+                    "agent definitions must not contain raw secret fields"
+                )
             normalized[key] = _json_value(item, f"{path}.{key}" if path else key)
         return normalized
     if isinstance(value, (list, tuple)):
@@ -107,12 +109,32 @@ class AgentDefinition:
     CURRENT_SCHEMA_VERSION: ClassVar[int] = 1
     _PERSISTED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
-            "schema_version", "agent_id", "name", "description", "purpose", "owner_user_id",
-            "workspace_scope", "instructions", "model_policy", "skill_refs", "capability_bindings",
-            "memory_policy", "trigger_definitions", "resource_policy", "approval_policy",
-            "escalation_policy", "verification_policy", "delegation_policy", "retry_policy",
-            "notification_policy", "audit_policy", "lifecycle_status", "version", "provenance",
-            "created_at", "updated_at",
+            "schema_version",
+            "agent_id",
+            "name",
+            "description",
+            "purpose",
+            "owner_user_id",
+            "workspace_scope",
+            "instructions",
+            "model_policy",
+            "skill_refs",
+            "capability_bindings",
+            "memory_policy",
+            "trigger_definitions",
+            "resource_policy",
+            "approval_policy",
+            "escalation_policy",
+            "verification_policy",
+            "delegation_policy",
+            "retry_policy",
+            "notification_policy",
+            "audit_policy",
+            "lifecycle_status",
+            "version",
+            "provenance",
+            "created_at",
+            "updated_at",
         }
     )
 
@@ -164,8 +186,12 @@ class AgentDefinition:
             if field_name == "skill_refs" and not all(
                 isinstance(item, str) and item for item in normalized
             ):
-                raise AgentDefinitionValidationError("skill_refs must contain non-empty text references")
-            if field_name != "skill_refs" and not all(isinstance(item, dict) for item in normalized):
+                raise AgentDefinitionValidationError(
+                    "skill_refs must contain non-empty text references"
+                )
+            if field_name != "skill_refs" and not all(
+                isinstance(item, dict) for item in normalized
+            ):
                 raise AgentDefinitionValidationError(f"{field_name} must contain objects")
             object.__setattr__(self, field_name, normalized)
 
@@ -208,7 +234,9 @@ class AgentDefinition:
         if not isinstance(payload, dict):
             raise AgentDefinitionValidationError("agent definition must be an object")
         if set(payload) != cls._PERSISTED_FIELDS:
-            raise AgentDefinitionValidationError("agent definition has unsupported or missing fields")
+            raise AgentDefinitionValidationError(
+                "agent definition has unsupported or missing fields"
+            )
         values = dict(payload)
         values["created_at"] = _parse_timestamp(values["created_at"], "created_at")
         values["updated_at"] = _parse_timestamp(values["updated_at"], "updated_at")

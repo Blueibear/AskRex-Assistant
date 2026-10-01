@@ -107,9 +107,7 @@ class VoiceStudioConfig:
     voice_aliases: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "base_url", validate_voicestudio_base_url(self.base_url)
-        )
+        object.__setattr__(self, "base_url", validate_voicestudio_base_url(self.base_url))
 
     @property
     def is_local(self) -> bool:
@@ -161,9 +159,7 @@ class UrllibVoiceStudioTransport:
     ) -> bytes:
         payload = json.dumps(body).encode("utf-8")
         merged_headers = {**headers, "Content-Type": "application/json"}
-        request = urllib.request.Request(
-            url, data=payload, headers=merged_headers, method="POST"
-        )
+        request = urllib.request.Request(url, data=payload, headers=merged_headers, method="POST")
         return self._send_raw(request, timeout)
 
     def post_multipart_for_json(
@@ -218,12 +214,8 @@ class UrllibVoiceStudioTransport:
             raise SpeechProviderTimeoutError("VoiceStudio request timed out") from exc
         except urllib.error.HTTPError as exc:
             if 300 <= exc.code < 400:
-                raise SpeechProviderResponseError(
-                    "VoiceStudio redirects are not allowed"
-                ) from exc
-            raise SpeechProviderUnavailableError(
-                f"VoiceStudio returned HTTP {exc.code}"
-            ) from exc
+                raise SpeechProviderResponseError("VoiceStudio redirects are not allowed") from exc
+            raise SpeechProviderUnavailableError(f"VoiceStudio returned HTTP {exc.code}") from exc
         except urllib.error.URLError as exc:
             raise SpeechProviderUnavailableError(f"VoiceStudio is unreachable: {exc}") from exc
 
@@ -416,9 +408,7 @@ class VoiceStudioTTSProvider:
                 return aliased
             known = self.list_voice_ids()
             if known and requested not in known:
-                raise SpeechProviderResponseError(
-                    f"VoiceStudio has no voice named '{requested}'"
-                )
+                raise SpeechProviderResponseError(f"VoiceStudio has no voice named '{requested}'")
             return requested
         if self._config.default_voice:
             return self._config.default_voice

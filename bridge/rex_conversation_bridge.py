@@ -10,7 +10,9 @@ from rex.identity import validate_user_id
 from rex.runtime_paths import household_data_path
 
 
-def process_payload(payload: dict[str, object], *, store: HistoryStore | None = None) -> dict[str, object]:
+def process_payload(
+    payload: dict[str, object], *, store: HistoryStore | None = None
+) -> dict[str, object]:
     """Run one private, owner-scoped canonical conversation operation."""
     if payload.get("data_scope") != "private":
         raise PermissionError("Conversations require private Electron data scope")

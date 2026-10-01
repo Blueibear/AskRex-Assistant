@@ -61,9 +61,7 @@ def test_missing_or_stale_identity_with_multiple_users_hands_off_to_selection(
     monkeypatch.setattr(
         rex_identity_bridge, "_discover_desktop_user_ids", lambda: {"james", "cole"}
     )
-    monkeypatch.setattr(
-        "rex.identity.resolve_active_user", lambda **_kwargs: configured_user
-    )
+    monkeypatch.setattr("rex.identity.resolve_active_user", lambda **_kwargs: configured_user)
 
     with pytest.raises(rex_identity_bridge.AmbiguousIdentityError) as excinfo:
         rex_identity_bridge.resolve_electron_session_user()

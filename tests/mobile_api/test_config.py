@@ -179,9 +179,7 @@ class TestJwtSecret:
     def test_missing_secret_fails_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from rex.mobile_api.auth import MobileAuthConfigurationError, load_jwt_secret
 
-        monkeypatch.setattr(
-            "rex.credentials.get_persisted_credential", lambda _name: None
-        )
+        monkeypatch.setattr("rex.credentials.get_persisted_credential", lambda _name: None)
         with pytest.raises(MobileAuthConfigurationError, match="REX_JWT_SECRET"):
             load_jwt_secret()
 
@@ -200,9 +198,7 @@ class TestJwtSecret:
         from rex.mobile_api.auth import load_jwt_secret
 
         secret = "a" * 64
-        monkeypatch.setattr(
-            "rex.credentials.get_persisted_credential", lambda _name: secret
-        )
+        monkeypatch.setattr("rex.credentials.get_persisted_credential", lambda _name: secret)
         assert load_jwt_secret() == secret
 
     def test_app_factory_fails_closed_without_secret(
@@ -212,8 +208,6 @@ class TestJwtSecret:
         from rex.mobile_api.auth import MobileAuthConfigurationError
 
         monkeypatch.setenv("REX_DATA_DIR", str(tmp_path / "data"))
-        monkeypatch.setattr(
-            "rex.credentials.get_persisted_credential", lambda _name: None
-        )
+        monkeypatch.setattr("rex.credentials.get_persisted_credential", lambda _name: None)
         with pytest.raises(MobileAuthConfigurationError):
             create_mobile_app()

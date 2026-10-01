@@ -148,7 +148,9 @@ class Assistant:
                 self._history_store = HistoryStore(db_path=db_path)
                 if self._user_id is not None:
                     # Preload the last 50 turns into in-memory history
-                    stored = self._history_store.load_history(self._user_id, limit=50, conversation_id=self._conversation_id)
+                    stored = self._history_store.load_history(
+                        self._user_id, limit=50, conversation_id=self._conversation_id
+                    )
                     self._history = [
                         ConversationTurn(speaker=row["role"], text=row["content"]) for row in stored
                     ]
@@ -853,8 +855,12 @@ class Assistant:
         history_store = getattr(self, "_history_store", None)
         if history_store is not None:
             try:
-                history_store.save_turn(uid, "user", transcript, now, conversation_id=self._conversation_id)
-                history_store.save_turn(uid, "assistant", completion, now, conversation_id=self._conversation_id)
+                history_store.save_turn(
+                    uid, "user", transcript, now, conversation_id=self._conversation_id
+                )
+                history_store.save_turn(
+                    uid, "assistant", completion, now, conversation_id=self._conversation_id
+                )
             except Exception as exc:
                 logger.warning("Failed to persist conversation turn: %s", exc)
 

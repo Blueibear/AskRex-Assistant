@@ -408,9 +408,7 @@ class TextToSpeech:
                     if candidate_provider == "xtts":
                         run_metrics.update(
                             await await_with_cancellation(
-                                self._speak_xtts(
-                                    text, speaker_wav, request_started_at=started_at
-                                )
+                                self._speak_xtts(text, speaker_wav, request_started_at=started_at)
                             )
                         )
                     elif candidate_provider == "edge":

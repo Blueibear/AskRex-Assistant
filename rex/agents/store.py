@@ -47,7 +47,9 @@ class AgentDefinitionStore:
                 mode="w", encoding="utf-8", dir=path.parent, suffix=".tmp", delete=False
             ) as handle:
                 temporary = Path(handle.name)
-                json.dump(payload, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                json.dump(
+                    payload, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                )
                 handle.write("\n")
                 handle.flush()
                 os.fsync(handle.fileno())
@@ -90,7 +92,9 @@ class AgentDefinitionStore:
             try:
                 definition = self.get(owner, path.stem, actor_user_id=owner)
             except AgentDefinitionValidationError as exc:
-                raise AgentStoreCorruptRecordError("agent definition record has an invalid path") from exc
+                raise AgentStoreCorruptRecordError(
+                    "agent definition record has an invalid path"
+                ) from exc
             if definition is not None:
                 definitions.append(definition)
         return definitions

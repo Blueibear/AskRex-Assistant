@@ -30,9 +30,7 @@ class TestSpeechRouterDefaults:
         assert isinstance(services.stt, SpeechToTextAdapter)
         assert isinstance(services.tts, TextToSpeechAdapter)
 
-    def test_enabled_uses_routed_adapters(
-        self, mobile_env: Path, monkeypatch
-    ) -> None:
+    def test_enabled_uses_routed_adapters(self, mobile_env: Path, monkeypatch) -> None:
         monkeypatch.setattr(rex_config_module.settings, "speech", SpeechConfig(enabled=True))
         services = _build_services(mobile_env)
         assert isinstance(services.stt, RoutedSpeechToTextAdapter)

@@ -33,7 +33,10 @@ def test_records_live_beneath_the_owner_private_data_root(tmp_path: Path) -> Non
     saved = store.save(definition, actor_user_id="james")
 
     assert saved == definition
-    assert store.path_for("james", "agent-one") == tmp_path / "users" / "james" / "agents" / "agent-one.json"
+    assert (
+        store.path_for("james", "agent-one")
+        == tmp_path / "users" / "james" / "agents" / "agent-one.json"
+    )
     assert store.path_for("james", "agent-one").is_file()
 
 

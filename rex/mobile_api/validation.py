@@ -305,9 +305,13 @@ def parse_chat_payload(payload: dict[str, Any]) -> ChatRequest:
         try:
             attachment_id = str(uuid.UUID(value))
         except (ValueError, TypeError, AttributeError) as exc:
-            raise MobileApiError(merr.BAD_REQUEST, "Field 'attachment_ids' is invalid.", 400) from exc
+            raise MobileApiError(
+                merr.BAD_REQUEST, "Field 'attachment_ids' is invalid.", 400
+            ) from exc
         if attachment_id in attachment_ids:
-            raise MobileApiError(merr.BAD_REQUEST, "Field 'attachment_ids' contains duplicates.", 400)
+            raise MobileApiError(
+                merr.BAD_REQUEST, "Field 'attachment_ids' contains duplicates.", 400
+            )
         attachment_ids.append(attachment_id)
 
     return ChatRequest(
