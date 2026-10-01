@@ -66,8 +66,9 @@ class RoutedDesktopSTT:
 
         last_error: BaseException | None = None
         for provider in chain:
+            provider_id = provider.provider_id
             try:
-                if provider.provider_id == NATIVE_PROVIDER_ID:
+                if provider_id == NATIVE_PROVIDER_ID:
                     return await self._native_stt.transcribe(audio, sample_rate)
 
                 wav_bytes = _to_wav_buffer(audio, sample_rate)
@@ -87,7 +88,7 @@ class RoutedDesktopSTT:
                 # here. Cancellation and interpreter-exit signals are never
                 # normalized and propagate immediately.
                 normalized = normalize_legacy_error(
-                    exc, context=f"{provider.provider_id} speech-to-text"
+                    exc, context=f"{provider_id} speech-to-text"
                 )
                 if normalized is exc:
                     raise
