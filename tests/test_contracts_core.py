@@ -257,7 +257,10 @@ class TestRedactSensitiveKeys:
 
     def test_redacts_secret(self):
         """Should redact keys containing 'secret'."""
-        data = {"client_secret": "secret123", "client_id": "abc"}  # pragma: allowlist secret -- redaction fixture
+        data = {
+            "client_secret": "secret123",
+            "client_id": "abc",
+        }  # pragma: allowlist secret -- redaction fixture
         result = redact_sensitive_keys(data)
         assert result["client_secret"] == "[REDACTED]"
         assert result["client_id"] == "abc"
