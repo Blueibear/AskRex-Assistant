@@ -120,9 +120,7 @@ class TestCredentialManager:
         """Test loading credentials from environment without prefix."""
         with patch.dict(
             os.environ,
-            {
-                "OPENAI_API_KEY": "openai_key_123"  # pragma: allowlist secret -- environment fixture
-            },
+            {"OPENAI_API_KEY": "openai_key_123"},  # pragma: allowlist secret -- environment fixture
             clear=False,
         ):
             manager = CredentialManager()
