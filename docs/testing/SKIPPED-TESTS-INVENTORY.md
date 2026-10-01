@@ -156,7 +156,7 @@ The runtime count is intentionally separate from the executable source-site coun
 | `tests/test_us120_performance_baseline.py` | 180 | `pytest.skip` | docs/performance-baseline.md not yet created | `temporary-bug-skip` | `fix` | `US-093` |
 | `tests/test_us120_performance_baseline.py` | 187 | `pytest.skip` | docs/performance-baseline.md not yet created | `temporary-bug-skip` | `fix` | `US-093` |
 | `tests/test_us129_smoke.py` | 54 | `pytest.skip` | Local Rex instance not running — start with 'python flask_proxy.py' to exercise live-server smoke tests | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
-| `tests/test_us129_smoke.py` | 323 | `pytest.skip` | f"agent_server optional dependency not available: {exc}" | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
+| `tests/test_us129_smoke.py` | 327 | `pytest.skip` | f"agent_server optional dependency not available: {exc}" | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
 | `tests/test_us139_install_scripts.py` | 139 | `skipif` | executable bit not relevant on Windows | `platform-skip` | `keep` | permanent: platform/runtime-specific guard |
 | `tests/test_us140_full_extra.py` | 138 | `pytest.skip` | install.sh not present | `temporary-bug-skip` | `fix` | `US-093` |
 | `tests/test_us140_full_extra.py` | 145 | `pytest.skip` | install.ps1 not present | `temporary-bug-skip` | `fix` | `US-093` |
