@@ -35,6 +35,14 @@ def test_rexspeak_launcher_is_rooted_at_script_location() -> None:
     assert "& $VenvPython -m waitress" in script
 
 
+def test_rexspeak_launcher_requires_an_operator_supplied_api_key() -> None:
+    script = _read("Start-RexSpeak.ps1")
+
+    assert "[string]::IsNullOrWhiteSpace($env:REX_SPEAK_API_KEY)" in script
+    assert "REX_SPEAK_API_KEY must be set" in script
+    assert "YOUR-SECRET-HERE" not in script
+
+
 def test_source_installer_roots_repo_paths_at_its_own_location() -> None:
     script = _read("install.ps1")
 

@@ -1,6 +1,8 @@
 $ErrorActionPreference = "Stop"
 
-$env:REX_SPEAK_API_KEY = 'YOUR-SECRET-HERE' # pragma: allowlist secret -- documented placeholder
+if ([string]::IsNullOrWhiteSpace($env:REX_SPEAK_API_KEY)) {
+    throw "REX_SPEAK_API_KEY must be set before starting RexSpeak."
+}
 $env:REX_SPEAK_STORAGE_URI = 'redis://127.0.0.1:6379/0'   # optional
 
 $RepoRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
