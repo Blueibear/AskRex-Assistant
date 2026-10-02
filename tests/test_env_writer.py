@@ -62,7 +62,7 @@ def test_read_current_env(sample_env):
     assert env_vars["REX_ACTIVE_USER"] == "john"
     assert env_vars["REX_LOG_LEVEL"] == "DEBUG"
     assert env_vars["REX_DEBUG"] == "true"
-    assert env_vars["OPENAI_API_KEY"] == "sk-test123"
+    assert env_vars["OPENAI_API_KEY"] == "sk-test123"  # pragma: allowlist secret -- fixture
     assert env_vars["CUSTOM_KEY"] == "custom_value"
 
 
@@ -107,7 +107,7 @@ def test_write_env_from_template(sample_env_example, tmp_path):
         "REX_ACTIVE_USER": "alice",
         "REX_LOG_LEVEL": "WARNING",
         "REX_DEBUG": "true",
-        "OPENAI_API_KEY": "sk-new-key",
+        "OPENAI_API_KEY": "sk-new-key",  # pragma: allowlist secret -- fixture
     }
 
     write_env_from_template(env_path, sample_env_example, values, create_backup=False)

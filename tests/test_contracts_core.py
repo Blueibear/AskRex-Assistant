@@ -342,7 +342,7 @@ class TestRedactSensitiveKeys:
         """Should not modify the original data structure."""
         data = {"password": "secret", "nested": {"token": "abc"}}  # pragma: allowlist secret
         result = redact_sensitive_keys(data)
-        assert data["password"] == "secret"
+        assert data["password"] == "secret"  # pragma: allowlist secret -- fixture
         assert data["nested"]["token"] == "abc"
         assert result["password"] == "[REDACTED]"
 

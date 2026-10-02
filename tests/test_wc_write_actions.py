@@ -1222,7 +1222,7 @@ class TestWcWriteSecuritySsrf:
             WooCommerceClient(
                 "https://localhost",
                 consumer_key="ck_testkey",
-                consumer_secret="cs_testsecret",
+                consumer_secret="cs_testsecret",  # pragma: allowlist secret -- fixture
             )
 
     def test_embedded_credentials_rejected(self):

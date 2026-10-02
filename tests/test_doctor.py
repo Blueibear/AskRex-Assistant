@@ -441,7 +441,7 @@ class TestDoctorWithMockEnvironment:
             # Mock environment with API keys
             env_vars = {
                 "OPENAI_API_KEY": "sk-test",
-                "BRAVE_API_KEY": "brave-test",
+                "BRAVE_API_KEY": "brave-test",  # pragma: allowlist secret -- fixture
             }
 
             with patch.dict(os.environ, env_vars):

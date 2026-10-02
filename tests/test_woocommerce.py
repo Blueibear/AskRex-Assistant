@@ -204,7 +204,7 @@ class TestWooCommerceConfig:
         assert site.base_url == "https://example.com"
         assert site.enabled is True
         assert site.consumer_key_ref == "wc:myshop:key"
-        assert site.consumer_secret_ref == "wc:myshop:secret"
+        assert site.consumer_secret_ref == "wc:myshop:secret"  # pragma: allowlist secret -- fixture
 
     def test_trailing_slash_stripped(self):
         """base_url trailing slash is stripped."""
@@ -471,7 +471,7 @@ class TestWooCommerceClientProducts:
         return WooCommerceClient(
             "https://example.com",
             consumer_key="ck_testkey",
-            consumer_secret="cs_testsecret",
+            consumer_secret="cs_testsecret",  # pragma: allowlist secret -- fixture
             site_id="myshop",
         )
 

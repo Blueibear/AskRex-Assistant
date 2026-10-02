@@ -136,7 +136,7 @@ class TestSetupComplete:
             "/api/setup/complete",
             json={
                 "username": "dave",
-                "password": "securepass1",
+                "password": "securepass1",  # pragma: allowlist secret -- fixture
                 "llm_provider": "local",
                 "tts_provider": "none",
             },

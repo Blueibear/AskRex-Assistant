@@ -47,7 +47,7 @@ def _make_imap_backend(imap_mock: MagicMock | None = None) -> ImapSmtpEmailBacke
         imap_host="imap.example.com",
         smtp_host="smtp.example.com",
         username="user@example.com",
-        password="secret",
+        password="secret",  # pragma: allowlist secret -- fixture
         imap_client_factory=lambda: imap_mock,
         smtp_client_factory=lambda: _make_smtp_mock(),
     )

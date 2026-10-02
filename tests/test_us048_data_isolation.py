@@ -98,7 +98,7 @@ class TestMemoryProfilesKeyedByUser:
         # Second user: user_count > 0, no token required.
         resp_b = flask_client.post(  # type: ignore[attr-defined]
             "/api/auth/register",
-            json={"username": "bob", "password": "pass"},
+            json={"username": "bob", "password": "pass"},  # pragma: allowlist secret -- fixture
         )
         id_a = resp_a.get_json()["id"]
         id_b = resp_b.get_json()["id"]
