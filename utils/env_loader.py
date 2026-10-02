@@ -10,15 +10,29 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import IO
 
 try:
     from dotenv import find_dotenv, load_dotenv
 except ImportError:
     # Gracefully handle missing python-dotenv
-    def load_dotenv(*args, **kwargs):
+    def load_dotenv(
+        dotenv_path: str | os.PathLike[str] | None = None,
+        stream: IO[str] | None = None,
+        verbose: bool = False,
+        override: bool = False,
+        interpolate: bool = True,
+        encoding: str | None = None,
+    ) -> bool:
+        del dotenv_path, stream, verbose, override, interpolate, encoding
         return False
 
-    def find_dotenv(*args, **kwargs):
+    def find_dotenv(
+        filename: str = ".env",
+        raise_error_if_not_found: bool = False,
+        usecwd: bool = False,
+    ) -> str:
+        del filename, raise_error_if_not_found, usecwd
         return ""
 
 

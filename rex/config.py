@@ -12,6 +12,7 @@ import json
 import os
 import sys
 from dataclasses import asdict, dataclass, field
+from typing import IO
 from urllib.parse import urlparse
 
 from rex.exception_handler import wrap_entrypoint
@@ -26,19 +27,39 @@ try:
     from dotenv import load_dotenv, set_key
 except ImportError:
 
-    def load_dotenv(*args, **kwargs):
+    def load_dotenv(
+        dotenv_path: str | os.PathLike[str] | None = None,
+        stream: IO[str] | None = None,
+        verbose: bool = False,
+        override: bool = False,
+        interpolate: bool = True,
+        encoding: str | None = None,
+    ) -> bool:
+        del dotenv_path, stream, verbose, override, interpolate, encoding
         return False
 
-    def set_key(env_path: str, key: str, value: str):
-        path = Path(env_path)
+    def set_key(
+        dotenv_path: str | os.PathLike[str],
+        key_to_set: str,
+        value_to_set: str,
+        quote_mode: str = "always",
+        export: bool = False,
+        encoding: str | None = "utf-8",
+    ) -> tuple[bool | None, str, str]:
+        del quote_mode, export, encoding
+        path = Path(dotenv_path)
         lines = (
-            [line for line in path.read_text().splitlines() if not line.startswith(f"{key}=")]
+            [
+                line
+                for line in path.read_text().splitlines()
+                if not line.startswith(f"{key_to_set}=")
+            ]
             if path.exists()
             else []
         )
-        lines.append(f"{key}={value}")
+        lines.append(f"{key_to_set}={value_to_set}")
         path.write_text("\n".join(lines) + "\n")
-        return key, value, True
+        return True, key_to_set, value_to_set
 
 
 from rex.assistant_errors import ConfigurationError
