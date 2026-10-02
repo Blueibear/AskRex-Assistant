@@ -26,10 +26,10 @@ try:
     from dotenv import load_dotenv, set_key
 except ImportError:
 
-    def load_dotenv(*args, **kwargs):  # type: ignore[misc]
+    def load_dotenv(*args, **kwargs):
         return False
 
-    def set_key(env_path: str, key: str, value: str):  # type: ignore[misc]
+    def set_key(env_path: str, key: str, value: str):
         path = Path(env_path)
         lines = (
             [line for line in path.read_text().splitlines() if not line.startswith(f"{key}=")]

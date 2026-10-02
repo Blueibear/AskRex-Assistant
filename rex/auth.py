@@ -149,7 +149,7 @@ def authenticate(username: str, password: str) -> str:
     }
     token = jwt.encode(payload, get_jwt_secret(), algorithm=_JWT_ALGORITHM)
     logger.info("Authenticated user: %s", username)
-    return token
+    return str(token)
 
 
 def get_current_user(token: str) -> dict[str, Any]:

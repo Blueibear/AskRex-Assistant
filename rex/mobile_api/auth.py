@@ -112,7 +112,7 @@ def issue_access_token(
         "nbf": now,
         "exp": now + timedelta(seconds=ttl_seconds),
     }
-    return jwt.encode(payload, secret, algorithm=JWT_ALGORITHM)
+    return str(jwt.encode(payload, secret, algorithm=JWT_ALGORITHM))
 
 
 def decode_access_token(token: str, secret: str) -> dict[str, Any]:
@@ -122,7 +122,7 @@ def decode_access_token(token: str, secret: str) -> dict[str, Any]:
         MobileApiError: With ``AUTH_TOKEN_EXPIRED`` or ``AUTH_TOKEN_INVALID``.
     """
     try:
-        return jwt.decode(
+        payload = jwt.decode(
             token,
             secret,
             algorithms=[JWT_ALGORITHM],
@@ -136,6 +136,9 @@ def decode_access_token(token: str, secret: str) -> dict[str, Any]:
         # Covers bad signature, wrong algorithm, wrong issuer/audience,
         # future nbf, and missing required claims.  One non-enumerating error.
         raise MobileApiError(merr.AUTH_TOKEN_INVALID, "Invalid access token.", 401) from exc
+    if not isinstance(payload, dict):
+        raise MobileApiError(merr.AUTH_TOKEN_INVALID, "Invalid access token.", 401)
+    return payload
 
 
 def _bearer_token_from_request() -> str:
