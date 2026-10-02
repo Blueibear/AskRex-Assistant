@@ -97,7 +97,7 @@ def _create_flask_app(ui_enabled: bool = True) -> Any:
     from rex.history_store import HistoryStore
 
     app = Flask(__name__, static_folder=None)
-    app.secret_key = "rex-gui-local"  # local-only; not security-sensitive
+    app.secret_key = "rex-gui-local"  # local-only; not security-sensitive; pragma: allowlist secret
     app.config["SETUP_TOKEN"] = secrets.token_urlsafe(32)
     data_dir = household_data_dir()
     history_store = HistoryStore(db_path=data_dir / "history.db")

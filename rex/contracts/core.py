@@ -115,10 +115,14 @@ def redact_sensitive_keys(
         Non-dict/list values are returned unchanged.
 
     Example:
-        >>> redact_sensitive_keys({"api_key": "secret123", "name": "test"})
+        >>> redact_sensitive_keys(
+        ...     {"api_key": "secret123",  # pragma: allowlist secret
+        ...      "name": "test"})
         {'api_key': '[REDACTED]', 'name': 'test'}
 
-        >>> redact_sensitive_keys({"nested": {"password": "hunter2"}})
+        >>> redact_sensitive_keys(
+        ...     {"nested": {"password": "hunter2"}}  # pragma: allowlist secret
+        ... )
         {'nested': {'password': '[REDACTED]'}}
     """
     if isinstance(data, dict):

@@ -172,7 +172,7 @@ class TestValidateBaseUrl:
 
     def test_embedded_credentials_rejected(self):
         with pytest.raises(ValueError, match="embedded credentials"):
-            _validate_base_url("https://user:pass@ha.example.com")
+            _validate_base_url("https://user:pass@ha.example.com")  # pragma: allowlist secret
 
     @patch("socket.getaddrinfo", side_effect=_loopback_addrinfo)
     def test_loopback_rejected(self, _mock):

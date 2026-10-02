@@ -766,7 +766,7 @@ class LanguageModel:
             if not api_key:
                 raise ConfigurationError("Missing OpenRouter API key.")
         elif not api_key and base_url:
-            api_key = "local"
+            api_key = "local"  # pragma: allowlist secret
         if not api_key:
             raise ConfigurationError("Missing OpenAI API key.")
         if not OPENAI_AVAILABLE:

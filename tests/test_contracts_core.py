@@ -340,7 +340,7 @@ class TestRedactSensitiveKeys:
 
     def test_does_not_modify_original(self):
         """Should not modify the original data structure."""
-        data = {"password": "secret", "nested": {"token": "abc"}}
+        data = {"password": "secret", "nested": {"token": "abc"}}  # pragma: allowlist secret
         result = redact_sensitive_keys(data)
         assert data["password"] == "secret"
         assert data["nested"]["token"] == "abc"

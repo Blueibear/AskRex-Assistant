@@ -49,7 +49,7 @@ These are not real credentials.
 File: `SECURITY_AUDIT_2026-01-08.md`
 
 **Reason:** The audit document discusses credential patterns (e.g., shows what a
-private key header looks like). The text `-----BEGIN PRIVATE KEY-----` is an example
+private key header looks like). The text `-----BEGIN PRIVATE KEY-----` is an example <!-- pragma: allowlist secret -->
 pattern description, not an actual key.
 
 ### 4. Placeholder / template values
@@ -57,17 +57,17 @@ Files: `Start-RexSpeak.ps1`, `config/rex_config.example.json`,
 `rex/woocommerce/config.py`.
 
 **Reason:**
-- `Start-RexSpeak.ps1` line 1: `$env:REX_SPEAK_API_KEY = 'YOUR-SECRET-HERE'` —
+- `Start-RexSpeak.ps1` line 1: `$env:REX_SPEAK_API_KEY = 'YOUR-SECRET-HERE'` <!-- pragma: allowlist secret -->
   explicit placeholder instructing users to replace the value.
-- `config/rex_config.example.json` line 171: `"password": "changeme"` — example
+- `config/rex_config.example.json` line 171: `"password": "changeme"` <!-- pragma: allowlist secret -->
   config template.
-- `rex/woocommerce/config.py` line 13: `"consumer_secret_ref": "wc:myshop:secret"` —
+- `rex/woocommerce/config.py` line 13: `"consumer_secret_ref": "wc:myshop:secret"` <!-- pragma: allowlist secret -->
   a config key reference string, not a credential value.
 
 ### 5. Sentinel / non-secret string
 File: `rex/llm_client.py` line 389
 
-**Reason:** `api_key = "local"` is a sentinel value used to signal local-mode
+**Reason:** `api_key = "local"` is a sentinel value used to signal local-mode <!-- pragma: allowlist secret -->
 operation to the LLM client. It is not an API key with any external service.
 
 ### 6. High-entropy hex strings in tests

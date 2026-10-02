@@ -158,7 +158,7 @@ class TestEnvironmentOverrides:
             }
         }
         cfg = build_app_config(json_cfg)
-        assert cfg.openai_api_key == "sk-test-openai-key"
+        assert cfg.openai_api_key == "sk-test-openai-key"  # pragma: allowlist secret
 
     def test_openai_api_key_absent_when_not_set(self, monkeypatch):
         """build_app_config returns None for OPENAI_API_KEY when not set."""
@@ -173,7 +173,7 @@ class TestEnvironmentOverrides:
         monkeypatch.setenv("BRAVE_API_KEY", "brave-test-key")
         json_cfg = {"models": {"llm_provider": "transformers", "llm_model": "sshleifer/tiny-gpt2"}}
         cfg = build_app_config(json_cfg)
-        assert cfg.brave_api_key == "brave-test-key"
+        assert cfg.brave_api_key == "brave-test-key"  # pragma: allowlist secret
 
     def test_ha_token_from_env(self, monkeypatch):
         """build_app_config reads HA_TOKEN from environment."""
@@ -189,7 +189,7 @@ class TestEnvironmentOverrides:
         monkeypatch.setenv("REX_SPEAK_API_KEY", "speak-secret")
         json_cfg = {"models": {"llm_provider": "transformers", "llm_model": "sshleifer/tiny-gpt2"}}
         cfg = build_app_config(json_cfg)
-        assert cfg.speak_api_key == "speak-secret"
+        assert cfg.speak_api_key == "speak-secret"  # pragma: allowlist secret
 
     def test_json_config_takes_precedence_for_non_secrets(self):
         """Non-secret settings come from JSON config, not from env legacy vars."""

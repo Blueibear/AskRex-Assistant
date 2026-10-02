@@ -72,7 +72,7 @@ class TestMemoryProfilesKeyedByUser:
         setup_token = flask_client.application.config.get("SETUP_TOKEN") or ""  # type: ignore[attr-defined]
         resp = flask_client.post(  # type: ignore[attr-defined]
             "/api/auth/register",
-            json={"username": "alice", "password": "secret"},
+            json={"username": "alice", "password": "secret"},  # pragma: allowlist secret
             headers={"X-Setup-Token": setup_token},
         )
         assert resp.status_code == 201
@@ -92,7 +92,7 @@ class TestMemoryProfilesKeyedByUser:
         setup_token = flask_client.application.config.get("SETUP_TOKEN") or ""  # type: ignore[attr-defined]
         resp_a = flask_client.post(  # type: ignore[attr-defined]
             "/api/auth/register",
-            json={"username": "alice", "password": "pass"},
+            json={"username": "alice", "password": "pass"},  # pragma: allowlist secret
             headers={"X-Setup-Token": setup_token},
         )
         # Second user: user_count > 0, no token required.

@@ -212,7 +212,7 @@ class TestGrantPermissionEndpoint:
         # Register second user; capture their id from the register response
         resp = flask_client.post(  # type: ignore[attr-defined]
             "/api/auth/register",
-            json={"username": "target_u", "password": "pass1234"},
+            json={"username": "target_u", "password": "pass1234"},  # pragma: allowlist secret
         )
         target_id = resp.get_json()["id"]
 

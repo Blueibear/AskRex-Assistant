@@ -120,7 +120,7 @@ def test_routing_anthropic_generates_response(monkeypatch):
         llm_model=None,
         llm_provider="anthropic",
         anthropic_model="claude-test",
-        anthropic_api_key="key",
+        anthropic_api_key="key",  # pragma: allowlist secret
     )
     model = LanguageModel(cfg)
     result = model.generate("hello")
