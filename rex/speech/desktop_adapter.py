@@ -77,7 +77,9 @@ class RoutedDesktopSTT:
                 # future asynchronous scheduling change cannot retain the loop
                 # variable and use a later fallback provider instead.
                 return await asyncio.to_thread(
-                    lambda transcribe=provider.transcribe: transcribe(wav_bytes)
+                    lambda transcribe=provider.transcribe, wav_bytes=wav_bytes: transcribe(
+                        wav_bytes
+                    )
                 )
             except _RECOVERABLE_PROVIDER_ERRORS as exc:
                 last_error = exc

@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import io
 import threading
+import urllib.request
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-import urllib.request
 from unittest.mock import Mock, patch
 
 import pytest
