@@ -76,8 +76,9 @@ class RoutedDesktopSTT:
                 # Bind the selected provider before scheduling the worker so a
                 # future asynchronous scheduling change cannot retain the loop
                 # variable and use a later fallback provider instead.
-                transcribe = provider.transcribe
-                return await asyncio.to_thread(transcribe, wav_bytes)
+                return await asyncio.to_thread(
+                    lambda transcribe=provider.transcribe: transcribe(wav_bytes)
+                )
             except _RECOVERABLE_PROVIDER_ERRORS as exc:
                 last_error = exc
                 continue
