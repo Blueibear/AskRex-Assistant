@@ -271,7 +271,10 @@ class TestRevokePermissionEndpoint:
         admin_token = _register_and_login(flask_client, "admin_rv")  # type: ignore[arg-type]
         resp = flask_client.post(  # type: ignore[attr-defined]
             "/api/auth/register",
-            json={"username": "target_rv", "password": "pass1234"},  # pragma: allowlist secret -- fixture
+            json={
+                "username": "target_rv",
+                "password": "pass1234",
+            },  # pragma: allowlist secret -- fixture
         )
         target_id = resp.get_json()["id"]
 
