@@ -351,7 +351,7 @@ def _make_imap_backend(fake_conn):
         host="imap.example.com",
         port=993,
         username="user@example.com",
-        password="secret",
+        password="secret",  # pragma: allowlist secret -- fake credential fixture
         imap_factory=lambda: fake_conn,
     )
 

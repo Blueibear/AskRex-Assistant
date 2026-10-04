@@ -849,7 +849,7 @@ class TestWooCommerceClientSecurity:
             WooCommerceClient(
                 "https://user:pass@example.com",  # pragma: allowlist secret
                 consumer_key="ck_testkey",
-                consumer_secret="cs_testsecret",
+                consumer_secret="cs_testsecret",  # pragma: allowlist secret -- fixture
             )
 
     def test_timeout_error_message_sanitized(self):

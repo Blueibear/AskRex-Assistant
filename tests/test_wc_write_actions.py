@@ -1240,7 +1240,7 @@ class TestWcWriteSecuritySsrf:
         client = WooCommerceClient(
             "https://example.com",
             consumer_key="ck_testkey",
-            consumer_secret="cs_testsecret",
+            consumer_secret="cs_testsecret",  # pragma: allowlist secret -- fixture
         )
         with patch("requests.put", side_effect=requests.Timeout("secret-token")):
             result = client.set_order_status(101, status="completed")

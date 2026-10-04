@@ -192,7 +192,7 @@ class TestSetupComplete:
             "/api/setup/complete",
             json={
                 "username": "rollback-user",
-                "password": "securepass1",
+                "password": "securepass1",  # pragma: allowlist secret -- fixture
                 "llm_provider": "openai",
                 "llm_api_key": "secret-marker",  # pragma: allowlist secret
             },
