@@ -22,7 +22,6 @@ if str(REPO_ROOT) not in sys.path:
 
 # This script may be run by path from outside the repository.  Keep these
 # imports after the path bootstrap so the checked-out package is used.
-# isort: off
 import rex.assistant as assistant_module  # noqa: E402
 from rex.actions.graph import ActionGraph, ActionNode  # noqa: E402
 from rex.actions.graph_executor import ActionGraphExecutor  # noqa: E402
@@ -39,8 +38,6 @@ from rex.tools.execution import ToolOperation  # noqa: E402
 from rex.tools.protocol import ToolResult  # noqa: E402
 from rex.tools.registry import Tool, ToolRegistry  # noqa: E402
 from rex.voice_loop import VoiceLoop  # noqa: E402
-
-# isort: on
 
 REQUEST_CLASSES = (
     "typed_chat",
