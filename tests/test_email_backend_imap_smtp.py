@@ -152,7 +152,7 @@ class TestImapSmtpBackend:
             smtp_host="smtp.example.com",
             smtp_port=587,
             username="user@example.com",
-            password="secret",
+            password="secret",  # pragma: allowlist secret -- fake credential fixture
             use_starttls=True,
             imap_client_factory=imap_mock,
             smtp_client_factory=smtp_mock,

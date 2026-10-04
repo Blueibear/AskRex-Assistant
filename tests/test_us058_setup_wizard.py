@@ -164,7 +164,7 @@ class TestSetupComplete:
             "/api/setup/complete",
             json={
                 "username": "eve",
-                "password": "securepass1",
+                "password": "securepass1",  # pragma: allowlist secret -- fixture
                 "llm_provider": "openai",
                 "llm_api_key": "sk-test-key",  # pragma: allowlist secret
                 "tts_provider": "none",

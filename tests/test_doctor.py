@@ -440,7 +440,7 @@ class TestDoctorWithMockEnvironment:
 
             # Mock environment with API keys
             env_vars = {
-                "OPENAI_API_KEY": "sk-test",
+                "OPENAI_API_KEY": "sk-test",  # pragma: allowlist secret -- fixture
                 "BRAVE_API_KEY": "brave-test",  # pragma: allowlist secret -- fixture
             }
 

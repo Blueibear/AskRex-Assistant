@@ -153,9 +153,9 @@ Use the `redact_sensitive_keys` helper for logging:
 from rex.contracts import redact_sensitive_keys
 
 data = {
-    "api_key": "sk-secret123",
+    "api_key": "sk-secret123",  # pragma: allowlist secret -- redaction example
     "user": "james",
-    "nested": {"password": "hunter2"},
+    "nested": {"password": "hunter2"},  # pragma: allowlist secret -- redaction example
 }
 
 safe_data = redact_sensitive_keys(data)

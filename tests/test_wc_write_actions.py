@@ -1230,7 +1230,7 @@ class TestWcWriteSecuritySsrf:
             WooCommerceClient(
                 "https://user:pass@example.com",  # pragma: allowlist secret -- invalid basic-auth fixture
                 consumer_key="ck_testkey",
-                consumer_secret="cs_testsecret",
+                consumer_secret="cs_testsecret",  # pragma: allowlist secret -- fixture
             )
 
     def test_timeout_error_sanitized_for_write(self):

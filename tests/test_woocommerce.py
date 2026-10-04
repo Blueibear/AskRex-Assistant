@@ -840,7 +840,7 @@ class TestWooCommerceClientSecurity:
             WooCommerceClient(
                 "https://localhost",
                 consumer_key="ck_testkey",
-                consumer_secret="cs_testsecret",
+                consumer_secret="cs_testsecret",  # pragma: allowlist secret -- fixture
             )
 
     def test_rejects_embedded_credentials_in_base_url(self):
