@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -7,6 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .handoff import HandoffRequired, repo_snapshot
+from .scratch import _clone_scratch_repo, _temporary_scratch_root
 from .storage import AtomicJsonStore
 from .types import OrchestratorConfig
 
@@ -149,6 +153,155 @@ def load_validation_receipt(
     )
 
 
+def _validation_checkout(repo: Path, head: str, checkout: Path) -> None:
+    """Validate the leased revision in a separate checkout, never in the live worktree."""
+    try:
+        _clone_scratch_repo(repo, head, checkout)
+    except HandoffRequired as exc:
+        raise OSError(f"isolated validation Git checkout failed: {exc}") from exc
+    upstream = subprocess.run(
+        ["git", "for-each-ref", "--format=%(refname)", "refs/remotes/origin"],
+        cwd=repo,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if upstream.returncode != 0:
+        raise OSError("cannot inspect original upstream references for validation")
+    if upstream.stdout.strip():
+        mirrored = subprocess.run(
+            [
+                "git",
+                "fetch",
+                "--quiet",
+                "--no-tags",
+                str(repo),
+                "+refs/remotes/origin/*:refs/remotes/origin/*",
+            ],
+            cwd=checkout,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if mirrored.returncode != 0:
+            raise OSError("cannot mirror upstream references for isolated validation")
+
+
+def _prepare_validation_dependencies(checkout: Path, gates: tuple[ValidationGate, ...]) -> None:
+    """Provision npm-gated checkouts from their checked-in lockfiles.
+
+    Isolated clones intentionally do not inherit mutable node_modules from the
+    leased worktree. Missing or broken dependencies are infrastructure errors,
+    never reasons to mark a configured GUI/mobile validation gate as passed.
+    """
+    npm = "npm.cmd" if os.name == "nt" else "npm"
+    directories: set[Path] = set()
+    for gate in gates:
+        command = Path(gate.command[0]).name.lower()
+        if command not in {"npm", "npm.cmd", "npx", "npx.cmd"}:
+            continue
+        target = (checkout / gate.cwd).resolve()
+        if target != checkout and checkout not in target.parents:
+            raise ValueError(f"npm validation gate {gate.name!r} cwd escapes checkout")
+        if not (target / "package-lock.json").is_file():
+            raise OSError(f"isolated npm validation requires package-lock.json in {gate.cwd}")
+        directories.add(target)
+    for directory in sorted(directories):
+        installed = subprocess.run(
+            [npm, "ci", "--prefer-offline", "--no-audit", "--no-fund"],
+            cwd=directory,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=1200,
+            check=False,
+        )
+        if installed.returncode != 0:
+            raise OSError(
+                "isolated npm dependency installation failed "
+                f"(exit {installed.returncode}) in {directory}: "
+                + _bounded(installed.stderr or installed.stdout or "")
+            )
+
+
+def _preserve_validation_edits(
+    config: OrchestratorConfig,
+    role: str,
+    task_id: str,
+    head: str,
+    checkout: Path,
+    scratch_root: Path,
+    cleanup: dict[str, bool],
+) -> str:
+    """Save gate-generated edits outside coordination; never discard unknown changes."""
+    # The sandbox is the only complete copy until proven clean or durably saved.
+    cleanup["remove"] = False
+    snapshot = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=checkout,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if snapshot.returncode != 0:
+        cleanup["remove"] = False
+        return f"Validation Git status failed; isolated checkout retained: {scratch_root}"
+    if not snapshot.stdout and _git_head(checkout) == head:
+        cleanup["remove"] = True
+        return ""
+    # An unexpected commit or untracked artifact cannot be represented safely by
+    # a tracked-file patch. Retain the entire sandbox for operator inspection.
+    if _git_head(checkout) != head or any(
+        line.startswith("?? ") for line in snapshot.stdout.splitlines()
+    ):
+        cleanup["remove"] = False
+        return (
+            "Validation changed Git HEAD or created untracked files; "
+            f"isolated checkout retained: {scratch_root}. Live repository unchanged."
+        )
+    diff = subprocess.run(
+        ["git", "diff", "--binary", "--full-index", "HEAD"],
+        cwd=checkout,
+        capture_output=True,
+        check=False,
+    )
+    if diff.returncode != 0 or not diff.stdout:
+        cleanup["remove"] = False
+        return f"Cannot capture validator changes; isolated checkout retained: {scratch_root}"
+    reversible = subprocess.run(
+        ["git", "apply", "--reverse", "--check", "-"],
+        cwd=checkout,
+        input=diff.stdout,
+        capture_output=True,
+        check=False,
+    )
+    if reversible.returncode != 0:
+        cleanup["remove"] = False
+        return f"Validation edits could not be verified; isolated checkout retained: {scratch_root}"
+    digest = hashlib.sha256(diff.stdout).hexdigest()
+    task_digest = hashlib.sha256(task_id.encode("utf-8")).hexdigest()[:12]
+    evidence = config.coordination_root.parent / ".askrex-validation-evidence"
+    evidence.mkdir(parents=True, exist_ok=True)
+    patch = evidence / f"{role}-{task_digest}-{head[:12]}-{digest[:16]}.patch"
+    if patch.exists():
+        if hashlib.sha256(patch.read_bytes()).hexdigest() != digest:
+            cleanup["remove"] = False
+            return f"Validation patch collision; isolated checkout retained: {scratch_root}"
+    else:
+        pending = patch.with_suffix(".pending")
+        pending.write_bytes(diff.stdout)
+        os.replace(pending, patch)
+    cleanup["remove"] = True
+    return (
+        "Validation modified only its isolated checkout. A reversible patch "
+        f"was preserved at {patch} (SHA256 {digest}); live repository unchanged. "
+        "Apply the required formatter changes through the next normal implementation."
+    )
+
+
 _DEFAULT_GATES: dict[str, tuple[ValidationGate, ...]] = {
     "backend": (
         ValidationGate("backend pytest", ("py", "-3.11", "-m", "pytest", "-q")),
@@ -220,10 +373,7 @@ def _gates_for(config: OrchestratorConfig, role: str, task_id: str) -> tuple[Val
         raise ValueError(f"unsupported validation role: {role}") from exc
 
 
-
-def _has_task_validation_override(
-    config: OrchestratorConfig, role: str, task_id: str
-) -> bool:
+def _has_task_validation_override(config: OrchestratorConfig, role: str, task_id: str) -> bool:
     settings = config.metadata.get("iteration_validation", {})
     if not isinstance(settings, dict):
         return False
@@ -282,9 +432,7 @@ def _scoped_backend_gates_from_diff(
         return ()
 
     paths = [
-        line.strip().replace("\\", "/")
-        for line in changed.stdout.splitlines()
-        if line.strip()
+        line.strip().replace("\\", "/") for line in changed.stdout.splitlines() if line.strip()
     ]
     if not paths or len(paths) > 24:
         return ()
@@ -318,15 +466,11 @@ def _scoped_backend_gates_from_diff(
                     timeout_seconds=300,
                 )
             )
-    elif all(
-        path.startswith("gui/") and Path(path).suffix in {".ts", ".tsx"}
-        for path in paths
-    ):
+    elif all(path.startswith("gui/") and Path(path).suffix in {".ts", ".tsx"} for path in paths):
         tests = [
             path.removeprefix("gui/")
             for path in paths
-            if path.startswith("gui/tests/")
-            and Path(path).name.endswith((".test.ts", ".test.tsx"))
+            if path.startswith("gui/tests/") and Path(path).name.endswith((".test.ts", ".test.tsx"))
         ]
         if not tests or len(tests) > 12:
             return ()
@@ -402,7 +546,6 @@ def _coordination_only_gates(
     )
 
 
-
 def _repo_root(config: OrchestratorConfig, role: str) -> Path:
     root = config.backend_root if role == "backend" else config.mobile_root
     if root is None:
@@ -462,31 +605,108 @@ def run_iteration_validation(
         repo = _repo_root(config, role)
         if head and _git_head(repo) != head:
             raise ValueError("validation target revision changed before gates ran")
+        live_head, live_dirty = repo_snapshot(repo)
+        if live_dirty:
+            raise ValueError("leased repository must be clean before isolated validation")
+        expected_head = head or live_head
         evidence: list[ValidationGateEvidence] = []
-        for gate in gates:
-            cwd = (repo / gate.cwd).resolve()
-            if cwd != repo and repo not in cwd.parents:
-                raise ValueError(f"validation gate {gate.name!r} cwd escapes repository")
-            result = subprocess.run(
-                gate.command,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=gate.timeout_seconds,
-                check=False,
-            )
-            if result.returncode != 0:
-                return ValidationReport(False, _render_failure(gate, cwd, result))
-            evidence.append(
-                ValidationGateEvidence(
-                    name=gate.name,
-                    command=gate.command,
-                    cwd=gate.cwd,
-                    exit_code=result.returncode,
-                    stdout=_bounded(result.stdout or ""),
-                    stderr=_bounded(result.stderr or ""),
+        parent = config.coordination_root.parent / ".askrex-validation-scratch"
+        with _temporary_scratch_root("validation-", parent=parent) as (root, cleanup):
+            checkout = root / "repo"
+            _validation_checkout(repo, expected_head, checkout)
+            try:
+                _prepare_validation_dependencies(checkout, gates)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                changes = _preserve_validation_edits(
+                    config, role, task_id, expected_head, checkout, root, cleanup
                 )
+                return ValidationReport(
+                    False,
+                    system_error=(
+                        f"Isolated dependency provisioning failed: {exc}"
+                        + ("\n" + changes if changes else "")
+                    ),
+                )
+            provisioning_edits = _preserve_validation_edits(
+                config, role, task_id, expected_head, checkout, root, cleanup
             )
+            if provisioning_edits:
+                return ValidationReport(
+                    False,
+                    system_error=(
+                        "Isolated dependency provisioning changed its checkout: "
+                        + provisioning_edits
+                    ),
+                )
+            for gate in gates:
+                cwd = (checkout / gate.cwd).resolve()
+                if cwd != checkout and checkout not in cwd.parents:
+                    raise ValueError(f"validation gate {gate.name!r} cwd escapes repository")
+                try:
+                    result = subprocess.run(
+                        gate.command,
+                        cwd=cwd,
+                        capture_output=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=gate.timeout_seconds,
+                        check=False,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    changes = _preserve_validation_edits(
+                        config,
+                        role,
+                        task_id,
+                        expected_head,
+                        checkout,
+                        root,
+                        cleanup,
+                    )
+                    raw_output = exc.stdout
+                    output = (
+                        raw_output.decode("utf-8", errors="replace")
+                        if isinstance(raw_output, bytes)
+                        else (raw_output or "")
+                    )
+                    return ValidationReport(
+                        False,
+                        "Deterministic validation timed out before review.\n"
+                        + _bounded(output)
+                        + ("\n" + changes if changes else ""),
+                    )
+                changes = _preserve_validation_edits(
+                    config,
+                    role,
+                    task_id,
+                    expected_head,
+                    checkout,
+                    root,
+                    cleanup,
+                )
+                if result.returncode != 0:
+                    return ValidationReport(
+                        False,
+                        _render_failure(gate, cwd, result) + ("\n" + changes if changes else ""),
+                    )
+                if changes:
+                    return ValidationReport(
+                        False,
+                        "Validation gate modified its checkout despite exiting "
+                        f"successfully: {gate.name}.\n{changes}",
+                    )
+                evidence.append(
+                    ValidationGateEvidence(
+                        name=gate.name,
+                        command=gate.command,
+                        cwd=gate.cwd,
+                        exit_code=result.returncode,
+                        stdout=_bounded(result.stdout or ""),
+                        stderr=_bounded(result.stderr or ""),
+                    )
+                )
+            post_head, post_dirty = repo_snapshot(repo)
+            if post_head != live_head or post_dirty:
+                raise ValueError("live repository changed during isolated validation")
         if head and _git_head(repo) != head:
             raise ValueError("validation target revision changed while gates ran")
         receipt = ValidationReceipt(
@@ -500,13 +720,33 @@ def run_iteration_validation(
         AtomicJsonStore(_receipt_path(config, role, task_id)).write(receipt.to_dict())
         return ValidationReport(True, receipt=receipt)
     except subprocess.TimeoutExpired as exc:
-        output = _bounded((exc.stdout or "") + (exc.stderr or ""))
+        stdout = (
+            exc.stdout.decode("utf-8", errors="replace")
+            if isinstance(exc.stdout, bytes)
+            else (exc.stdout or "")
+        )
+        stderr = (
+            exc.stderr.decode("utf-8", errors="replace")
+            if isinstance(exc.stderr, bytes)
+            else (exc.stderr or "")
+        )
+        output = _bounded(stdout + stderr)
         return ValidationReport(
             False, f"Deterministic validation timed out before review.\n{output}"
         )
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         gate_name = locals().get("gate")
         detail = f" for {gate_name.name}" if isinstance(gate_name, ValidationGate) else ""
+        sandbox = locals().get("root")
+        cleanup_state = locals().get("cleanup")
+        retained = (
+            f"; isolated checkout retained for recovery at {sandbox}"
+            if isinstance(sandbox, Path)
+            and isinstance(cleanup_state, dict)
+            and cleanup_state.get("remove") is False
+            else ""
+        )
         return ValidationReport(
-            False, system_error=f"deterministic validation infrastructure failure{detail}: {exc}"
+            False,
+            system_error=f"deterministic validation infrastructure failure{detail}: {exc}{retained}",
         )

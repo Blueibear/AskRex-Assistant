@@ -15,6 +15,10 @@ For canonical product name, package name, CLI alias policy, and banned names see
 For the authoritative classification of every entry point and UI surface (shippable, developer-only, deprecated, archived, removed) see:
 **SURFACE-CLASSIFICATION.md**
 
+## Phase 0 recovery and next-phase implementation (2026-10-03)
+
+Ralph infrastructure hardening is specified in `docs/planning/PHASE0-RALPH-RECOVERY-2026-10-03.md`. The subsequent release and UX phase handoff is `docs/planning/ASKREX-IMPLEMENTATION-HANDOFF-2026-10-03.md`, and the truthful Apple Music/streaming-service follow-up is `docs/planning/MEDIA-SERVICES-PROVIDER-ROADMAP-2026-10-03.md`. These documents clarify dependencies and evidence without replacing the authoritative `PRD-production-readiness.md` execution order or authorizing concurrent writers. Do not mark an Apple Music account connected merely because media account metadata exists.
+
 ## Claude Reference Docs
 
 Some detailed reference material has been moved to separate files to keep this document readable and reduce context size when Claude Code runs.

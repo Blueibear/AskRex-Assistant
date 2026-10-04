@@ -315,9 +315,7 @@ def test_review_evidence_includes_named_canonical_issue_referenced_in_prompt(
     issue = config.coordination_root / "issues" / "SECURITY-HA-MACOS.md"
     issue.parent.mkdir(parents=True, exist_ok=True)
     issue.write_text(
-        "# SECURITY-HA-MACOS\n\n"
-        "Status: integrated-needs-retest\n"
-        "Owner: backend\n",
+        "# SECURITY-HA-MACOS\n\nStatus: integrated-needs-retest\nOwner: backend\n",
         encoding="utf-8",
     )
     mailbox = config.coordination_root / "mailbox" / "testing"
@@ -651,9 +649,7 @@ def test_review_evidence_includes_current_changed_file_contents_for_small_diff(
     tests_dir.mkdir()
     regression = tests_dir / "test_regression.py"
     regression.write_text(
-        "def test_existing_context():\n"
-        "    marker = 'FULL-CURRENT-CONTEXT'\n"
-        "    assert marker\n",
+        "def test_existing_context():\n    marker = 'FULL-CURRENT-CONTEXT'\n    assert marker\n",
         encoding="utf-8",
     )
     subprocess.run(["git", "add", "tests/test_regression.py"], cwd=repo, check=True)
@@ -812,7 +808,7 @@ def test_verbose_validation_output_does_not_critically_truncate_review_bundle(
     repo = tmp_path / "backend"
     base = _git_repo(repo)
     head = _commit(repo, "base\nchanged\n")
-    noisy = "print('START-VALIDATION'); " "print('X' * 40000); " "print('112 passed');"
+    noisy = "print('START-VALIDATION'); print('X' * 40000); print('112 passed');"
     config = _config(tmp_path, repo, [sys.executable, "-c", noisy])
     assert run_iteration_validation(config, "backend", "B-NOISY", base_head=base, head=head).passed
     state = WorkerState(
@@ -955,3 +951,256 @@ def test_review_evidence_prioritizes_explicit_validated_artifact_and_receipt_pat
     assert "EXPLICIT-VALIDATED-CONTENT" in bundle.text
     receipt_path = config.coordination_root / "validation" / f"backend-{task_id}.json"
     assert str(receipt_path.resolve()) in bundle.text
+
+
+def test_failed_formatter_preserves_patch_without_dirtying_leased_repo(tmp_path: Path) -> None:
+    """Regression: pre-commit autoformat must not stop the next Ralph cycle."""
+    import hashlib
+    import re
+
+    repo = tmp_path / "backend"
+    head = _git_repo(repo)
+    command = [
+        sys.executable,
+        "-c",
+        "from pathlib import Path; import sys; "
+        "Path('README.md').write_text('formatter change\\n', encoding='utf-8'); "
+        "sys.exit(7)",
+    ]
+    config = _config(tmp_path, repo, command)
+    report = run_iteration_validation(config, "backend", "B-FORMAT", base_head=head, head=head)
+
+    assert not report.passed
+    assert "Exit code: 7" in report.feedback
+    assert "reversible patch" in report.feedback
+    match = re.search(r"at (.+?\.patch) \(SHA256 ([a-f0-9]{64})\)", report.feedback)
+    assert match, report.feedback
+    patch = Path(match.group(1))
+    assert hashlib.sha256(patch.read_bytes()).hexdigest() == match.group(2)
+    assert subprocess.run(["git", "apply", "--check", str(patch)], cwd=repo).returncode == 0
+    assert (repo / "README.md").read_text(encoding="utf-8") == "base\n"
+    assert subprocess.check_output(["git", "status", "--porcelain"], cwd=repo) == b""
+    with pytest.raises(FileNotFoundError):
+        load_validation_receipt(config, "backend", "B-FORMAT", base_head=head, head=head)
+    assert "pending_result" not in report.feedback
+
+
+def test_green_gate_that_mutates_checkout_is_not_accepted(tmp_path: Path) -> None:
+    repo = tmp_path / "backend"
+    head = _git_repo(repo)
+    config = _config(
+        tmp_path,
+        repo,
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; Path('README.md').write_text('changed\\n', encoding='utf-8')",
+        ],
+    )
+
+    report = run_iteration_validation(config, "backend", "B-GREEN-DIRTY", base_head=head, head=head)
+
+    assert not report.passed
+    assert "despite exiting successfully" in report.feedback
+    assert (repo / "README.md").read_text(encoding="utf-8") == "base\n"
+    assert subprocess.check_output(["git", "status", "--porcelain"], cwd=repo) == b""
+
+
+def test_gate_untracked_files_are_preserved_in_private_sandbox(tmp_path: Path) -> None:
+    import re
+
+    repo = tmp_path / "backend"
+    head = _git_repo(repo)
+    config = _config(
+        tmp_path,
+        repo,
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; import sys; "
+            "Path('uncertain-result.txt').write_text('keep me', encoding='utf-8'); sys.exit(1)",
+        ],
+    )
+
+    report = run_iteration_validation(config, "backend", "B-UNTRACKED", base_head=head, head=head)
+
+    assert not report.passed
+    assert "isolated checkout retained" in report.feedback
+    match = re.search(r"isolated checkout retained: ([^\n]+)", report.feedback)
+    assert match, report.feedback
+    sandbox = match.group(1).split(". Live repository", 1)[0].strip()
+    assert (Path(sandbox) / "repo" / "uncertain-result.txt").read_text(
+        encoding="utf-8"
+    ) == "keep me"
+    assert not (repo / "uncertain-result.txt").exists()
+
+
+def test_validation_timeout_saves_formatter_changes_and_leaves_live_repo_clean(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "backend"
+    head = _git_repo(repo)
+    config = _config(
+        tmp_path,
+        repo,
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; import time; "
+            "Path('README.md').write_text('partial result\\n', encoding='utf-8'); "
+            "time.sleep(5)",
+        ],
+    )
+    config.metadata["iteration_validation"]["backend"]["gates"][0]["timeout_seconds"] = 1
+
+    report = run_iteration_validation(config, "backend", "B-TIMEOUT", base_head=head, head=head)
+
+    assert not report.passed
+    assert "timed out" in report.feedback
+    assert "reversible patch" in report.feedback
+    assert (repo / "README.md").read_text(encoding="utf-8") == "base\n"
+    assert subprocess.check_output(["git", "status", "--porcelain"], cwd=repo) == b""
+
+
+def test_validation_mirrors_real_upstream_ref_not_clones_default_branch(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "backend"
+    base = _git_repo(repo)
+    subprocess.run(
+        ["git", "update-ref", "refs/remotes/origin/master", base],
+        cwd=repo,
+        check=True,
+    )
+    head = _commit(repo, "new head\n")
+    config = _config(
+        tmp_path,
+        repo,
+        ["git", "rev-parse", "refs/remotes/origin/master"],
+    )
+
+    report = run_iteration_validation(config, "backend", "B-UPSTREAM", base_head=base, head=head)
+
+    assert report.passed
+    assert report.receipt is not None
+    assert report.receipt.gates[0].stdout.strip() == base
+
+
+def test_isolated_npm_validation_installs_lockfile_dependencies(tmp_path: Path) -> None:
+    """Node gates provision their disposable checkout, not the leased worktree."""
+    import json
+    import os
+    import shutil
+
+    npm = "npm.cmd" if os.name == "nt" else "npm"
+    if shutil.which(npm) is None:
+        pytest.skip("npm is not available on this test runner")
+    repo = tmp_path / "backend"
+    _git_repo(repo)
+    gui = repo / "gui"
+    gui.mkdir()
+    manifest = {
+        "name": "askrex-validation-test",
+        "version": "1.0.0",
+        "private": True,
+        "scripts": {"validation-test": "node -e \"process.stdout.write('NODE-GATE-OK')\""},
+    }
+    lock = {
+        "name": manifest["name"],
+        "version": manifest["version"],
+        "lockfileVersion": 3,
+        "requires": True,
+        "packages": {"": {"name": manifest["name"], "version": manifest["version"]}},
+    }
+    (gui / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (gui / "package-lock.json").write_text(json.dumps(lock), encoding="utf-8")
+    subprocess.run(["git", "add", "gui"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "add fixture GUI"], cwd=repo, check=True)
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    config = _config(tmp_path, repo, [npm, "run", "validation-test"])
+    config.metadata["iteration_validation"]["backend"]["gates"][0]["cwd"] = "gui"
+
+    report = run_iteration_validation(config, "backend", "B-NODE", base_head=head, head=head)
+
+    assert report.passed, report.feedback or report.system_error
+    assert report.receipt is not None
+    assert "NODE-GATE-OK" in report.receipt.gates[0].stdout
+    assert not (gui / "node_modules").exists()
+    assert subprocess.check_output(["git", "status", "--porcelain"], cwd=repo) == b""
+
+
+def test_npm_gate_without_lockfile_fails_closed(tmp_path: Path) -> None:
+    repo = tmp_path / "backend"
+    head = _git_repo(repo)
+    config = _config(tmp_path, repo, ["npm.cmd", "test"])
+    report = run_iteration_validation(config, "backend", "B-NO-LOCK", base_head=head, head=head)
+
+    assert report.passed is False
+    assert "package-lock.json" in report.system_error
+    assert subprocess.check_output(["git", "status", "--porcelain"], cwd=repo) == b""
+    with pytest.raises(FileNotFoundError):
+        load_validation_receipt(config, "backend", "B-NO-LOCK", base_head=head, head=head)
+
+
+def test_evidence_write_error_retains_the_only_modified_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts.dev_orchestrator import validation
+
+    repo = tmp_path / "backend"
+    head = _git_repo(repo)
+    config = _config(
+        tmp_path,
+        repo,
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; import sys; "
+            "Path('README.md').write_text('keep formatting\\n', encoding='utf-8'); sys.exit(7)",
+        ],
+    )
+    original_write = Path.write_bytes
+
+    def deny_patch_write(path: Path, data: bytes) -> int:
+        if path.suffix == ".pending":
+            raise PermissionError("simulated patch evidence disk failure")
+        return original_write(path, data)
+
+    monkeypatch.setattr(Path, "write_bytes", deny_patch_write)
+    report = validation.run_iteration_validation(
+        config, "backend", "B-PATCH-FAIL", base_head=head, head=head
+    )
+
+    assert not report.passed
+    assert "evidence disk failure" in report.system_error
+    assert "isolated checkout retained for recovery" in report.system_error
+    preserved = list(tmp_path.glob(".askrex-validation-scratch/validation-*/repo/README.md"))
+    assert len(preserved) == 1
+    assert preserved[0].read_text(encoding="utf-8") == "keep formatting\n"
+    assert (repo / "README.md").read_text(encoding="utf-8") == "base\n"
+    assert subprocess.check_output(["git", "status", "--porcelain"], cwd=repo) == b""
+
+
+def test_scratch_clone_failure_is_a_recoverable_validation_system_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts.dev_orchestrator import validation
+    from scripts.dev_orchestrator.handoff import HandoffRequired
+
+    repo = tmp_path / "backend"
+    head = _git_repo(repo)
+    config = _config(tmp_path, repo, [sys.executable, "-c", "print('must not run')"])
+
+    def fail_clone(*_args) -> None:
+        raise HandoffRequired("cannot create scratch clone")
+
+    monkeypatch.setattr(validation, "_clone_scratch_repo", fail_clone)
+    report = validation.run_iteration_validation(
+        config, "backend", "B-CLONE-FAIL", base_head=head, head=head
+    )
+
+    assert not report.passed
+    assert "validation Git checkout failed" in report.system_error
+    assert "cannot create scratch clone" in report.system_error
+    assert not report.receipt
+    assert subprocess.check_output(["git", "status", "--porcelain"], cwd=repo) == b""
