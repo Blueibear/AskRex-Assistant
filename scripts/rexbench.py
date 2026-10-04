@@ -39,6 +39,7 @@ from rex.tools.execution import ToolOperation  # noqa: E402
 from rex.tools.protocol import ToolResult  # noqa: E402
 from rex.tools.registry import Tool, ToolRegistry  # noqa: E402
 from rex.voice_loop import VoiceLoop  # noqa: E402
+
 # isort: on
 
 REQUEST_CLASSES = (
