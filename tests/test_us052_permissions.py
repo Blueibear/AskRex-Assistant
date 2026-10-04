@@ -273,8 +273,8 @@ class TestRevokePermissionEndpoint:
             "/api/auth/register",
             json={
                 "username": "target_rv",
-                "password": "pass1234",
-            },  # pragma: allowlist secret -- fixture
+                "password": "pass1234",  # pragma: allowlist secret -- fixture
+            },
         )
         target_id = resp.get_json()["id"]
 

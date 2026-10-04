@@ -256,7 +256,7 @@ class TestSetupComplete:
             "/api/setup/complete",
             json={
                 "username": "george",
-                "password": "securepass1",
+                "password": "securepass1",  # pragma: allowlist secret -- registration fixture
                 "llm_provider": "local",
                 "tts_provider": "none",
                 "ha_base_url": "http://ha.local:8123",

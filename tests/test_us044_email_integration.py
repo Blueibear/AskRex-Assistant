@@ -262,7 +262,7 @@ def test_imap_backend_send_smtp_error() -> None:
         imap_host="imap.example.com",
         smtp_host="smtp.example.com",
         username="user@example.com",
-        password="secret",
+        password="secret",  # pragma: allowlist secret -- fake credential fixture
         imap_client_factory=lambda: _make_imap_mock(),
         smtp_client_factory=lambda: smtp_mock,
     )
