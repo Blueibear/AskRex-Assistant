@@ -127,7 +127,7 @@ export REX_GITHUB_PASSWORD="your_password" # pragma: allowlist secret
 # Or add to config/credentials.json
 {
   "github.username": "your_username",
-  "github.password": "your_password"
+  "github.password": "<configure-in-credential-vault>"
 }
 ```
 
