@@ -10,17 +10,17 @@ once permitted local providers are exhausted.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum, auto
+from enum import StrEnum
 
 
 class SpeechPolicyMode(StrEnum):
     """Ordered-fallback policy modes for STT/TTS provider selection."""
 
-    AUTOMATIC = auto()
-    PREFER_LOCAL = auto()
-    LOCAL_ONLY = auto()
-    PREFER_CLOUD = auto()
-    CUSTOM = auto()
+    AUTOMATIC = "automatic"
+    PREFER_LOCAL = "prefer_local"
+    LOCAL_ONLY = "local_only"
+    PREFER_CLOUD = "prefer_cloud"
+    CUSTOM = "custom"
 
 
 class SpeechPolicyError(Exception):
