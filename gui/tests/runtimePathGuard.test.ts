@@ -21,7 +21,7 @@ describe('Python bridge runtime path isolation', () => {
       const bridgeCalls = source.match(/\bspawn(?:Sync)?\(resolvePythonCommand\(\)/g)?.length ?? 0
       if (bridgeCalls === 0) continue
       const guarded =
-        (source.match(/\.\.\.bridgeSpawnOptions\(\),/g) ?? []).length +
+        (source.match(/\.\.\.bridgeSpawnOptions\(\)/g) ?? []).length +
         (source.match(/\.\.\.voiceBridgeOptions,/g) ?? []).length
       if (guarded !== bridgeCalls) failures.push(`${file}: ${guarded}/${bridgeCalls}`)
     }
