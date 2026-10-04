@@ -282,7 +282,7 @@ def test_fetch_unread_when_not_connected() -> None:
         imap_host="imap.example.com",
         smtp_host="smtp.example.com",
         username="user@example.com",
-        password="secret",
+        password="secret",  # pragma: allowlist secret -- fake credential fixture
     )
     result = backend.fetch_unread()
     assert result == []
