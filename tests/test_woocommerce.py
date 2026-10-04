@@ -859,7 +859,7 @@ class TestWooCommerceClientSecurity:
         client = WooCommerceClient(
             "https://example.com",
             consumer_key="ck_testkey",
-            consumer_secret="cs_testsecret",
+            consumer_secret="cs_testsecret",  # pragma: allowlist secret -- fixture
         )
 
         with patch("requests.get", side_effect=requests.Timeout("secret-token")):

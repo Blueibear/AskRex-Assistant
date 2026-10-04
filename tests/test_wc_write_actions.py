@@ -1259,7 +1259,9 @@ class TestWcWriteSecuritySsrf:
         )
         response = requests.Response()
         response.status_code = 403
-        err = requests.HTTPError("https://key:secret@example.com", response=response)
+        err = requests.HTTPError(  # pragma: allowlist secret -- deliberately malformed credential URL
+            "https://key:secret@example.com", response=response
+        )
 
         with patch("requests.put") as mock_put:
             mock_resp = MagicMock()

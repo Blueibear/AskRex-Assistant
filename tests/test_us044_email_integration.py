@@ -224,7 +224,7 @@ def test_imap_backend_connect_network_failure() -> None:
         imap_host="imap.example.com",
         smtp_host="smtp.example.com",
         username="user@example.com",
-        password="secret",
+        password="secret",  # pragma: allowlist secret -- fake credential fixture
         imap_client_factory=lambda: (_ for _ in ()).throw(OSError("Connection refused")),
     )
     result = backend.connect()

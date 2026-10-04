@@ -226,7 +226,7 @@ class TestSetupComplete:
                 "llm_provider": "local",
                 "tts_provider": "none",
                 "ha_base_url": "http://ha.local:8123",
-                "ha_token": "should-be-ignored",
+                "ha_token": "should-be-ignored",  # pragma: allowlist secret -- ignored fixture value
                 "defer_home_assistant": True,
             },
             headers={"X-Setup-Token": _setup_token(flask_client)},
