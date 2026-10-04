@@ -51,6 +51,18 @@ class FakeInvoker:
         return self._take(role, "lead", task.task_id if task else "")
 
 
+def _seed_backend_validation_repo(config: OrchestratorConfig) -> None:
+    """Give deterministic-validation fixtures a real committed Git lease target."""
+    assert config.backend_root is not None
+    repo = config.backend_root
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    (repo / "README.md").write_text("validation baseline\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "validation fixture"], cwd=repo, check=True)
+
+
 def make_config(tmp_path: Path, *, observe_only: bool) -> OrchestratorConfig:
     coordination = tmp_path / "coordination"
     coordination.mkdir()
@@ -175,6 +187,7 @@ def test_ready_for_review_fails_deterministic_validation_before_review(tmp_path:
             }
         },
     )
+    _seed_backend_validation_repo(config)
     supervisor = Supervisor(config, invoker)
     supervisor.enqueue("backend", TaskItem("B-VALIDATE", "Fix backend"))
 
@@ -212,6 +225,7 @@ def test_validation_feedback_is_bounded_for_windows_provider_prompts(tmp_path: P
             }
         },
     )
+    _seed_backend_validation_repo(config)
     supervisor = Supervisor(config, invoker)
     supervisor.enqueue("backend", TaskItem("B-BOUNDED", "Fix backend"))
 
@@ -255,6 +269,7 @@ def test_failed_validation_does_not_publish_ready_for_review_coordination(tmp_pa
             }
         },
     )
+    _seed_backend_validation_repo(config)
     supervisor = Supervisor(config, invoker)
     supervisor.enqueue("backend", TaskItem("B-VALIDATE", "Fix backend"))
 
@@ -285,6 +300,7 @@ def test_ready_for_review_advances_only_after_deterministic_validation_passes(
             }
         },
     )
+    _seed_backend_validation_repo(config)
     supervisor = Supervisor(config, invoker)
     supervisor.enqueue("backend", TaskItem("B-VALIDATE", "Fix backend"))
 
@@ -324,6 +340,7 @@ def test_task_prefix_validation_override_replaces_role_default(tmp_path: Path) -
             }
         },
     )
+    _seed_backend_validation_repo(config)
     supervisor = Supervisor(config, invoker)
     supervisor.enqueue("backend", TaskItem("S35-BACKEND", "Fix speech"))
 
@@ -356,6 +373,7 @@ def test_validation_infrastructure_failure_blocks_system(tmp_path: Path) -> None
             }
         },
     )
+    _seed_backend_validation_repo(config)
     supervisor = Supervisor(config, invoker)
     supervisor.enqueue("backend", TaskItem("B-VALIDATE", "Fix backend"))
 
@@ -1404,6 +1422,7 @@ def test_validation_infrastructure_retry_reuses_durable_result_without_reinvokin
         },
     )
     invoker = FakeInvoker()
+    _seed_backend_validation_repo(failing_config)
     supervisor = Supervisor(failing_config, invoker)
     supervisor.save_state(WorkerState(role="backend", status=WorkerStatus.IMPLEMENTING, task=task))
     pending = {

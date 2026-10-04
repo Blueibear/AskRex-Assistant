@@ -1,5 +1,7 @@
 # Deterministic Implementation Validation Gate Plan
 
+> **2026-10-03 superseding operational amendment:** Validation executes in a separate exact-revision checkout, never the leased live worktree, because a failing pre-commit formatter left `scripts/rexbench.py` dirty and repeatedly stopped Ralph. Current implementation, evidence/cleanup policy and real deployment acceptance are specified in `docs/planning/PHASE0-RALPH-RECOVERY-2026-10-03.md`. Historical unchecked boxes below are original planning artifacts, not evidence that the current code lacks completed behavior.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: use TDD and verification-before-completion for every behavior change.
 
 **Goal:** Prevent Ralph from sending a published implementation checkpoint to independent review until trusted local validation commands pass.

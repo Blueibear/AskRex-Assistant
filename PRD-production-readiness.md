@@ -2,6 +2,8 @@
 
 > **Active PRD — 2026-07-22.** This is the only active release-readiness tracker. `PRD.md` and `PRD-remaining-release-readiness.md` are retained as superseded historical evidence. The current cross-cutting audit implementation ledger is [docs/audits/AUDIT-REMEDIATION-2026-07-22.md](docs/audits/AUDIT-REMEDIATION-2026-07-22.md). Local completion does not imply CI, signing, hardware, or external-provider verification.
 
+> **October 3, 2026 implementation handoff.** Preserve the existing active story selection and PR #433 CI-repair assignment while the separate Ralph orchestrator completes `docs/planning/PHASE0-RALPH-RECOVERY-2026-10-03.md`. Reconcile `docs/planning/ASKREX-IMPLEMENTATION-HANDOFF-2026-10-03.md` and the proposed Apple Music/other-provider slices in `docs/planning/MEDIA-SERVICES-PROVIDER-ROADMAP-2026-10-03.md` through normal bounded, independently reviewed follow-up work. This addendum neither reopens checked stories nor asserts live Apple Music authorization, supported playback, physical Windows acceptance, or permission to clear an API-budget blocker.
+
 > **Ralph execution rule**
 > A task means one full User Story, not one checkbox.
 > For the remaining integrated production-readiness/Rex 2.0 work, choose the first User Story with any unchecked `[ ]` acceptance criterion from the **Integrated execution order - 2026-08-08** below; do not use raw file position as the priority signal. Stories outside that list retain their historical status and are not reopened unless a later story explicitly depends on them.
@@ -3795,7 +3797,7 @@ grep -n "askrex.app\|Cloudflare\|CORS\|rate limit\|revocation" docs/deployment.m
 
 **Risk notes:** A display-name match or request-origin device never grants device authority. Provider-account selection and output-target selection are separate. Unsupported transfer/group behavior must not be reported as completed.
 
-**Local acceptance evidence (2026-08-16):** canonical media/provider/account/group/routing tests pass locally, including dynamic refresh, request-origin authority, lifecycle-verified group CRUD, verified Home Assistant transport/volume/mute controls, truthful unsupported transfer/group playback, and Electron session-bound target/group IPC. Live Apple Music/MusicKit authorization and physical-speaker production verification remain unclaimed. The exact implementation PR-head GitHub check remains open until CI completes.
+**Local acceptance evidence (2026-08-16):** canonical media/provider/account/group/routing tests pass locally, including dynamic refresh, request-origin authority, lifecycle-verified group CRUD, verified Home Assistant transport/volume/mute controls, truthful unsupported transfer/group playback, and Electron session-bound target/group IPC. Live Apple Music/MusicKit authorization and physical-speaker production verification remain unclaimed. **2026-10-03 clarification:** US-121/122 establish only reusable provider/account and output-target infrastructure; they are not a native Apple Music sign-in/player implementation. Post-security-gate provider stories and optional Music Assistant scope are documented in `docs/planning/MEDIA-SERVICES-PROVIDER-ROADMAP-2026-10-03.md`; assign them through the normal active PRD reconciliation without reclassifying unsupported playback as verified. The exact implementation PR-head GitHub check remains open until CI completes.
 
 ### US-122: Add per-user output-routing policies and Settings UI
 

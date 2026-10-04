@@ -1,6 +1,7 @@
 import argparse
 import getpass
 import json
+import sys
 import time
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
@@ -12,6 +13,7 @@ from rex.credentials import CredentialManager
 from .claude_cloud import adopt_cloud_session, launch_cloud_session, poll_cloud_session
 from .completion import record_acceptance
 from .handoff import (
+    HandoffRequired,
     accept_handoff,
     request_handoff,
     validate_handoffs,
@@ -616,6 +618,35 @@ def run_locked_cycle(config: OrchestratorConfig, *, invoker=None) -> None:
         run_cycle(current, invoker=invoker)
 
 
+def _record_handoff_block(config: OrchestratorConfig, error: HandoffRequired) -> None:
+    """Keep the heartbeat live while a failed lease requires a safe repair."""
+    detail = str(error)
+    role = next(
+        (candidate for candidate in ("backend", "mobile") if detail.startswith(candidate + " ")),
+        None,
+    )
+    if role is None:
+        raise error  # An unknown lease failure must not be silently treated as recoverable.
+    store = AtomicJsonStore(config.coordination_root / "state" / f"{role}.json")
+    with ControlPlaneLock(config.coordination_root / "control-plane.lock"):
+        state = store.read(default={})
+        # Never replace a human, usage-limit, acceptance, or completed state.
+        if state.get("status") in {"blocked_user", "done"}:
+            return
+        reason = f"supervisor lease preflight: {detail}"
+        if state.get("status") == "blocked_system" and state.get("blocked_reason") == reason:
+            return
+        resume = state.get("resume_status") or state.get("status") or "implementing"
+        state.update(
+            status="blocked_system",
+            blocked_reason=reason,
+            blocker_kind="system",
+            resume_status=resume,
+        )
+        store.write(state)
+    print(f"AskRex supervisor paused {role}: {detail}", file=sys.stderr, flush=True)
+
+
 def run_loop(
     config: OrchestratorConfig,
     *,
@@ -629,7 +660,10 @@ def run_loop(
     with lock, HeartbeatPump(heartbeat_path):
         while max_cycles is None or cycles < max_cycles:
             current = load_config(config.coordination_root)
-            run_cycle(current, invoker=invoker)
+            try:
+                run_cycle(current, invoker=invoker)
+            except HandoffRequired as exc:
+                _record_handoff_block(current, exc)
             cycles += 1
             if max_cycles is not None and cycles >= max_cycles:
                 break

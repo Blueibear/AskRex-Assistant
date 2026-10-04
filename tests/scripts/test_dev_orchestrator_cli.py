@@ -1178,7 +1178,7 @@ def test_configure_claude_oauth_token_persists_only_opaque_ref(tmp_path: Path) -
         credential_mapping={"claude_code_oauth": "CLAUDE_CODE_OAUTH_TOKEN"},
         vault=vault,
     )
-    secret = "synthetic-claude-oauth-value"
+    secret = "synthetic-claude-oauth-value"  # pragma: allowlist secret (test fixture)
 
     config = configure_claude_oauth_token(root, secret, credential_manager=manager)
 
@@ -1243,3 +1243,89 @@ def test_active_invoker_wires_vault_claude_oauth_resolver(tmp_path: Path, monkey
 
     assert invoker._claude_oauth_resolver is not None
     assert invoker._claude_oauth_resolver() == "vault-token"
+
+
+def test_run_loop_keeps_heartbeat_and_parks_failed_handoff_without_losing_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.dev_orchestrator import cli
+    from scripts.dev_orchestrator.handoff import HandoffRequired
+
+    root = tmp_path / "coordination"
+    backend, mobile, frozen = (tmp_path / name for name in ("backend", "mobile", "frozen"))
+    for path in (backend, mobile, frozen):
+        path.mkdir()
+    config = initialize_runtime(root, backend, mobile, frozen)
+    state_path = root / "state" / "backend.json"
+    initial = {
+        "role": "backend",
+        "status": "implementing",
+        "task": {"task_id": "keep-task"},
+        "iteration": 57,
+        "last_result_invocation_id": "keep-invocation",
+        "blocked_reason": "",
+        "blocker_kind": "",
+        "resume_status": None,
+    }
+    state_path.write_text(json.dumps(initial), encoding="utf-8")
+    calls = []
+
+    def fake_cycle(_config, *, invoker=None):
+        calls.append(1)
+        if len(calls) == 1:
+            raise HandoffRequired("backend worktree changed after handoff and is not clean")
+
+    monkeypatch.setattr(cli, "run_cycle", fake_cycle)
+    cli.run_loop(config, max_cycles=2, sleep_fn=lambda _: None)
+
+    parked = json.loads(state_path.read_text(encoding="utf-8"))
+    assert len(calls) == 2
+    assert parked["status"] == "blocked_system"
+    assert parked["resume_status"] == "implementing"
+    assert parked["iteration"] == 57
+    assert parked["task"] == initial["task"]
+    assert parked["last_result_invocation_id"] == "keep-invocation"
+    assert "worktree changed" in parked["blocked_reason"]
+    assert read_heartbeat(root / "supervisor-heartbeat.json")["pid"] > 0
+
+
+def test_handoff_recovery_does_not_clear_mobile_budget_blocker(
+    tmp_path: Path,
+) -> None:
+    from scripts.dev_orchestrator.cli import _record_handoff_block
+    from scripts.dev_orchestrator.handoff import HandoffRequired
+
+    root = tmp_path / "coordination"
+    backend, mobile, frozen = (tmp_path / name for name in ("backend", "mobile", "frozen"))
+    for path in (backend, mobile, frozen):
+        path.mkdir()
+    config = initialize_runtime(root, backend, mobile, frozen)
+    path = root / "state" / "mobile.json"
+    prior = {
+        "role": "mobile",
+        "status": "blocked_user",
+        "blocker_kind": "human",
+        "blocked_reason": "OpenAI monthly budget would be exceeded",
+        "resume_status": "planning",
+        "iteration": 0,
+    }
+    path.write_text(json.dumps(prior), encoding="utf-8")
+
+    _record_handoff_block(config, HandoffRequired("mobile checkout changed"))
+
+    assert json.loads(path.read_text(encoding="utf-8")) == prior
+
+
+def test_unknown_handoff_error_does_not_get_silently_cleared(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.cli import _record_handoff_block
+    from scripts.dev_orchestrator.handoff import HandoffRequired
+
+    root = tmp_path / "coordination"
+    backend, mobile, frozen = (tmp_path / name for name in ("backend", "mobile", "frozen"))
+    for path in (backend, mobile, frozen):
+        path.mkdir()
+    config = initialize_runtime(root, backend, mobile, frozen)
+
+    with pytest.raises(HandoffRequired, match="unrecognized lease"):
+        _record_handoff_block(config, HandoffRequired("unrecognized lease"))
