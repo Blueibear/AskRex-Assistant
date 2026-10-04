@@ -83,7 +83,7 @@ def _ordered_candidates(
         _add(provider_id)
 
     remaining = [pid for pid in candidates if pid not in ordered]
-    if mode is SpeechPolicyMode.PREFER_LOCAL or mode is SpeechPolicyMode.LOCAL_ONLY:
+    if mode in {SpeechPolicyMode.PREFER_LOCAL, SpeechPolicyMode.LOCAL_ONLY}:
         remaining.sort(key=lambda pid: (not candidates[pid].is_local, pid))
     elif mode is SpeechPolicyMode.PREFER_CLOUD:
         remaining.sort(key=lambda pid: (candidates[pid].is_local, pid))
