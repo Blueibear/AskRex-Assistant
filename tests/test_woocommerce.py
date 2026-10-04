@@ -875,7 +875,7 @@ class TestWooCommerceClientSecurity:
         client = WooCommerceClient(
             "https://example.com",
             consumer_key="ck_testkey",
-            consumer_secret="cs_testsecret",
+            consumer_secret="cs_testsecret",  # pragma: allowlist secret -- fake credential fixture
         )
         response = requests.Response()
         response.status_code = 403

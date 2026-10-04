@@ -563,7 +563,7 @@ class TestIMAPSMTPBackend:
             host="imap.example.com",
             port=993,
             username="user@example.com",
-            password="secret",
+            password="secret",  # pragma: allowlist secret -- fake credential fixture
             smtp_host="smtp.example.com",
             smtp_port=587,
             use_starttls=True,
