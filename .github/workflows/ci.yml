@@ -404,7 +404,7 @@ jobs:
         # Rationale: Stable fix requires transformers>=5.0.0, not yet released.
         # Revisit: https://github.com/Blueibear/AskRex-Assistant/issues/253
         run: |
-          pip-audit --strict \
+          pip-audit --strict . \
             --ignore-vuln CVE-2025-53643 \
             --ignore-vuln CVE-2025-69223 \
             --ignore-vuln CVE-2025-69224 \
