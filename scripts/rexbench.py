@@ -24,7 +24,6 @@ if str(REPO_ROOT) not in sys.path:
 # imports after the path bootstrap so the checked-out package is used.
 # isort: split
 import rex.assistant as assistant_module  # noqa: E402
-
 from rex.actions.graph import ActionGraph, ActionNode  # noqa: E402
 from rex.actions.graph_executor import ActionGraphExecutor  # noqa: E402
 from rex.actions.lifecycle import lifecycle_from_legacy_status  # noqa: E402
