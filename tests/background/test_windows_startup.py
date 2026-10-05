@@ -9,13 +9,16 @@ import pytest
 from rex.background import windows_startup
 
 
-def test_create_command_requires_absolute_packaged_paths(tmp_path: Path) -> None:
-    runtime_root = tmp_path / "Ask Rex Data"
-    pythonw = tmp_path / "Ask Rex" / "pythonw.exe"
+def test_create_command_requires_absolute_packaged_paths() -> None:
+    # These assertions exercise scheduler command construction, not the host
+    # temp-directory implementation. Keep their input within the production
+    # action budget so a deep CI checkout cannot hide the intended contract.
+    runtime_root = Path(r"C:\Users\James\AppData\Roaming\AskRex")
+    pythonw = Path(r"C:\Program Files\AskRex\pythonw.exe")
     command = windows_startup.build_schtasks_create_command(
         "AskRex Background Runtime",
-        pythonw.resolve(),
-        runtime_root.resolve(),
+        pythonw,
+        runtime_root,
         "james",
         run_as_user="DESKTOP\\james",
     )
@@ -78,6 +81,20 @@ def test_create_command_stays_within_schtasks_action_limit_for_production_shaped
     assert len(action) <= windows_startup.SCHTASKS_TASK_ACTION_MAX_CHARS
 
 
+def test_create_command_rejects_an_action_above_schtasks_limit() -> None:
+    pythonw = Path(r"C:\AskRex\pythonw.exe")
+    runtime_root = Path(r"C:\Users\James\AppData\Roaming") / ("r" * 240)
+
+    with pytest.raises(ValueError, match="action exceeds"):
+        windows_startup.build_schtasks_create_command(
+            "AskRex Background Runtime",
+            pythonw,
+            runtime_root,
+            "james",
+            run_as_user="DESKTOP\\james",
+        )
+
+
 def test_supervisor_compact_scheduler_aliases_remain_equivalent(tmp_path: Path) -> None:
     from rex.background import cli as background_cli
 
@@ -99,7 +116,7 @@ def test_create_command_rejects_relative_paths(pythonw: Path, runtime_root: Path
         windows_startup.build_schtasks_create_command("AskRex", pythonw, runtime_root, "james")
 
 
-def test_install_startup_uses_argument_array_without_shell(monkeypatch, tmp_path: Path) -> None:
+def test_install_startup_uses_argument_array_without_shell(monkeypatch) -> None:
     calls: list[tuple[list[str], dict[str, object]]] = []
 
     def fake_run(command, **kwargs):
@@ -108,8 +125,8 @@ def test_install_startup_uses_argument_array_without_shell(monkeypatch, tmp_path
 
     monkeypatch.setattr(windows_startup, "_is_windows", lambda: True)
     monkeypatch.setattr(windows_startup.subprocess, "run", fake_run)
-    pythonw = (tmp_path / "python" / "pythonw.exe").resolve()
-    runtime_root = (tmp_path / "runtime root").resolve()
+    pythonw = Path(r"C:\Program Files\AskRex\pythonw.exe")
+    runtime_root = Path(r"C:\Users\James\AppData\Roaming\Ask Rex")
 
     windows_startup.install_startup(
         "AskRex Background Runtime",
@@ -127,7 +144,7 @@ def test_install_startup_uses_argument_array_without_shell(monkeypatch, tmp_path
     assert kwargs["timeout"] == windows_startup.SCHTASKS_TIMEOUT_SECONDS
 
 
-def test_install_startup_is_idempotent_repair_via_force(monkeypatch, tmp_path: Path) -> None:
+def test_install_startup_is_idempotent_repair_via_force(monkeypatch) -> None:
     commands: list[list[str]] = []
 
     def fake_run(command, **_kwargs):
@@ -136,8 +153,8 @@ def test_install_startup_is_idempotent_repair_via_force(monkeypatch, tmp_path: P
 
     monkeypatch.setattr(windows_startup, "_is_windows", lambda: True)
     monkeypatch.setattr(windows_startup.subprocess, "run", fake_run)
-    pythonw = (tmp_path / "new install" / "pythonw.exe").resolve()
-    runtime_root = (tmp_path / "user data").resolve()
+    pythonw = Path(r"C:\Program Files\AskRex\pythonw.exe")
+    runtime_root = Path(r"C:\Users\James\AppData\Roaming\Ask Rex")
 
     for _ in range(2):
         windows_startup.install_startup(
