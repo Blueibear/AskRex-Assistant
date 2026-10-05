@@ -12,7 +12,7 @@ import threading
 import urllib.request
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, Self
 from unittest.mock import Mock, patch
 
 import pytest
@@ -39,7 +39,7 @@ class _FakeHttpResponse:
     def __init__(self, body: bytes) -> None:
         self._body = io.BytesIO(body)
 
-    def __enter__(self) -> _FakeHttpResponse:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args: Any) -> None:
@@ -70,7 +70,7 @@ class _RedirectServers:
     def target_url(self) -> str:
         return f"http://127.0.0.1:{self._target.server_port}/stolen"
 
-    def __enter__(self) -> _RedirectServers:
+    def __enter__(self) -> Self:
         for thread in self._threads:
             thread.start()
         return self
