@@ -344,6 +344,10 @@ async def test_tts_provider_wait_is_cancelled_without_stale_fallback() -> None:
     entered = asyncio.Event()
     tts = TextToSpeech.__new__(TextToSpeech)
     tts._provider = "edge"
+    # This fixture bypasses ``__init__`` to isolate the provider boundary.
+    # Preserve the constructor's disabled-router state so ``speak`` reaches
+    # the deliberately slow provider below.
+    tts._speech_router = None
     tts._edge_voice = "test"
     tts._tts_output_device = None
     tts._xtts_init_error = None
@@ -362,11 +366,18 @@ async def test_tts_provider_wait_is_cancelled_without_stale_fallback() -> None:
     engine = TurnEngine()
 
     task = asyncio.create_task(engine.execute_async(context, lambda _events: tts.speak("hello")))
-    await entered.wait()
-    assert engine.cancel_turn(context.turn_id, user_id="james", reason="barge_in")
+    try:
+        # A bounded wait turns a fixture/setup regression into a useful
+        # failure instead of allowing the release suite to hang forever.
+        await asyncio.wait_for(entered.wait(), timeout=0.5)
+        assert engine.cancel_turn(context.turn_id, user_id="james", reason="barge_in")
 
-    with pytest.raises(TurnCancelledError, match="barge_in"):
-        await asyncio.wait_for(task, timeout=0.5)
+        with pytest.raises(TurnCancelledError, match="barge_in"):
+            await asyncio.wait_for(task, timeout=0.5)
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
     assert tts.is_speaking() is False
 
 

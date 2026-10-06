@@ -39,8 +39,8 @@ def transition(
         raise LifecycleTransitionError("lifecycle transition must change state")
     if destination is AgentLifecycle.ARCHIVED and source is not AgentLifecycle.ARCHIVED:
         return destination
-    if source is AgentLifecycle.REVOKED and destination is AgentLifecycle.APPROVED:
-        if new_approval:
+    if source is AgentLifecycle.REVOKED:
+        if destination is AgentLifecycle.APPROVED and new_approval:
             return destination
         raise LifecycleTransitionError("reactivation after revocation requires a new approval")
     allowed: dict[AgentLifecycle, frozenset[AgentLifecycle]] = {

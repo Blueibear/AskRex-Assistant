@@ -15,6 +15,10 @@ from .lifecycle import AgentLifecycle
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SENSITIVE_FIELD_PARTS = ("secret", "token", "password", "credential", "api_key", "apikey")
+# ``max_tokens`` is a bounded model-output budget, not credential material.
+# Keep this allowlist deliberately narrow: all other secret-like policy keys
+# remain rejected, including names such as ``access_token``.
+_SAFE_TOKEN_POLICY_FIELDS = frozenset({"max_tokens"})
 
 
 class AgentDefinitionValidationError(ValueError):
@@ -41,7 +45,9 @@ def _json_value(value: Any, path: str = "") -> Any:
             if not isinstance(key, str):
                 raise AgentDefinitionValidationError("policy keys must be text")
             key_lower = key.casefold()
-            if any(part in key_lower for part in _SENSITIVE_FIELD_PARTS):
+            if key_lower not in _SAFE_TOKEN_POLICY_FIELDS and any(
+                part in key_lower for part in _SENSITIVE_FIELD_PARTS
+            ):
                 raise AgentDefinitionValidationError(
                     "agent definitions must not contain raw secret fields"
                 )
