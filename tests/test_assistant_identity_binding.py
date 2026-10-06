@@ -118,7 +118,7 @@ class _SpyHistoryStore:
         self.save_calls: list[tuple[str, str, str]] = []
         self.prune_calls: list[str] = []
 
-    def load_history(self, user_id, limit=50):
+    def load_history(self, user_id, limit=50, conversation_id=None):
         self.load_calls.append(user_id)
         return []
 
