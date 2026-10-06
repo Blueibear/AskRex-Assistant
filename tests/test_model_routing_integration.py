@@ -243,6 +243,11 @@ def test_no_network_call_for_openai_models(monkeypatch):
     assistant_module.Assistant(
         settings_obj=settings,
         transcripts_dir="transcripts",
+        # Assistant instances are deliberately unbound unless the caller
+        # supplies an identity.  This routing-only construction is still a
+        # user-scoped application path, so model the explicit entrypoint
+        # binding instead of relying on the deprecated settings fallback.
+        user_id="test",
     )
 
     assert not fetch_called, "Ollama was probed even though all routing targets are OpenAI models"
