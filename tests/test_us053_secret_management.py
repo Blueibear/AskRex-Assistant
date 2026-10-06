@@ -30,7 +30,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture(autouse=True)
-def _reset_credential_manager():
+def _reset_credential_manager(monkeypatch):
+    """Keep legacy environment-source coverage explicit and non-packaged."""
+    monkeypatch.delenv("ASKREX_PACKAGED", raising=False)
+    monkeypatch.setenv("REX_ALLOW_PLAINTEXT_CREDENTIAL_FALLBACK", "1")
     original = None
     try:
         from rex.credentials import _credential_manager as _orig

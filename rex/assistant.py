@@ -580,11 +580,15 @@ class Assistant:
         if store is None:
             return []
         try:
-            stored = store.load_history(
-                user_id,
-                limit=50,
-                conversation_id=getattr(self, "_conversation_id", None),
-            )
+            conversation_id = getattr(self, "_conversation_id", None)
+            if conversation_id is None:
+                stored = store.load_history(user_id, limit=50)
+            else:
+                stored = store.load_history(
+                    user_id,
+                    limit=50,
+                    conversation_id=conversation_id,
+                )
             return [ConversationTurn(speaker=row["role"], text=row["content"]) for row in stored]
         except Exception as exc:
             logger.warning("Failed to load history for user %s: %s", user_id, exc)
@@ -855,12 +859,17 @@ class Assistant:
         history_store = getattr(self, "_history_store", None)
         if history_store is not None:
             try:
-                history_store.save_turn(
-                    uid, "user", transcript, now, conversation_id=self._conversation_id
-                )
-                history_store.save_turn(
-                    uid, "assistant", completion, now, conversation_id=self._conversation_id
-                )
+                conversation_id = getattr(self, "_conversation_id", None)
+                if conversation_id is None:
+                    history_store.save_turn(uid, "user", transcript, now)
+                    history_store.save_turn(uid, "assistant", completion, now)
+                else:
+                    history_store.save_turn(
+                        uid, "user", transcript, now, conversation_id=conversation_id
+                    )
+                    history_store.save_turn(
+                        uid, "assistant", completion, now, conversation_id=conversation_id
+                    )
             except Exception as exc:
                 logger.warning("Failed to persist conversation turn: %s", exc)
 

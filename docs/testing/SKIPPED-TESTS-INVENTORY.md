@@ -14,11 +14,11 @@ The runtime count is intentionally separate from the executable source-site coun
 
 ## Validation Snapshot
 
-- `python scripts/check_skip_inventory.py`: passed; 129 executable skip sites match the inventory exactly by file, line, type, and reason.
+- `python scripts/check_skip_inventory.py`: passed; 128 executable skip sites match the inventory exactly by file, line, type, and reason.
 - Python 3.11 US-040 full coverage validation collected 8,498 tests and completed with 8,449 passed, 49 skipped, 0 failed; total coverage was 83.26%.
 - Every remaining row has one explicit action: `keep` or `fix`; all `archive` and `replace` actions from US-039/US-040 are complete.
 - Permanent guards retain a written rationale; all non-trivial actions link to a non-circular follow-up story.
-- US-039 removed 14 retired-surface skip sites; US-040 removes two generated-artifact skip sites. The remaining 129 sites cover supported code, dedicated follow-up repair work, and legitimate platform/dependency guards, including the two permanent Windows Job Object contract guards added by US-124.
+- US-039 removed 14 retired-surface skip sites; US-040 removes two generated-artifact skip sites. The remaining 128 sites cover supported code, dedicated follow-up repair work, and legitimate platform/dependency guards, including the two permanent Windows Job Object contract guards added by US-124.
 
 ## Classification and Action Summary
 
@@ -149,7 +149,7 @@ The runtime count is intentionally separate from the executable source-site coun
 | `tests/test_us030_clarification.py` | 204 | `pytest.skip` | HABridge not importable (requests not installed) | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
 | `tests/test_us033_acknowledgment.py` | 11 | `skipif` | numpy not installed | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
 | `tests/test_us034_progressive_response.py` | 22 | `skipif` | numpy not installed | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
-| `tests/test_us053_secret_management.py` | 125 | `pytest.skip` | .env.example not found | `temporary-bug-skip` | `fix` | `US-093` |
+| `tests/test_us053_secret_management.py` | 128 | `pytest.skip` | .env.example not found | `temporary-bug-skip` | `fix` | `US-093` |
 | `tests/test_us071_debug_mode.py` | 18 | `skipif` | rex.cli unavailable on this Python version | `platform-skip` | `keep` | permanent: platform/runtime-specific guard |
 | `tests/test_us074_voice_loop_pipeline.py` | 33 | `skipif` | numpy not installed | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
 | `tests/test_us096_secret_scan.py` | 171 | `pytest.skip` | PyYAML not installed; skipping YAML parse test | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |

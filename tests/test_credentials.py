@@ -107,6 +107,7 @@ class TestCredentialManager:
     @pytest.fixture(autouse=True)
     def _enable_explicit_legacy_mode(self, monkeypatch):
         """These compatibility tests intentionally exercise plaintext inputs."""
+        monkeypatch.delenv("ASKREX_PACKAGED", raising=False)
         monkeypatch.setenv("REX_ALLOW_PLAINTEXT_CREDENTIAL_FALLBACK", "1")
 
     def test_load_from_env_with_prefix(self):
@@ -341,6 +342,7 @@ class TestCredentialManagerEdgeCases:
     @pytest.fixture(autouse=True)
     def _enable_explicit_legacy_mode(self, monkeypatch):
         """These compatibility tests intentionally exercise plaintext inputs."""
+        monkeypatch.delenv("ASKREX_PACKAGED", raising=False)
         monkeypatch.setenv("REX_ALLOW_PLAINTEXT_CREDENTIAL_FALLBACK", "1")
 
     def test_invalid_config_json(self):
