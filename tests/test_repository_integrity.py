@@ -30,6 +30,7 @@ _ALLOWED_BINARY_PREFIXES = (
     "gui/assets/",
     "gui/src/assets/",
     "gui/src/renderer/src/assets/",
+    "gui/src/renderer/src/assets/",
     # US-046: small redistributable synthetic acoustic regression corpus.
     "tests/fixtures/wakeword/",
 )
