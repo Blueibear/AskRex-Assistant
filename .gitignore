@@ -51,6 +51,7 @@ venv.bak/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+pytest-of-*/
 .ruff_cache/
 .mypy_cache/
 .dmypy.json
