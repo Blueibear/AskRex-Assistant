@@ -109,6 +109,10 @@ class TestCredentialManager:
         """These compatibility tests intentionally exercise plaintext inputs."""
         monkeypatch.delenv("ASKREX_PACKAGED", raising=False)
         monkeypatch.setenv("REX_ALLOW_PLAINTEXT_CREDENTIAL_FALLBACK", "1")
+        # These tests exercise the legacy plaintext compatibility path.  Do
+        # not let an OS vault populated on a developer or CI worker override
+        # their fixture values after that path has loaded.
+        monkeypatch.setattr(CredentialManager, "_get_vault", lambda _manager: None)
 
     def test_load_from_env_with_prefix(self):
         """Test loading credentials from environment with REX_ prefix."""
@@ -344,6 +348,7 @@ class TestCredentialManagerEdgeCases:
         """These compatibility tests intentionally exercise plaintext inputs."""
         monkeypatch.delenv("ASKREX_PACKAGED", raising=False)
         monkeypatch.setenv("REX_ALLOW_PLAINTEXT_CREDENTIAL_FALLBACK", "1")
+        monkeypatch.setattr(CredentialManager, "_get_vault", lambda _manager: None)
 
     def test_invalid_config_json(self):
         """Test handling of invalid JSON in config file."""

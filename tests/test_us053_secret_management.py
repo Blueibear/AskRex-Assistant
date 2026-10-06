@@ -34,6 +34,10 @@ def _reset_credential_manager(monkeypatch):
     """Keep legacy environment-source coverage explicit and non-packaged."""
     monkeypatch.delenv("ASKREX_PACKAGED", raising=False)
     monkeypatch.setenv("REX_ALLOW_PLAINTEXT_CREDENTIAL_FALLBACK", "1")
+    # The US-053 assertions cover plaintext environment behavior.  An
+    # ambient OS vault must not replace those fixture values on machines
+    # where an operator has configured credentials.
+    monkeypatch.setattr(CredentialManager, "_get_vault", lambda _manager: None)
     original = None
     try:
         from rex.credentials import _credential_manager as _orig
