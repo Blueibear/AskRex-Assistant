@@ -164,7 +164,12 @@ class TextToSpeech:
         provider (including native) instead of the caller silently printing
         a stdout fallback after a single attempt.
         """
-        if self._speech_router is None:
+        # ``TextToSpeech`` has long supported narrow isolated construction in
+        # callers that only exercise a single provider boundary.  Treat a
+        # missing router exactly like the constructor's disabled-router
+        # state, rather than turning that compatibility path into an
+        # AttributeError before synthesis starts.
+        if getattr(self, "_speech_router", None) is None:
             return [(self._provider, None)]
         from rex.speech.providers.native import NATIVE_PROVIDER_ID  # noqa: PLC0415
 
@@ -469,7 +474,7 @@ class TextToSpeech:
             # SpeechRouter is enabled, however, stdout is not a speech
             # provider and must not turn an exhausted policy-bounded route
             # (including Local Only) into a false success.
-            if self._speech_router is not None:
+            if getattr(self, "_speech_router", None) is not None:
                 raise TextToSpeechError("No permitted text-to-speech provider succeeded.") from exc
             run_metrics["fallback_used"] = True
             run_metrics["path_used"] = "stdout_fallback"
