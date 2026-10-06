@@ -10,10 +10,10 @@ once permitted local providers are exhausted.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum
 
 
-class SpeechPolicyMode(StrEnum):
+class SpeechPolicyMode(str, Enum):
     """Ordered-fallback policy modes for STT/TTS provider selection."""
 
     AUTOMATIC = "automatic"
@@ -23,7 +23,7 @@ class SpeechPolicyMode(StrEnum):
     CUSTOM = "custom"
 
     def __str__(self) -> str:
-        """Preserve the value-style string representation of the prior StrEnum."""
+        """Preserve the value-style string representation of the prior enum."""
         return self.value
 
 
