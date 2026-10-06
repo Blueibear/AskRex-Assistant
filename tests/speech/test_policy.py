@@ -16,6 +16,12 @@ def _candidate(provider_id: str, *, is_local: bool, available: bool = True) -> P
     return ProviderCandidate(provider_id=provider_id, is_local=is_local, available=available)
 
 
+def test_policy_mode_remains_a_string_value() -> None:
+    """Keep the configuration-facing representation stable without StrEnum."""
+    assert isinstance(SpeechPolicyMode.LOCAL_ONLY, str)
+    assert str(SpeechPolicyMode.LOCAL_ONLY) == "local_only"
+
+
 class TestResolveProviderChain:
     def test_no_candidates_raises(self) -> None:
         with pytest.raises(SpeechPolicyError):
