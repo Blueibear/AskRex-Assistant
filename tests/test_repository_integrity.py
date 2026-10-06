@@ -35,6 +35,11 @@ _ALLOWED_BINARY_PREFIXES = (
     "tests/fixtures/wakeword/",
 )
 
+# This is the reviewed source-of-truth product blueprint, retained as a PDF
+# for its original formatted diagrams. Keep this exception exact so arbitrary
+# documentation binaries remain subject to the repository-artifact gate.
+_ALLOWED_BINARY_FILES = frozenset({"docs/Rex_AI_Assistant_Blueprint.pdf"})
+
 
 def _is_binary(path: str) -> bool:
     """Return ``True`` if the file contains non-textual bytes."""
@@ -44,6 +49,12 @@ def _is_binary(path: str) -> bool:
     # files in this repository are small, making it safe to read them eagerly.
     with open(path, "rb") as handle:
         return b"\0" in handle.read()
+
+
+def _is_allowed_binary(path: str) -> bool:
+    """Return whether one reviewed binary path is exempt from this guard."""
+
+    return path in _ALLOWED_BINARY_FILES or path.startswith(_ALLOWED_BINARY_PREFIXES)
 
 
 def _list_tracked_files() -> list[str]:
@@ -64,7 +75,7 @@ def test_no_tracked_binary_artifacts():
     offenders = []
 
     for path in _list_tracked_files():
-        if any(path.startswith(prefix) for prefix in _ALLOWED_BINARY_PREFIXES):
+        if _is_allowed_binary(path):
             continue
         if path.lower().endswith(_BINARY_SUFFIXES) or _is_binary(path):
             offenders.append(path)
@@ -74,6 +85,13 @@ def test_no_tracked_binary_artifacts():
         "Remove these files or update .gitignore: "
         f"{', '.join(offenders)}"
     )
+
+
+def test_binary_allowlist_is_limited_to_reviewed_paths() -> None:
+    """Keep the PDF exception from becoming a broad documentation bypass."""
+
+    assert _is_allowed_binary("docs/Rex_AI_Assistant_Blueprint.pdf")
+    assert not _is_allowed_binary("docs/unreviewed-artifact.pdf")
 
 
 def test_no_tracked_files_modified(tracked_modifications_baseline):
