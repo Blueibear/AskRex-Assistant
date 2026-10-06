@@ -149,7 +149,7 @@ The runtime count is intentionally separate from the executable source-site coun
 | `tests/test_us030_clarification.py` | 204 | `pytest.skip` | HABridge not importable (requests not installed) | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
 | `tests/test_us033_acknowledgment.py` | 11 | `skipif` | numpy not installed | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
 | `tests/test_us034_progressive_response.py` | 22 | `skipif` | numpy not installed | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
-| `tests/test_us053_secret_management.py` | 128 | `pytest.skip` | .env.example not found | `temporary-bug-skip` | `fix` | `US-093` |
+| `tests/test_us053_secret_management.py` | 132 | `pytest.skip` | .env.example not found | `temporary-bug-skip` | `fix` | `US-093` |
 | `tests/test_us071_debug_mode.py` | 18 | `skipif` | rex.cli unavailable on this Python version | `platform-skip` | `keep` | permanent: platform/runtime-specific guard |
 | `tests/test_us074_voice_loop_pipeline.py` | 33 | `skipif` | numpy not installed | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
 | `tests/test_us096_secret_scan.py` | 171 | `pytest.skip` | PyYAML not installed; skipping YAML parse test | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
