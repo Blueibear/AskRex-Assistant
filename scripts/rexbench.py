@@ -136,6 +136,17 @@ def _make_assistant(request_class: str):
     with (
         patch.object(assistant_module, "LanguageModel", _Factory),
         patch.object(ModelRouter, "_fetch_ollama_models", lambda self: None),
+        # Media discovery builds a per-user playback registry and is not part
+        # of the request classes measured by this deterministic harness.  In
+        # particular, it can enumerate local permission records thousands of
+        # times on a developer profile, making this isolated benchmark depend
+        # on unrelated machine state.  Keep the real Assistant turn path, but
+        # explicitly exclude that independent startup subsystem.
+        patch.object(
+            assistant_module.Assistant,
+            "_configure_media_service",
+            lambda *_args, **_kwargs: None,
+        ),
     ):
         assistant = assistant_module.Assistant(
             settings_obj=_Settings(), transcripts_dir="transcripts", user_id="benchmark"
