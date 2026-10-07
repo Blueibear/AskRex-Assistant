@@ -13,7 +13,7 @@
 
 AskRex Assistant is a local-first AI assistant for text chat, voice interaction, desktop control surfaces, and credential-gated home/productivity integrations. It runs from the Python `rex` package, with optional local ML dependencies for Whisper, openWakeWord, and XTTS, plus optional cloud/local LLM routing through OpenAI-compatible providers and Ollama.
 
-AskRex is a release-candidate implementation under validation, not a signed public production release. The Windows artifact has passed local clean-install, launch, managed-runtime, reinstall, and uninstall automation, but release signing, GitHub CI, and service/hardware checks listed below remain gates. Hold to Talk is the supported voice path; wake word is beta. See [INTEGRATIONS_STATUS.md](INTEGRATIONS_STATUS.md) for integration truth.
+AskRex is a release-candidate implementation under final validation, not a signed public production release. The packaged Windows artifact has passed automated local clean-install, launch, managed-runtime, reinstall, and uninstall coverage. The active release-candidate line is still completing release-gate cleanup and independent review; physical Windows wake/microphone/reboot acceptance and release signing remain human/external gates. Hold to Talk is the supported voice path; wake word is beta. See [INTEGRATIONS_STATUS.md](INTEGRATIONS_STATUS.md) for integration truth.
 
 > **Advanced / Developer**: For CLI text mode, voice loop, GPU/CUDA setup, and backend service configuration, see the [Advanced / Developer](#advanced--developer) section below. For GPU/CUDA setup and additional install variants, see [docs/advanced-install.md](docs/advanced-install.md).
 
@@ -114,7 +114,15 @@ The `askrex-assistant` PyPI package, when published, targets the **developer/ope
 
 ## Current Status
 
-This README reflects the current milestone after recent live testing and repair work. The Electron GUI is the current primary user-facing interface. The repo has usable CLI, chat, GUI, Home Assistant, and voice paths, with several areas still being stabilized.
+This README reflects the active release-candidate milestone as of October 7, 2026. The Electron GUI is the current primary user-facing interface. The repo has usable CLI, chat, GUI, Home Assistant, voice, timekeeping, media-routing, per-user output-routing, context/privacy, and authenticated mobile-backend paths, with release validation still in progress.
+
+### Release validation snapshot
+
+- The authoritative Python test suite now completes normally instead of timing out. The most recent full run before the current cleanup step reached **9,841 passed, 48 skipped, and 1 failed**.
+- That remaining full-suite failure was traced to accidentally tracked pytest temp/database artifacts under `pytest-of-james/**`. Those artifacts have been removed from Git tracking, the existing `pytest-of-*/` ignore rule prevents recurrence, and the focused repository-integrity gate now passes.
+- The current automated gate is task-diff hygiene (`git diff --check`), which found trailing whitespace in changed files. After that cleanup, the release candidate still requires a fresh authoritative validation run and normal independent review.
+- Physical Windows acceptance remains testing-owned. Wake/microphone/output-device behavior, reboot/screenless startup, and other hardware-dependent checks are not considered verified until exercised on the real Windows system.
+- No public production-release claim should be inferred until those automated and physical gates, plus release signing, are complete.
 
 ## Capabilities & Status
 
@@ -174,7 +182,7 @@ No surface is currently classified `removed`; historical/low-level entries remai
 - Microphone input, audible selected-output TTS, barge-in, live Home Assistant transitions, physical speaker/media playback paths, and provider delivery/write paths require environment-specific validation. Apple Music/MusicKit has no live credential or authorization verification in this repository.
 - Proactive weather/traffic/search enrichment is adapter-driven and fail-closed: if a trustworthy current-info reader is not configured, Rex does not invent the missing fact or surface a candidate that requires it. The repository does not currently provide a production traffic reader, so commute-delay suggestions require an authorized current-info adapter before they can operate live.
 - Personal location remains opt-in and demand-driven. Granting OS location permission or Rex `location_assist` does not start continuous GPS polling; mobile OS sensor/notification permissions should be requested just in time for an intentional feature use and remain separate from Rex-side contextual/disclosure grants.
-- In the lean shared Python 3.11 developer environment, the full `not slow and not audio and not gpu` release matrix currently has one inherited wake-word reliability failure because optional `openwakeword` is not installed (9,325 passed, 65 skipped, 1 failed). The exact failure reproduces on master; it is not a US-123 regression or a claim that wake-word mode is release-ready.
+- Release validation is still in progress. The latest authoritative full Python run completed with 9,841 passed, 48 skipped, and one repository-integrity failure; that specific integrity failure has since been repaired and its focused test passes. A fresh full-suite result and independent review are still required before the branch can advance to physical Windows acceptance.
 
 ## Implemented Privacy Boundary
 
