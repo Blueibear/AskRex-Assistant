@@ -14,15 +14,26 @@ class _DummyStream:
 class _DummySoundDevice:
     def __init__(self):
         self.devices = [
-            {"name": "Mic", "max_input_channels": 2, "max_output_channels": 0},
+            {
+                "name": "Mic",
+                "max_input_channels": 2,
+                "max_output_channels": 0,
+                "default_samplerate": 48_000,
+            },
             {"name": "Speaker", "max_input_channels": 0, "max_output_channels": 2},
         ]
+        self.input_settings: list[dict[str, object]] = []
+        self.input_stream_options: dict[str, object] | None = None
 
     def query_devices(self):
         return self.devices
 
     def InputStream(self, *args, **kwargs):  # noqa: N802 - mimic sounddevice API
+        self.input_stream_options = kwargs
         return _DummyStream()
+
+    def check_input_settings(self, **kwargs):
+        self.input_settings.append(kwargs)
 
     def OutputStream(self, *args, **kwargs):  # noqa: N802 - mimic sounddevice API
         return _DummyStream()
@@ -32,6 +43,42 @@ def test_list_devices_requires_sounddevice(monkeypatch):
     monkeypatch.setattr(audio_config, "sd", None, raising=False)
     with pytest.raises(audio_config.AudioDeviceError):
         audio_config.list_devices()
+
+
+def test_input_probe_uses_negotiated_mono_float32_capture_path(monkeypatch):
+    sounddevice = _DummySoundDevice()
+    monkeypatch.setattr(audio_config, "sd", sounddevice, raising=False)
+
+    audio_config.test_input_device(0)
+
+    assert sounddevice.input_settings == [
+        {"device": 0, "channels": 1, "dtype": "float32", "samplerate": 16_000}
+    ]
+    assert sounddevice.input_stream_options == {
+        "device": 0,
+        "samplerate": 16_000,
+        "channels": 1,
+        "dtype": "float32",
+        "blocksize": 0,
+    }
+
+
+def test_input_probe_falls_back_to_verified_device_default_rate(monkeypatch):
+    sounddevice = _DummySoundDevice()
+
+    def check_input_settings(**kwargs):
+        sounddevice.input_settings.append(kwargs)
+        if kwargs["samplerate"] == 16_000:
+            raise ValueError("unsupported sample rate")
+
+    sounddevice.check_input_settings = check_input_settings
+    monkeypatch.setattr(audio_config, "sd", sounddevice, raising=False)
+
+    audio_config.test_input_device(0)
+
+    assert [item["samplerate"] for item in sounddevice.input_settings] == [16_000, 48_000]
+    assert sounddevice.input_stream_options is not None
+    assert sounddevice.input_stream_options["samplerate"] == 48_000
 
 
 def test_resolve_input_device_index_prefers_directsound_exact_match():

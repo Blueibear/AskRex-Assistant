@@ -443,6 +443,47 @@ def set_selected_output_device_index(config: dict, index: int | None) -> dict:
     return config
 
 
+def resolve_input_capture_rate(device_id: int, preferred_rate: int = 16_000) -> int:
+    """Return a supported mono capture rate, preferring the wake-word rate.
+
+    The wake-word pipeline consumes 16 kHz mono float32 samples.  Some Windows
+    endpoints reject that rate despite advertising microphone capability, so
+    validate it explicitly and fall back to the endpoint's declared default.
+    The caller can then use the existing capture/resampling path rather than
+    opening PortAudio with its implicit defaults.
+    """
+    sounddevice = _require_sounddevice()
+    devices = list_devices()
+    device = devices[device_id]
+
+    def supported(rate: int) -> bool:
+        try:
+            sounddevice.check_input_settings(
+                device=device_id,
+                channels=1,
+                dtype="float32",
+                samplerate=rate,
+            )
+        except Exception:
+            return False
+        return True
+
+    if supported(preferred_rate):
+        return preferred_rate
+
+    default_rate = device.get("default_samplerate")
+    if isinstance(default_rate, bool) or not isinstance(default_rate, (int, float)):
+        raise AudioDeviceError(
+            f"Input device {device_id} does not support the required capture format."
+        )
+    negotiated_rate = int(default_rate)
+    if negotiated_rate <= 0 or not supported(negotiated_rate):
+        raise AudioDeviceError(
+            f"Input device {device_id} does not support the required capture format."
+        )
+    return negotiated_rate
+
+
 def test_input_device(device_id: int) -> None:
     """Functionally probe an input device without persisting a selection."""
     devices = list_devices()
@@ -455,7 +496,14 @@ def test_input_device(device_id: int) -> None:
 
     try:
         sounddevice = _require_sounddevice()
-        with sounddevice.InputStream(device=device_id, blocksize=0):
+        capture_rate = resolve_input_capture_rate(device_id, 16_000)
+        with sounddevice.InputStream(
+            device=device_id,
+            samplerate=capture_rate,
+            channels=1,
+            dtype="float32",
+            blocksize=0,
+        ):
             pass
     except Exception as exc:
         raise AudioDeviceError(f"Failed to open input device {device_id}: {exc}") from exc
