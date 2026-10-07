@@ -18,11 +18,40 @@ class _FakeSoundDevice:
         self.input_error = input_error
         self.output_error = output_error
         self.input_devices: list[int] = []
+        self.input_settings_checks: list[dict[str, object]] = []
+        self.input_stream_options: list[dict[str, object]] = []
         self.output_devices: list[int] = []
 
-    def InputStream(self, *, device: int, blocksize: int) -> Any:  # noqa: N802
+    def check_input_settings(
+        self, *, device: int, channels: int, dtype: str, samplerate: int
+    ) -> None:
+        self.input_settings_checks.append(
+            {
+                "device": device,
+                "channels": channels,
+                "dtype": dtype,
+                "samplerate": samplerate,
+            }
+        )
+
+    def InputStream(  # noqa: N802
+        self,
+        *,
+        device: int,
+        samplerate: int,
+        channels: int,
+        dtype: str,
+        blocksize: int,
+    ) -> Any:
         assert blocksize == 0
         self.input_devices.append(device)
+        self.input_stream_options.append(
+            {
+                "samplerate": samplerate,
+                "channels": channels,
+                "dtype": dtype,
+            }
+        )
         if self.input_error is not None:
             raise self.input_error
         return nullcontext()
@@ -37,9 +66,19 @@ class _FakeSoundDevice:
 
 def _devices() -> list[dict[str, object]]:
     return [
-        {"name": "Microphone", "max_input_channels": 1, "max_output_channels": 0},
+        {
+            "name": "Microphone",
+            "max_input_channels": 1,
+            "max_output_channels": 0,
+            "default_samplerate": 16_000,
+        },
         {"name": "Speakers", "max_input_channels": 0, "max_output_channels": 2},
-        {"name": "Headset", "max_input_channels": 1, "max_output_channels": 2},
+        {
+            "name": "Headset",
+            "max_input_channels": 1,
+            "max_output_channels": 2,
+            "default_samplerate": 16_000,
+        },
     ]
 
 
@@ -68,6 +107,12 @@ def test_input_device_probe_opens_selected_portaudio_device_without_persisting(
     audio_config.test_input_device(2)
 
     assert fake_sounddevice.input_devices == [2]
+    assert fake_sounddevice.input_settings_checks == [
+        {"device": 2, "samplerate": 16_000, "channels": 1, "dtype": "float32"}
+    ]
+    assert fake_sounddevice.input_stream_options == [
+        {"samplerate": 16_000, "channels": 1, "dtype": "float32"}
+    ]
 
 
 def test_output_device_probe_opens_selected_portaudio_device_without_persisting(
