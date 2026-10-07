@@ -131,15 +131,26 @@ describe('runtime path isolation', () => {
 
   it('actively strips the plaintext credential fallback from packaged children', () => {
     const previous = process.env.REX_ALLOW_PLAINTEXT_CREDENTIAL_FALLBACK
+    const previousPythonPath = process.env.PYTHONPATH
+    const previousPythonHome = process.env.PYTHONHOME
     process.env.REX_ALLOW_PLAINTEXT_CREDENTIAL_FALLBACK = '1'
+    process.env.PYTHONPATH = '/operator/modules'
+    process.env.PYTHONHOME = '/operator/python'
     mockApp.isPackaged = true
     try {
       const options = bridgeSpawnOptions()
       expect(options.env.REX_ALLOW_PLAINTEXT_CREDENTIAL_FALLBACK).toBeUndefined()
+      expect(options.env.PYTHONPATH).toBeUndefined()
+      expect(options.env.PYTHONHOME).toBeUndefined()
+      expect(options.env.PYTHONNOUSERSITE).toBe('1')
       expect(options.env.ASKREX_PACKAGED).toBe('1')
     } finally {
       if (previous === undefined) delete process.env.REX_ALLOW_PLAINTEXT_CREDENTIAL_FALLBACK
       else process.env.REX_ALLOW_PLAINTEXT_CREDENTIAL_FALLBACK = previous
+      if (previousPythonPath === undefined) delete process.env.PYTHONPATH
+      else process.env.PYTHONPATH = previousPythonPath
+      if (previousPythonHome === undefined) delete process.env.PYTHONHOME
+      else process.env.PYTHONHOME = previousPythonHome
     }
   })
 
