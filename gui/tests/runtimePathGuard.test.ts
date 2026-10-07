@@ -18,12 +18,15 @@ describe('Python bridge runtime path isolation', () => {
     const failures: string[] = []
     for (const file of walkTypeScriptFiles(mainRoot)) {
       const source = readFileSync(file, 'utf8')
-      const bridgeCalls = source.match(/\bspawn(?:Sync)?\(resolvePythonCommand\(\)/g)?.length ?? 0
-      if (bridgeCalls === 0) continue
-      const guarded =
-        (source.match(/\.\.\.bridgeSpawnOptions\(\)/g) ?? []).length +
-        (source.match(/\.\.\.voiceBridgeOptions,/g) ?? []).length
-      if (guarded !== bridgeCalls) failures.push(`${file}: ${guarded}/${bridgeCalls}`)
+      const bridgeCalls = source.matchAll(
+        /\bspawn(?:Sync)?\(resolvePythonCommand\(\),\s*\[[^\]]*\],\s*\{([^}]*)\}/gs
+      )
+      for (const bridgeCall of bridgeCalls) {
+        const options = bridgeCall[1]
+        if (!/\.\.\.(?:bridgeSpawnOptions\(\)|voiceBridgeOptions),?/.test(options)) {
+          failures.push(file)
+        }
+      }
     }
     expect(failures).toEqual([])
   })
