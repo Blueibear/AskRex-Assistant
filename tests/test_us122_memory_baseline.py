@@ -152,31 +152,38 @@ class TestMemoryBaseline:
 
     def test_growth_rate_not_linear(self, mem_client: Any) -> None:
         """Growth from request 51-100 must be ≤ growth from request 1-50 (converging, not linear)."""
-        tracemalloc.start()
-        try:
-            # Warm up
-            for _ in range(_WARMUP_REQUESTS):
-                mem_client.get("/health/live")
+        # A single tracemalloc run can absorb delayed allocations from another
+        # test or an extension module.  Compare three independent runs and use
+        # the median, as _measure_growth does above: a leak remains consistent
+        # across runs, while one-off allocator noise does not become a failure.
+        first_half_samples: list[int] = []
+        second_half_samples: list[int] = []
 
-            snap_before = _take_snapshot()
-            bytes_before = _total_bytes(snap_before)
+        for _ in range(3):
+            tracemalloc.start()
+            try:
+                for _ in range(_WARMUP_REQUESTS):
+                    mem_client.get("/health/live")
 
-            for _ in range(50):
-                mem_client.get("/health/live")
+                bytes_before = _total_bytes(_take_snapshot())
 
-            snap_mid = _take_snapshot()
-            bytes_mid = _total_bytes(snap_mid)
+                for _ in range(50):
+                    mem_client.get("/health/live")
 
-            for _ in range(50):
-                mem_client.get("/health/live")
+                bytes_mid = _total_bytes(_take_snapshot())
 
-            snap_after = _take_snapshot()
-            bytes_after = _total_bytes(snap_after)
+                for _ in range(50):
+                    mem_client.get("/health/live")
 
-            growth_first_half = max(0, bytes_mid - bytes_before)
-            growth_second_half = max(0, bytes_after - bytes_mid)
-        finally:
-            tracemalloc.stop()
+                bytes_after = _total_bytes(_take_snapshot())
+
+                first_half_samples.append(max(0, bytes_mid - bytes_before))
+                second_half_samples.append(max(0, bytes_after - bytes_mid))
+            finally:
+                tracemalloc.stop()
+
+        growth_first_half = int(statistics.median(first_half_samples))
+        growth_second_half = int(statistics.median(second_half_samples))
 
         # Second half growth should be <= first half (converging behaviour).
         # 50 KB absolute floor accounts for CI allocator jitter when the first
