@@ -230,16 +230,16 @@ def test_no_network_call_for_openai_models(monkeypatch):
 
     fetch_called = []
 
-    def _track_fetch(self) -> None:
-        fetch_called.append(True)
-
-    monkeypatch.setattr(ModelRouter, "_fetch_ollama_models", _track_fetch)
+    class _TrackedOpenAIRouter(ModelRouter):
+        def _fetch_ollama_models(self) -> None:
+            fetch_called.append(True)
 
     class _LLMFactory:
         def __new__(cls, *args, **kwargs):
             return llm
 
     monkeypatch.setattr(assistant_module, "LanguageModel", _LLMFactory)
+    monkeypatch.setattr(assistant_module, "ModelRouter", _TrackedOpenAIRouter)
     assistant_module.Assistant(
         settings_obj=settings,
         transcripts_dir="transcripts",
