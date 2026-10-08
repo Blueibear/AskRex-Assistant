@@ -240,7 +240,7 @@ def test_no_network_call_for_openai_models(monkeypatch):
 
     monkeypatch.setattr(assistant_module, "LanguageModel", _LLMFactory)
     monkeypatch.setattr(assistant_module, "ModelRouter", _TrackedOpenAIRouter)
-    assistant_module.Assistant(
+    assistant = assistant_module.Assistant(
         settings_obj=settings,
         transcripts_dir="transcripts",
         # Assistant instances are deliberately unbound unless the caller
@@ -250,6 +250,7 @@ def test_no_network_call_for_openai_models(monkeypatch):
         user_id="test",
     )
 
+    assert not assistant._router._needs_ollama
     assert not fetch_called, "Ollama was probed even though all routing targets are OpenAI models"
 
 
