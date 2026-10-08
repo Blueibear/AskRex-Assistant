@@ -10,10 +10,10 @@ once permitted local providers are exhausted.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
+import enum
 
 
-class SpeechPolicyMode(StrEnum):
+class SpeechPolicyMode(enum.StrEnum):
     """Ordered-fallback policy modes for STT/TTS provider selection."""
 
     AUTOMATIC = "automatic"
