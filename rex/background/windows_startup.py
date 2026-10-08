@@ -113,6 +113,12 @@ def install_startup(
 ) -> None:
     """Create or repair the per-user interactive startup task idempotently."""
 
+    # Fail before constructing a scheduler action on unsupported hosts.  This
+    # keeps the mutation boundary platform-gated even when caller paths would
+    # otherwise fail independent command validation first.
+    if not _is_windows():
+        raise OSError("Windows Task Scheduler operations require Windows")
+
     command = build_schtasks_create_command(
         task_name,
         pythonw_path,

@@ -199,7 +199,7 @@ def test_mutating_startup_fails_closed_off_windows(monkeypatch, tmp_path: Path) 
         )
 
 
-def test_install_startup_surfaces_scheduler_failure(monkeypatch, tmp_path: Path) -> None:
+def test_install_startup_surfaces_scheduler_failure(monkeypatch) -> None:
     def fake_run(command, **_kwargs):
         return subprocess.CompletedProcess(command, 5, stdout="", stderr="access denied")
 
@@ -209,8 +209,8 @@ def test_install_startup_surfaces_scheduler_failure(monkeypatch, tmp_path: Path)
     with pytest.raises(windows_startup.StartupTaskError, match="create"):
         windows_startup.install_startup(
             "AskRex",
-            (tmp_path / "pythonw.exe").resolve(),
-            tmp_path.resolve(),
+            Path(r"C:\Program Files\AskRex\pythonw.exe"),
+            Path(r"C:\Users\James\AppData\Roaming\AskRex"),
             "james",
             run_as_user="DESKTOP\\james",
         )
