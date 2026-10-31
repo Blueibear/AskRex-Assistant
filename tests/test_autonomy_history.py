@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -203,6 +203,16 @@ class TestHistoryStoreRecent:
         assert results[0].goal == "goal-2"
 
     @pytest.mark.asyncio
+    async def test_recent_tied_timestamps_use_append_order(self, tmp_path: Path) -> None:
+        store = HistoryStore(db_path=tmp_path / "test.db")
+        timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+        for i in range(3):
+            record = _make_record(goal=f"goal-{i}").model_copy(update={"timestamp": timestamp})
+            await store.append(record)
+
+        assert [r.goal for r in await store.recent(n=3)] == ["goal-2", "goal-1", "goal-0"]
+
+    @pytest.mark.asyncio
     async def test_recent_default_n_is_20(self, tmp_path: Path) -> None:
         store = HistoryStore(db_path=tmp_path / "test.db")
         for _ in range(25):
@@ -263,6 +273,18 @@ class TestHistoryStoreByOutcome:
 
         results = await store.by_outcome("success")
         assert results[0].goal == "second-success"
+
+    @pytest.mark.asyncio
+    async def test_by_outcome_tied_timestamps_use_append_order(self, tmp_path: Path) -> None:
+        store = HistoryStore(db_path=tmp_path / "test.db")
+        timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+        for i in range(3):
+            record = _make_record(goal=f"goal-{i}", outcome="success").model_copy(
+                update={"timestamp": timestamp}
+            )
+            await store.append(record)
+
+        assert [r.goal for r in await store.by_outcome("success")] == ["goal-2", "goal-1", "goal-0"]
 
     @pytest.mark.asyncio
     async def test_db_persists_across_store_instances(self, tmp_path: Path) -> None:

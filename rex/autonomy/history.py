@@ -181,7 +181,7 @@ class HistoryStore:
         try:
             conn.row_factory = aiosqlite.Row
             async with conn.execute(
-                "SELECT * FROM execution_records ORDER BY timestamp DESC LIMIT ?",
+                "SELECT * FROM execution_records ORDER BY timestamp DESC, rowid DESC LIMIT ?",
                 (n,),
             ) as cursor:
                 rows = await cursor.fetchall()
@@ -203,7 +203,7 @@ class HistoryStore:
         try:
             conn.row_factory = aiosqlite.Row
             async with conn.execute(
-                "SELECT * FROM execution_records WHERE outcome = ? ORDER BY timestamp DESC",
+                "SELECT * FROM execution_records WHERE outcome = ? ORDER BY timestamp DESC, rowid DESC",
                 (outcome,),
             ) as cursor:
                 rows = await cursor.fetchall()
