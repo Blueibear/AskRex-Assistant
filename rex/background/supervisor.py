@@ -36,6 +36,9 @@ _VOICE_DETAIL_CODES = frozenset(
 )
 
 _VOICE_HEALTH_MAX_AGE_SECONDS = 5.0
+_WINDOWS_REPLACE_RETRY_ATTEMPTS = 5
+_WINDOWS_REPLACE_RETRY_SECONDS = 0.05
+_WINDOWS_SHARING_WINERRORS = frozenset({5, 32, 33})
 
 logger = logging.getLogger(__name__)
 
@@ -1177,7 +1180,18 @@ def _atomic_write_json(path: Path, payload: dict[str, object]) -> None:
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        for attempt in range(_WINDOWS_REPLACE_RETRY_ATTEMPTS):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError as exc:
+                if (
+                    os.name != "nt"
+                    or getattr(exc, "winerror", None) not in _WINDOWS_SHARING_WINERRORS
+                    or attempt == _WINDOWS_REPLACE_RETRY_ATTEMPTS - 1
+                ):
+                    raise
+                time.sleep(_WINDOWS_REPLACE_RETRY_SECONDS)
         temporary = None
     finally:
         if temporary is not None:

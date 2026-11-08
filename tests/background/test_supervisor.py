@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+import rex.background.supervisor as supervisor_module
 from rex.background.lock import AlreadyRunningError, SingleInstanceLock
 from rex.background.paths import BackgroundPaths
 from rex.background.supervisor import (
@@ -1426,6 +1427,92 @@ def test_authenticated_core_shutdown_request_uses_bounded_timeout(
 
     assert _request_authenticated_core_shutdown(tmp_path / "core-endpoint.json") is True
     assert 0 < captured["timeout"] <= 2.0
+
+
+def _windows_access_denied_error(winerror: int) -> PermissionError:
+    error = PermissionError("sharing violation")
+    error.winerror = winerror
+    return error
+
+
+def test_atomic_json_write_retries_transient_windows_sharing_violation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "health.json"
+    target.write_text('{"old":true}\n', encoding="utf-8")
+    calls = 0
+    sleeps: list[float] = []
+    real_replace = supervisor_module.os.replace
+
+    def flaky_replace(source: Path | str, destination: Path | str) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise _windows_access_denied_error(5)
+        real_replace(source, destination)
+
+    monkeypatch.setattr(supervisor_module.os, "name", "nt")
+    monkeypatch.setattr(supervisor_module.os, "replace", flaky_replace)
+    monkeypatch.setattr(supervisor_module.time, "sleep", sleeps.append)
+
+    supervisor_module._atomic_write_json(target, {"new": True})
+
+    assert calls == 2
+    assert sleeps == [0.05]
+    assert json.loads(target.read_text(encoding="utf-8")) == {"new": True}
+    assert list(tmp_path.glob(".health.json.*.tmp")) == []
+
+
+def test_atomic_json_write_reraises_permanent_windows_denial_and_cleans_temp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "health.json"
+    target.write_text('{"old":true}\n', encoding="utf-8")
+    calls = 0
+    sleeps: list[float] = []
+
+    def deny_replace(_source: Path | str, _destination: Path | str) -> None:
+        nonlocal calls
+        calls += 1
+        raise _windows_access_denied_error(32)
+
+    monkeypatch.setattr(supervisor_module.os, "name", "nt")
+    monkeypatch.setattr(supervisor_module.os, "replace", deny_replace)
+    monkeypatch.setattr(supervisor_module.time, "sleep", sleeps.append)
+
+    with pytest.raises(PermissionError, match="sharing violation"):
+        supervisor_module._atomic_write_json(target, {"new": True})
+
+    assert calls == 5
+    assert sleeps == [0.05, 0.05, 0.05, 0.05]
+    assert json.loads(target.read_text(encoding="utf-8")) == {"old": True}
+    assert list(tmp_path.glob(".health.json.*.tmp")) == []
+
+
+def test_atomic_json_write_does_not_retry_unrelated_replace_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "health.json"
+    target.write_text('{"old":true}\n', encoding="utf-8")
+    calls = 0
+    sleeps: list[float] = []
+
+    def fail_replace(_source: Path | str, _destination: Path | str) -> None:
+        nonlocal calls
+        calls += 1
+        raise OSError(28, "disk full")
+
+    monkeypatch.setattr(supervisor_module.os, "name", "nt")
+    monkeypatch.setattr(supervisor_module.os, "replace", fail_replace)
+    monkeypatch.setattr(supervisor_module.time, "sleep", sleeps.append)
+
+    with pytest.raises(OSError, match="disk full"):
+        supervisor_module._atomic_write_json(target, {"new": True})
+
+    assert calls == 1
+    assert sleeps == []
+    assert json.loads(target.read_text(encoding="utf-8")) == {"old": True}
+    assert list(tmp_path.glob(".health.json.*.tmp")) == []
 
 
 def test_supervisor_codefactor_regressions_stay_closed() -> None:
