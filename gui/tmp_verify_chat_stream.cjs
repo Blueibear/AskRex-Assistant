@@ -2,6 +2,21 @@ const path = require('path');
 const { app, BrowserWindow, ipcMain } = require('electron');
 
 const guiDir = process.cwd();
+// Keep every startup bridge in the test's disposable runtime.  Merely setting
+// LOCALAPPDATA is insufficient once Electron has selected its userData path,
+// and can otherwise make first-run startup depend on prior test state.
+const localAppData = process.env.LOCALAPPDATA;
+if (localAppData) {
+  app.setPath('userData', path.join(localAppData, 'rex-ai'));
+}
+
+// A modal startup error would leave this non-interactive harness waiting for a
+// window until pytest's outer timeout.  Report the bounded failure instead.
+const { dialog } = require('electron');
+dialog.showErrorBox = (title, content) => {
+  process.stdout.write(JSON.stringify({ startupError: { title, content } }) + '\n');
+};
+
 app.setAppPath(guiDir);
 require(path.join(guiDir, 'dist-electron', 'main', 'index.js'));
 
