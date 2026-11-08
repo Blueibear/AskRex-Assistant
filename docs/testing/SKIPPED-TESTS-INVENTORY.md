@@ -160,7 +160,7 @@ The runtime count is intentionally separate from the executable source-site coun
 | `tests/test_us139_install_scripts.py` | 139 | `skipif` | executable bit not relevant on Windows | `platform-skip` | `keep` | permanent: platform/runtime-specific guard |
 | `tests/test_us140_full_extra.py` | 138 | `pytest.skip` | install.sh not present | `temporary-bug-skip` | `fix` | `US-093` |
 | `tests/test_us140_full_extra.py` | 145 | `pytest.skip` | install.ps1 not present | `temporary-bug-skip` | `fix` | `US-093` |
-| `tests/test_us304_chat_stream_electron_verification.py` | 67 | `skipif` | Electron binary or built main bundle not available | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
-| `tests/test_us304_chat_stream_electron_verification.py` | 36 | `pytest.skip` | f"Electron verification unavailable: {exc}" | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
+| `tests/test_us304_chat_stream_electron_verification.py` | 69 | `skipif` | Electron binary or built main bundle not available | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
+| `tests/test_us304_chat_stream_electron_verification.py` | 38 | `pytest.skip` | f"Electron verification unavailable: {exc}" | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
 | `tests/test_voice_id_mvp.py` | 590 | `pytest.skip` | speechbrain is installed — cannot test missing-dep path | `optional-dep-skip` | `keep` | permanent: optional dependency/tool/environment guard |
 | `tests/test_windows_service.py` | 10 | `pytest.skip` | rex.windows_service is Windows-only | `platform-skip` | `keep` | permanent: platform/runtime-specific guard |
