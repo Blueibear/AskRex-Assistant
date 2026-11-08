@@ -1435,8 +1435,31 @@ def _windows_access_denied_error(winerror: int) -> PermissionError:
     return error
 
 
+def _patch_supervisor_atomic_io(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    platform_name: str,
+    replace,
+    sleeps: list[float],
+) -> None:
+    from types import SimpleNamespace
+
+    real_os = supervisor_module.os
+    monkeypatch.setattr(
+        supervisor_module,
+        "os",
+        SimpleNamespace(
+            name=platform_name,
+            replace=replace,
+            fsync=real_os.fsync,
+        ),
+    )
+    monkeypatch.setattr(supervisor_module, "time", SimpleNamespace(sleep=sleeps.append))
+
+
+@pytest.mark.parametrize("winerror", [5, 32, 33])
 def test_atomic_json_write_retries_transient_windows_sharing_violation(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, winerror: int
 ) -> None:
     target = tmp_path / "health.json"
     target.write_text('{"old":true}\n', encoding="utf-8")
@@ -1448,12 +1471,15 @@ def test_atomic_json_write_retries_transient_windows_sharing_violation(
         nonlocal calls
         calls += 1
         if calls == 1:
-            raise _windows_access_denied_error(5)
+            raise _windows_access_denied_error(winerror)
         real_replace(source, destination)
 
-    monkeypatch.setattr(supervisor_module.os, "name", "nt")
-    monkeypatch.setattr(supervisor_module.os, "replace", flaky_replace)
-    monkeypatch.setattr(supervisor_module.time, "sleep", sleeps.append)
+    _patch_supervisor_atomic_io(
+        monkeypatch,
+        platform_name="nt",
+        replace=flaky_replace,
+        sleeps=sleeps,
+    )
 
     supervisor_module._atomic_write_json(target, {"new": True})
 
@@ -1463,7 +1489,7 @@ def test_atomic_json_write_retries_transient_windows_sharing_violation(
     assert list(tmp_path.glob(".health.json.*.tmp")) == []
 
 
-def test_atomic_json_write_reraises_permanent_windows_denial_and_cleans_temp(
+def test_atomic_json_write_stops_after_bounded_transient_windows_retries(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     target = tmp_path / "health.json"
@@ -1476,9 +1502,12 @@ def test_atomic_json_write_reraises_permanent_windows_denial_and_cleans_temp(
         calls += 1
         raise _windows_access_denied_error(32)
 
-    monkeypatch.setattr(supervisor_module.os, "name", "nt")
-    monkeypatch.setattr(supervisor_module.os, "replace", deny_replace)
-    monkeypatch.setattr(supervisor_module.time, "sleep", sleeps.append)
+    _patch_supervisor_atomic_io(
+        monkeypatch,
+        platform_name="nt",
+        replace=deny_replace,
+        sleeps=sleeps,
+    )
 
     with pytest.raises(PermissionError, match="sharing violation"):
         supervisor_module._atomic_write_json(target, {"new": True})
@@ -1489,7 +1518,7 @@ def test_atomic_json_write_reraises_permanent_windows_denial_and_cleans_temp(
     assert list(tmp_path.glob(".health.json.*.tmp")) == []
 
 
-def test_atomic_json_write_does_not_retry_unrelated_replace_error(
+def test_atomic_json_write_does_not_retry_permission_error_off_windows(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     target = tmp_path / "health.json"
@@ -1497,16 +1526,48 @@ def test_atomic_json_write_does_not_retry_unrelated_replace_error(
     calls = 0
     sleeps: list[float] = []
 
-    def fail_replace(_source: Path | str, _destination: Path | str) -> None:
+    def deny_replace(_source: Path | str, _destination: Path | str) -> None:
         nonlocal calls
         calls += 1
-        raise OSError(28, "disk full")
+        raise PermissionError("sharing violation")
 
-    monkeypatch.setattr(supervisor_module.os, "name", "nt")
-    monkeypatch.setattr(supervisor_module.os, "replace", fail_replace)
-    monkeypatch.setattr(supervisor_module.time, "sleep", sleeps.append)
+    _patch_supervisor_atomic_io(
+        monkeypatch,
+        platform_name="posix",
+        replace=deny_replace,
+        sleeps=sleeps,
+    )
 
-    with pytest.raises(OSError, match="disk full"):
+    with pytest.raises(PermissionError, match="sharing violation"):
+        supervisor_module._atomic_write_json(target, {"new": True})
+
+    assert calls == 1
+    assert sleeps == []
+    assert json.loads(target.read_text(encoding="utf-8")) == {"old": True}
+    assert list(tmp_path.glob(".health.json.*.tmp")) == []
+
+
+def test_atomic_json_write_does_not_retry_unrelated_windows_permission_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "health.json"
+    target.write_text('{"old":true}\n', encoding="utf-8")
+    calls = 0
+    sleeps: list[float] = []
+
+    def deny_replace(_source: Path | str, _destination: Path | str) -> None:
+        nonlocal calls
+        calls += 1
+        raise _windows_access_denied_error(87)
+
+    _patch_supervisor_atomic_io(
+        monkeypatch,
+        platform_name="nt",
+        replace=deny_replace,
+        sleeps=sleeps,
+    )
+
+    with pytest.raises(PermissionError, match="sharing violation"):
         supervisor_module._atomic_write_json(target, {"new": True})
 
     assert calls == 1
