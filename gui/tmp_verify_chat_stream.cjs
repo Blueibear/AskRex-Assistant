@@ -2,6 +2,10 @@ const path = require('path');
 const { app, BrowserWindow, ipcMain } = require('electron');
 
 const guiDir = process.cwd();
+const runtimeRoot = process.env.ASKREX_CHAT_STREAM_RUNTIME_ROOT;
+if (!runtimeRoot) {
+  throw new Error('ASKREX_CHAT_STREAM_RUNTIME_ROOT is required by this verification harness');
+}
 // Keep every startup bridge in the test's disposable runtime.  Merely setting
 // LOCALAPPDATA is insufficient once Electron has selected its userData path,
 // and can otherwise make first-run startup depend on prior test state.
@@ -13,11 +17,31 @@ if (localAppData) {
 // A modal startup error would leave this non-interactive harness waiting for a
 // window until pytest's outer timeout.  Report the bounded failure instead.
 const { dialog } = require('electron');
+function failUnexpectedDialog(kind, options) {
+  const title = typeof options === 'string' ? options : options?.title;
+  const message = typeof options === 'string' ? '' : options?.message;
+  process.stdout.write(JSON.stringify({
+    unexpectedStartupDialog: {
+      kind,
+      title: String(title || '').slice(0, 200),
+      message: String(message || '').slice(0, 300)
+    }
+  }) + '\n');
+  app.exit(1);
+}
 dialog.showErrorBox = (title, content) => {
-  process.stdout.write(JSON.stringify({ startupError: { title, content } }) + '\n');
+  failUnexpectedDialog('error', { title, message: content });
+};
+// A stale/ambiguous identity must fail the non-interactive test immediately,
+// never auto-select a person or leave pytest waiting for a modal dialog.
+dialog.showMessageBoxSync = (options) => {
+  failUnexpectedDialog('selection', options);
+  return -1;
 };
 
-app.setAppPath(guiDir);
+// This is test-only: bridgeResolver derives the development runtime root from
+// the parent of appPath.  The main bundle remains the real built artifact.
+app.setAppPath(path.join(runtimeRoot, 'gui'));
 require(path.join(guiDir, 'dist-electron', 'main', 'index.js'));
 
 const streamTokens = ['Alpha', ' Beta', ' Gamma'];

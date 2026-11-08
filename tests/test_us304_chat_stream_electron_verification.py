@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -74,6 +76,38 @@ def test_chat_streaming_works_in_electron(tmp_path: Path) -> None:
     assert ELECTRON_CMD.exists(), f"Missing Electron binary: {ELECTRON_CMD}"
     assert MAIN_BUNDLE.exists(), f"Missing Electron main bundle: {MAIN_BUNDLE}"
 
+    # The main process derives the development bridge runtime root from
+    # ``app.getAppPath()`` rather than Electron's userData path.  Give this
+    # harness a complete disposable root so it cannot restore a profile left
+    # behind by another Electron test.
+    runtime_root = tmp_path / "runtime"
+    shutil.copytree(REPO_ROOT / "bridge", runtime_root / "bridge")
+    profile_dir = runtime_root / "Memory" / "electron-test-user"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "core.json").write_text(
+        json.dumps(
+            {
+                "name": "Electron Test User",
+                "role": "",
+                "user": "electron-test-user",
+                "preferences": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Regression sentinel: unrelated known users must not affect the
+    # isolated runtime or be changed by the Electron process.
+    external_runtime = tmp_path / "external-runtime"
+    sentinel = external_runtime / "Memory" / "sentinel-user" / "core.json"
+    sentinel.parent.mkdir(parents=True)
+    sentinel_contents = '{"sentinel":"must remain unchanged"}\n'
+    sentinel.write_text(sentinel_contents, encoding="utf-8")
+    for user_id in ("external-user-one", "external-user-two"):
+        external_profile = external_runtime / "Memory" / user_id
+        external_profile.mkdir(parents=True)
+        (external_profile / "core.json").write_text("{}\n", encoding="utf-8")
+
     app_data = tmp_path / "appdata"
     session_dir = app_data / "rex-ai"
     session_dir.mkdir(parents=True)
@@ -82,8 +116,15 @@ def test_chat_streaming_works_in_electron(tmp_path: Path) -> None:
     )
     env = os.environ.copy()
     env["LOCALAPPDATA"] = str(app_data)
+    env["ASKREX_CHAT_STREAM_RUNTIME_ROOT"] = str(runtime_root)
+    # The copied bridges deliberately use the current source tree; neither
+    # real profiles nor configuration are copied into the fixture runtime.
+    env["PYTHONPATH"] = str(REPO_ROOT)
+    env["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{env.get('PATH', '')}"
 
     result = _run_electron_verification(env)
+
+    assert sentinel.read_text(encoding="utf-8") == sentinel_contents
 
     stdout_lines = [line for line in result.stdout.splitlines() if line.strip()]
     assert stdout_lines, f"Electron verification produced no stdout. stderr: {result.stderr[:500]}"
