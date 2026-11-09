@@ -2,15 +2,18 @@
 # Recommended for Windows RTX 3060 setups using CUDA 12.4.
 
 # PyTorch CUDA 12.4 versions (compatible set)
-# torch 2.6.0 satisfies security fixes for DoS vulnerabilities (GHSA-3749-ghw9-m3mg, GHSA-887c-mr87-cxwp)
+# CUDA 12.4 has a published matched 2.6.0 wheel set. Do not mix these
+# companions with the newer CPU runtime set above.
 --extra-index-url https://download.pytorch.org/whl/cu124
-torch==2.12.0
+torch==2.6.0+cu124
 torchvision==0.21.0+cu124
 torchaudio==2.6.0+cu124
 
-# transformers: pin to a semver-compatible range for Coqui TTS 0.22.0.
-# BeamSearchScorer was removed in 4.38+; the rex/compat/ shim restores it.
-transformers>=4.38.0,<5.0
+# Transformers 5 is the tested policy used by Pipfile.lock. The compatibility
+# shim retains the legacy BeamSearchScorer import required by Coqui TTS 0.22.0.
+transformers>=5.5.0,<6.0
 
-# Install Rex with ML + audio extras
--e ".[ml,audio]"
+# The project ml extra is the CPU 2.7.1 profile. Installing it here would ask
+# pip to replace this CUDA 12.4 set, so this profile supplies ML wheels above
+# and asks the project only for audio dependencies.
+-e ".[audio]"

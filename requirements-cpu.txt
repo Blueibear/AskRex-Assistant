@@ -2,16 +2,15 @@
 # Use this for CPU-only deployments or CI environments that need the ML stack.
 
 # PyTorch CPU versions (PyPI CPU wheels)
-# torch matches the packaged Windows Voice runtime pin in
-# requirements-electron-voice.txt; torchvision/torchaudio are the pip-resolved
-# companion releases for that torch version.
-torch==2.12.1
-torchvision==0.27.1
-torchaudio==2.11.0
+# Keep these as the published, mutually compatible 2.7.1/0.22.1/2.7.1 set.
+# This is also the managed Electron Voice and Docker CPU runtime set.
+torch==2.7.1
+torchvision==0.22.1
+torchaudio==2.7.1
 
-# transformers: pin to a semver-compatible range for Coqui TTS 0.22.0.
-# BeamSearchScorer was removed in 4.38+; the rex/compat/ shim restores it.
-transformers>=4.38.0,<5.0
+# Transformers 5 is the tested policy used by Pipfile.lock. The compatibility
+# shim retains the legacy BeamSearchScorer import required by Coqui TTS 0.22.0.
+transformers>=5.5.0,<6.0
 
 # Install Rex with ML + audio extras
 -e ".[ml,audio]"

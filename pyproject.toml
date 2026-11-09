@@ -79,11 +79,11 @@ audio = [
 
 ml = [
     # AI / ML Models - CPU-only by default (GPU versions via requirements-gpu*.txt)
-    # Note: torch 2.6.0 has local DoS CVEs (GHSA-3749-ghw9-m3mg, GHSA-887c-mr87-cxwp), fixed in 2.8.0
-    "torch>=2.6.0,<2.13.0",
-    "torchvision>=0.17.0,<0.28.0",
-    "torchaudio>=2.6.0,<2.13.0",
-    "transformers>=4.38.0",
+    # CPU profiles use this published mutually compatible release set.
+    "torch==2.7.1",
+    "torchvision==0.22.1",
+    "torchaudio==2.7.1",
+    "transformers>=5.5.0,<6.0",
     "TTS==0.22.0",
     # openai is a base dependency (see [project.dependencies]).
     "ollama>=0.4.0",
@@ -142,10 +142,10 @@ full = [
     "soundfile>=0.12.0",
     "simpleaudio>=1.0.4; platform_system!='Windows'",
     # ml / voice
-    "torch>=2.6.0,<2.13.0",
-    "torchvision>=0.17.0,<0.28.0",
-    "torchaudio>=2.6.0,<2.13.0",
-    "transformers>=4.38.0",
+    "torch==2.7.1",
+    "torchvision==0.22.1",
+    "torchaudio==2.7.1",
+    "transformers>=5.5.0,<6.0",
     "TTS==0.22.0",
     "openai>=1.3.0",  # also a base dependency; kept here for [full] extra completeness
     "ollama>=0.4.0",

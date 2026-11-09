@@ -74,6 +74,14 @@ Current install/runtime compatibility policy:
 - Developer/operator install path: Python 3.11 and `pip install .`
 - The base install includes `tzdata` so IANA city/timezone tools work on Windows, where `zoneinfo` has no OS timezone database.
 - Full Windows GPU + TTS path: Python 3.11 with `requirements-gpu-cu124.txt`
+- CPU, Docker, and managed Electron Voice use the published `torch==2.7.1`,
+  `torchvision==0.22.1`, and `torchaudio==2.7.1` release set. CUDA 12.4 uses
+  its separately published `2.6.0+cu124` / `0.21.0+cu124` / `2.6.0+cu124` set;
+  install that profile without the CPU `ml` extra.
+- Transformers policy is `>=5.5.0,<6.0` (matching Pipfile.lock). Keep the
+  compatibility shim that provides Coqui TTS 0.22.0's legacy BeamSearchScorer
+  import, and retain the dependency audit gate without an ignore for
+  CVE-2026-1839 or PYSEC-2025-217.
 - Do not claim Python 3.12+ support unless the dependency stack has been validated end-to-end and docs, CI, and package metadata are updated together
 
 Entry points:
