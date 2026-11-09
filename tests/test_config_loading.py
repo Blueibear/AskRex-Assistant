@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from rex.config import AppConfig, _migrate_wake_word_section, build_app_config, load_config, show_config
+from rex.config import _migrate_wake_word_section, AppConfig, build_app_config, load_config, show_config
 from rex.config_manager import DEFAULT_CONFIG, load_config as load_json_config
 
 # ---------------------------------------------------------------------------
