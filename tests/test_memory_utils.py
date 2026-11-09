@@ -9,7 +9,6 @@ from rex.memory_utils import (
     append_history_entry,
     export_transcript,
     extract_voice_reference,
-    load_all_profiles,
     load_recent_history,
     load_users_map,
     resolve_user_key,
@@ -18,9 +17,11 @@ from rex.memory_utils import (
 
 
 @pytest.mark.unit
-def test_resolve_user_key_from_email():
-    users_map = load_users_map()
-    profiles = load_all_profiles()
+def test_resolve_user_key_from_email(tmp_path):
+    users_path = tmp_path / "users.json"
+    users_path.write_text('{"james@example.com": "james"}', encoding="utf-8")
+    users_map = load_users_map(users_path)
+    profiles = {}
 
     result = resolve_user_key("james@example.com", users_map, profiles=profiles)
     assert result == "james", "Failed to resolve correct user key from email"
