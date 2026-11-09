@@ -8,9 +8,9 @@ surface remains intentionally small and compatibility-focused.
 
 from __future__ import annotations
 
+import hmac
 import importlib
 import importlib.util
-import hmac
 import json
 import os
 from types import SimpleNamespace

@@ -12,7 +12,7 @@ import json
 import os
 import sys
 from dataclasses import asdict, dataclass, field
-from typing import IO
+from typing import IO, Any
 from urllib.parse import urlparse
 
 from rex.exception_handler import wrap_entrypoint
