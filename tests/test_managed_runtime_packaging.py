@@ -147,8 +147,8 @@ def test_runtime_builder_is_pinned_and_package_filters_private_config() -> None:
     assert "3.11.9" in builder
     runtime_sha256 = "009D6BF7E3B2DDCA3D784FA09F90FE54336D5B60F0E0F305C37F400BF83CFD3B"  # pragma: allowlist secret
     assert runtime_sha256 in builder
-    assert "torch==2.12.1" in voice_requirements
-    assert "torch.__version__.split('+', 1)[0] == '2.12.1'" in builder
+    assert "torch==2.7.1" in voice_requirements
+    assert "torch.__version__.split('+', 1)[0] == '2.7.1'" in builder
     resources = package["build"]["extraResources"]
     config_rule = next(item for item in resources if item["to"] == "config")
     assert "rex_config.json" not in config_rule["filter"]
