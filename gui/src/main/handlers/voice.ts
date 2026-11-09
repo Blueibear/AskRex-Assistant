@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { spawn } from 'child_process'
 import type { ChildProcess } from 'child_process'
 import { bridgeSpawnOptions, resolveBridgePath, resolvePythonCommand } from '../bridgeResolver'
@@ -262,7 +262,12 @@ export function registerVoiceHandlers(session: ElectronSessionIdentity): void {
       microphone_label: microphoneLabel ?? null
     })
 
-    const bridgeArgs = [scriptPath, '--user', session.userId]
+    // A packaged bridge must not inherit arbitrary user-site modules.  The
+    // managed runtime contains the bridge dependencies, so isolated mode is
+    // both sufficient and required for the installed voice path.
+    const bridgeArgs = app.isPackaged
+      ? ['-I', scriptPath, '--user', session.userId]
+      : [scriptPath, '--user', session.userId]
     if (microphoneLabel) {
       bridgeArgs.push('--microphone-label', microphoneLabel)
     }

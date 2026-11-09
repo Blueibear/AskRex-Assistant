@@ -44,6 +44,28 @@ def _vl():
     return importlib.import_module("rex.voice_loop")
 
 
+def _resample_mono(audio: AudioArray, source_rate: int, target_rate: int) -> AudioArray:
+    """Resample a mono capture while retaining the requested duration.
+
+    Wake-word and STT consumers use ``sample_rate``.  A selected Windows
+    endpoint may only accept its native rate, so capture happens at that
+    negotiated rate and is converted at this boundary instead of asking
+    PortAudio to open an unsupported 16 kHz stream.
+    """
+    np = _require_numpy()
+    samples = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if source_rate <= 0 or target_rate <= 0:
+        raise AudioDeviceError("Audio sample rates must be positive")
+    if source_rate == target_rate or samples.size == 0:
+        return cast(AudioArray, samples)
+
+    target_samples = max(round(samples.size * target_rate / source_rate), 1)
+    source_positions = np.arange(samples.size, dtype=np.float64)
+    target_positions = np.arange(target_samples, dtype=np.float64) * source_rate / target_rate
+    resampled = np.interp(target_positions, source_positions, samples).astype(np.float32)
+    return cast(AudioArray, resampled)
+
+
 class AsyncMicrophone:
     """Async microphone recording."""
 
@@ -55,6 +77,7 @@ class AsyncMicrophone:
         capture_seconds: float,
         detection_hop_seconds: float | None = None,
         device_index: int | None = None,
+        capture_sample_rate: int | None = None,
         recorder: RecorderCallable | None = None,
     ) -> None:
         self.sample_rate = sample_rate
@@ -62,6 +85,7 @@ class AsyncMicrophone:
         self._capture_seconds = capture_seconds
         self._detection_hop_seconds = detection_hop_seconds or detection_seconds
         self._device_index = device_index
+        self._capture_sample_rate = capture_sample_rate or sample_rate
         self._recorder = recorder
         self._detection_buffer: AudioArray | None = None
         self._detection_buffer_filled_samples = 0
@@ -326,15 +350,20 @@ class AsyncMicrophone:
 
         sd = _require_sounddevice()
 
-        frames = max(int(self.sample_rate * duration), 1)
+        capture_frames = max(int(self._capture_sample_rate * duration), 1)
 
         def _capture() -> np.ndarray:  # type: ignore[name-defined]
             start = time.perf_counter()
-            _vl().logger.debug("MIC DEBUG: _record start duration=%.2f frames=%d", duration, frames)
+            _vl().logger.debug(
+                "MIC DEBUG: _record start duration=%.2f frames=%d capture_rate=%d",
+                duration,
+                capture_frames,
+                self._capture_sample_rate,
+            )
 
             recording = sd.rec(
-                frames,
-                samplerate=self.sample_rate,
+                capture_frames,
+                samplerate=self._capture_sample_rate,
                 channels=1,
                 dtype="float32",
                 device=self._device_index,
@@ -344,7 +373,11 @@ class AsyncMicrophone:
             end = time.perf_counter()
             _vl().logger.debug("MIC DEBUG: blocking sd.rec returned after %.3fs total", end - start)
 
-            return recording.reshape(-1)
+            return _resample_mono(
+                cast(AudioArray, recording.reshape(-1)),
+                self._capture_sample_rate,
+                self.sample_rate,
+            )
 
         try:
             data = await asyncio.to_thread(_capture)

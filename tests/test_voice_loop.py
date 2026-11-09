@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import rex.voice_loop as _rvl
+from rex.voice.microphone import _resample_mono
 from rex.assistant_errors import (
     AudioDeviceError,
     AudioFormatError,
@@ -15,6 +16,51 @@ from rex.assistant_errors import (
 from rex.voice_loop import AsyncMicrophone, TextToSpeech, VoiceLoop
 
 np = pytest.importorskip("numpy")
+
+
+@pytest.mark.unit
+def test_microphone_resamples_negotiated_capture_rate_to_pipeline_rate():
+    captured = np.array([0.0, 1.0, 0.0, -1.0], dtype=np.float32)
+
+    resampled = _resample_mono(captured, 4, 2)
+
+    assert resampled.dtype == np.float32
+    assert resampled.tolist() == pytest.approx([0.0, 0.0])
+
+
+@pytest.mark.unit
+def test_async_microphone_captures_at_negotiated_rate_then_resamples(monkeypatch):
+    class _SoundDevice:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def rec(self, frames: int, **kwargs):
+            self.calls.append({"frames": frames, **kwargs})
+            return np.array([[0.0], [1.0], [0.0], [-1.0]], dtype=np.float32)
+
+    sounddevice = _SoundDevice()
+    monkeypatch.setattr(_rvl, "sd", sounddevice)
+    microphone = AsyncMicrophone(
+        sample_rate=2,
+        capture_sample_rate=4,
+        detection_seconds=1.0,
+        capture_seconds=1.0,
+        device_index=7,
+    )
+
+    captured = asyncio.run(microphone._record(1.0))
+
+    assert sounddevice.calls == [
+        {
+            "frames": 4,
+            "samplerate": 4,
+            "channels": 1,
+            "dtype": "float32",
+            "device": 7,
+            "blocking": True,
+        }
+    ]
+    assert captured.tolist() == pytest.approx([0.0, 0.0])
 
 
 class DummyListener:

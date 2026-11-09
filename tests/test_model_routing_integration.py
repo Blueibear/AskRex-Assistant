@@ -93,12 +93,15 @@ def _make_assistant(monkeypatch, settings_obj, llm, *, available_models: set[str
 
     monkeypatch.setattr(assistant_module, "LanguageModel", _LLMFactory)
 
-    # Suppress the real Ollama HTTP probe and optionally inject known models.
-    def _fake_fetch(self) -> None:
-        if available_models is not None:
-            self._available_ollama_models = available_models
+    # Patch only the constructor used by this Assistant.  ModelRouter starts
+    # daemon refresh threads for local targets; changing the base method would
+    # let an earlier test's router observe this test's replacement.
+    class _TestRouter(ModelRouter):
+        def _fetch_ollama_models(self) -> None:
+            if available_models is not None:
+                self._available_ollama_models = available_models
 
-    monkeypatch.setattr(ModelRouter, "_fetch_ollama_models", _fake_fetch)
+    monkeypatch.setattr(assistant_module, "ModelRouter", _TestRouter)
 
     a = assistant_module.Assistant(
         settings_obj=settings_obj,

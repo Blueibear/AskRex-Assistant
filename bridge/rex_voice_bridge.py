@@ -408,7 +408,10 @@ async def _run_real_loop() -> None:
     emit({"type": "status", "status": "importing_assistant"})
     from rex import config as rex_config_module
     from rex.assistant import Assistant
-    from rex.audio_config import resolve_input_device_index_by_name
+    from rex.audio_config import (
+        resolve_input_capture_rate,
+        resolve_input_device_index_by_name,
+    )
     from rex.config import load_config as load_runtime_config
     from rex.logging_utils import configure_logging
     from rex.plugins import load_plugins
@@ -469,11 +472,19 @@ async def _run_real_loop() -> None:
     detection_hop_seconds = max(0.125, detection_seconds / 8)
     wakeword_threshold = float(getattr(active_settings, "wakeword_threshold", None) or 0.1)
     microphone_label = (_MICROPHONE_LABEL or "").strip() or None
-    configured_device_index = getattr(active_settings, "input_device_index", None)
+    configured_device_index = getattr(getattr(active_settings, "audio", None), "input_device", None)
     microphone_device_index = (
         resolve_input_device_index_by_name(microphone_label)
         if microphone_label
         else configured_device_index
+    )
+    capture_sample_rate = (
+        resolve_input_capture_rate(microphone_device_index, sample_rate)
+        if (
+            isinstance(microphone_device_index, int)
+            and not isinstance(microphone_device_index, bool)
+        )
+        else sample_rate
     )
 
     logger.info(
@@ -482,6 +493,7 @@ async def _run_real_loop() -> None:
             "event": "voice_bridge_config",
             "voice_bridge_session_id": _VOICE_BRIDGE_SESSION_ID,
             "sample_rate": sample_rate,
+            "capture_sample_rate": capture_sample_rate,
             "detection_frame_seconds": detection_seconds,
             "detection_hop_seconds": detection_hop_seconds,
             "capture_seconds": capture_seconds,
@@ -566,6 +578,7 @@ async def _run_real_loop() -> None:
         detection_hop_seconds=detection_hop_seconds,
         capture_seconds=capture_seconds,
         device_index=microphone_device_index,
+        capture_sample_rate=capture_sample_rate,
     )
 
     emit({"type": "status", "status": "loading_wakeword_detector"})
