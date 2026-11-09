@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from rex.config import AppConfig, _migrate_wake_word_section, build_app_config, load_config
+from rex.config import AppConfig, _migrate_wake_word_section, build_app_config, load_config, show_config
 from rex.config_manager import DEFAULT_CONFIG
 from rex.config_manager import load_config as load_json_config
 
@@ -43,6 +43,37 @@ class TestConfigLoadsFromFile:
         }
         cfg = build_app_config(json_cfg)
         assert cfg.wakeword == "hello-rex"
+
+
+class TestConfigDisplayRedaction:
+    """Config inspection must remain useful without exposing credentials."""
+
+    def test_to_dict_redacts_live_credential_values(self):
+        cfg = AppConfig(
+            openai_api_key="openai-live-secret",
+            ha_token="ha-live-token",
+            ha_secret="ha-live-secret",
+            shopping_pwa_pin="1234",
+            push_topic="pushover-live-user-key",
+        )
+
+        displayed = cfg.to_dict()
+
+        assert displayed["openai_api_key"] == "<redacted>"
+        assert displayed["ha_token"] == "<redacted>"
+        assert displayed["ha_secret"] == "<redacted>"
+        assert displayed["shopping_pwa_pin"] == "<redacted>"
+        assert displayed["push_topic"] == "<redacted>"
+        assert displayed["llm_provider"] == "transformers"
+
+    def test_show_config_never_prints_live_credential_values(self, capsys):
+        secret = "openai-live-secret"
+        show_config(AppConfig(openai_api_key=secret, wakeword="custom-wakeword"))
+
+        output = capsys.readouterr().out
+        assert secret not in output
+        assert '"openai_api_key": "<redacted>"' in output
+        assert '"wakeword": "custom-wakeword"' in output
 
     def test_build_app_config_reads_canonical_wakeword(self):
         """build_app_config picks up canonical wakeword.wakeword from JSON config."""

@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -138,6 +139,18 @@ class OSAutomationService:
                 f"Allowed commands: {', '.join(sorted(self.allowed_commands))}"
             )
 
+        # ``find -exec`` (and its interactive variants) turns an otherwise
+        # read-only allowlisted command into arbitrary command execution.
+        if command_name == "find" and any(
+            argument.startswith(("-exec", "-ok")) for argument in cmd[1:]
+        ):
+            raise PermissionError("find command execution actions are not allowed")
+
+        # An explicit working directory is an authority boundary just like
+        # file-operation paths. Do not let callers use it to escape the
+        # service data directory.
+        sanitized_cwd = self._sanitize_path(cwd) if cwd is not None else None
+
         # Policy check
         tool_call = ToolCall(
             tool="execute_shell_command",
@@ -157,14 +170,23 @@ class OSAutomationService:
         try:
             run_cmd = cmd
             if os.name == "nt" and command_name == "echo":
-                run_cmd = ["cmd", "/c", *cmd]
+                # echo is a cmd.exe builtin. Running it through cmd /c would
+                # interpret metacharacters supplied as message text. Python
+                # receives argv directly, so it preserves echo semantics
+                # without providing a shell-injection boundary.
+                run_cmd = [
+                    sys.executable,
+                    "-c",
+                    "import sys; print(' '.join(sys.argv[1:]))",
+                    *cmd[1:],
+                ]
 
             result = subprocess.run(
                 run_cmd,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                cwd=cwd,
+                cwd=sanitized_cwd,
             )
 
             duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
@@ -183,7 +205,10 @@ class OSAutomationService:
                 LogEntry(
                     action_id=action_id,
                     tool="execute_shell_command",
-                    tool_call_args={"command": run_cmd, "cwd": cwd},
+                    tool_call_args={
+                        "command": cmd,
+                        "cwd": str(sanitized_cwd) if sanitized_cwd else None,
+                    },
                     policy_decision="allowed",
                     tool_result={
                         "returncode": result.returncode,
@@ -523,9 +548,20 @@ class OSAutomationService:
         Returns:
             Dictionary with restore status
         """
-        trash_file = self.trash_path / filename
+        # Trash entries are direct, service-created files. Treat ``filename``
+        # as an identifier rather than a path, including on a host whose path
+        # syntax differs from the user-provided separator.
+        if not filename or filename in {".", ".."} or "/" in filename or "\\" in filename:
+            raise ValueError("Trash filename must be a single file name")
 
-        if not trash_file.exists():
+        trash_root = self.trash_path.resolve()
+        trash_file = (trash_root / filename).resolve()
+        try:
+            trash_file.relative_to(trash_root)
+        except ValueError as exc:
+            raise ValueError("Trash filename must remain within the trash directory") from exc
+
+        if not trash_file.is_file():
             raise FileNotFoundError(f"File not found in trash: {filename}")
 
         dest_path = self._sanitize_path(dest)

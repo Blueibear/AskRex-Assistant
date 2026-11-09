@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import importlib
 import importlib.util
 import logging
@@ -872,7 +873,8 @@ def create_blueprint(bridge: HABridge | None = None) -> Blueprint:
 
     @bp.before_request
     def _validate_secret() -> Any:
-        if request.headers.get("HASS_SECRET") != bridge.secret:
+        provided_secret = request.headers.get("HASS_SECRET", "")
+        if not hmac.compare_digest(provided_secret, bridge.secret):
             return error_response(FORBIDDEN, "Forbidden", 403)
         return None
 

@@ -138,6 +138,35 @@ class TestOSAutomationService:
             assert len(trash_files) > 0
             assert any("file" in f["name"] for f in trash_files)
 
+    @pytest.mark.parametrize("filename", ["../outside.txt", "..\\outside.txt", "/outside.txt"])
+    def test_restore_from_trash_rejects_traversal_filename(self, filename: str):
+        """Restore identifiers cannot escape the managed trash directory."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            root = tmp_path / "data"
+            service = OSAutomationService(data_path=str(root))
+            outside = tmp_path / "outside.txt"
+            outside.write_text("must remain untouched")
+
+            with pytest.raises(ValueError, match="single file name"):
+                service.restore_from_trash(filename, str(root / "restored.txt"))
+
+            assert outside.read_text() == "must remain untouched"
+
+    def test_run_find_rejects_command_execution_actions(self):
+        service = OSAutomationService(allowed_commands=["find"])
+
+        with pytest.raises(PermissionError, match="not allowed"):
+            service.run_command(["find", ".", "-exec", "echo", "injected", ";"])
+
+    def test_run_command_rejects_cwd_outside_data_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            service = OSAutomationService(allowed_commands=["echo"], data_path=str(root))
+
+            with pytest.raises(ValueError, match="outside allowed directory"):
+                service.run_command(["echo", "hello"], cwd=str(root.parent))
+
     def test_path_sanitization_outside_data(self):
         """Test that paths outside data/ directory are rejected."""
         service = OSAutomationService()

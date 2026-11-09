@@ -827,7 +827,7 @@ class AppConfig:
         raw["transcripts_dir"] = str(self.transcripts_dir)
         raw["log_path"] = str(self.log_path)
         raw["error_log_path"] = str(self.error_log_path)
-        return raw
+        return _redact_config_credentials(raw)
 
     def __post_init__(self) -> None:
         if self.warm_runtime_max_cost_mb < 0 or self.warm_runtime_idle_timeout_s < 0:
@@ -1654,6 +1654,24 @@ def reload_settings(
 ) -> AppConfig:
     """Reload configuration, optionally with new JSON config."""
     return load_config(env_path=env_path, reload=True, json_config=json_config)
+
+
+def _redact_config_credentials(value: Any) -> Any:
+    """Return a display-safe config structure without live credential values."""
+    secret_suffixes = ("_api_key", "_token", "_secret", "_password", "_pin")
+    secret_keys = {"push_topic"}
+    if isinstance(value, dict):
+        return {
+            key: (
+                "<redacted>"
+                if key.lower().endswith(secret_suffixes) or key.lower() in secret_keys
+                else _redact_config_credentials(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_config_credentials(item) for item in value]
+    return value
 
 
 def show_config(config: Optional[AppConfig] = None) -> None:

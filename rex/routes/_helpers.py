@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 import re
 from pathlib import Path
@@ -50,7 +51,7 @@ def _require_setup_token() -> tuple[None, None] | tuple[None, Any]:
     if not expected:
         return None, (jsonify({"error": "setup already completed"}), 403)
     provided = request.headers.get("X-Setup-Token", "")
-    if not provided or provided != expected:
+    if not provided or not hmac.compare_digest(provided, expected):
         return None, (jsonify({"error": "forbidden"}), 403)
     return None, None
 

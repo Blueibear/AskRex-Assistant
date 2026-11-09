@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import hmac
 import json
 import os
 from types import SimpleNamespace
@@ -194,7 +195,7 @@ def _resolve_cf_user_key(email: str) -> str:
 
 
 def _resolve_token_user_key(token: str) -> str:
-    if not PROXY_TOKEN or token != PROXY_TOKEN:
+    if not PROXY_TOKEN or not hmac.compare_digest(token, PROXY_TOKEN):
         abort(403, "Invalid or missing proxy token.")
     resolved_user_key = resolve_user_key(os.getenv("REX_ACTIVE_USER"), USERS_MAP)
     if not resolved_user_key:
