@@ -33,6 +33,7 @@ def test_check_xtts_no_transformers():
         result = check_xtts_transformers_compat()
     assert result.status == Status.WARNING
     assert "transformers" in result.message.lower()
+    assert "transformers>=5.5.0,<6.0" in result.details
 
 
 def test_check_xtts_beamsearch_native():

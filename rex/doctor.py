@@ -916,7 +916,7 @@ def check_xtts_transformers_compat() -> CheckResult:
             name="XTTS Compatibility",
             status=Status.WARNING,
             message="transformers not installed; XTTS may not work",
-            details="Install transformers: pip install 'transformers>=4.38.0,<5.0'",
+            details="Install transformers: pip install 'transformers>=5.5.0,<6.0'",
         )
 
     try:
