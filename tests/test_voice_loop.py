@@ -6,13 +6,13 @@ from unittest.mock import MagicMock
 import pytest
 
 import rex.voice_loop as _rvl
-from rex.voice.microphone import _resample_mono
 from rex.assistant_errors import (
     AudioDeviceError,
     AudioFormatError,
     SpeechToTextError,
     TextToSpeechError,
 )
+from rex.voice.microphone import _resample_mono
 from rex.voice_loop import AsyncMicrophone, TextToSpeech, VoiceLoop
 
 np = pytest.importorskip("numpy")
