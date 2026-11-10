@@ -4,6 +4,12 @@ numpy==1.26.4
 sounddevice==0.5.5
 soundfile==0.13.1
 torch==2.7.1
+# Keep the managed Voice profile on the complete published CPU release set.
+# Even though the current bridge path imports only torch directly, installing
+# the matched companions prevents a later feature from resolving an arbitrary
+# incompatible torchvision/torchaudio version inside the packaged runtime.
+torchvision==0.22.1
+torchaudio==2.7.1
 openai-whisper==20250625
 imageio-ffmpeg==0.6.0
 # Wake-word detection is part of the supported packaged Voice path. Keep this

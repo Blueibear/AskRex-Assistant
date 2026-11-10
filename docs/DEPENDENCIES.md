@@ -2,23 +2,26 @@
 
 ## Canonical Runtime Matrix
 
-This table is the single authoritative version matrix. All requirements files,
-`pyproject.toml`, `Dockerfile`, and `scripts/validate_deployment.py` must agree
-with the ranges listed here.
+This table is the single authoritative release matrix. Supported profiles use
+exact, tested package sets. A version change must update this table, the
+profile regression, and the profile-specific install/import evidence together.
 
-| Component | Supported range | Notes |
+| Profile | torch | torchvision | torchaudio | Notes |
 |-----------|----------------|-------|
-| **Python** | 3.11 | Full install, ML/audio extras, and Windows GPU + TTS path are currently validated only on Python 3.11 |
-| **torch (CPU)** | 2.6.x – 2.8.x | Install from PyPI without extra index URL |
-| **torch (CUDA 11.8)** | 2.6.x – 2.8.x | `--index-url https://download.pytorch.org/whl/cu118` |
-| **torch (CUDA 12.4)** | 2.6.x – 2.8.x | `--index-url https://download.pytorch.org/whl/cu124` |
-| **torchvision** | 0.17.x – 0.22.x | Must be compatible with selected torch version |
-| **torchaudio** | 2.6.x – 2.8.x | Must match torch major.minor |
+| CPU / Docker / `[ml]` extra | `2.7.1` | `0.22.1` | `2.7.1` | Published CPU set; Python 3.11 only |
+| CUDA 12.4 | `2.6.0+cu124` | `0.21.0+cu124` | `2.6.0+cu124` | Install through the PyTorch CUDA 12.4 index; do not install `[ml]` over it |
+| Managed Electron Voice | `2.7.1` | `0.22.1` | `2.7.1` | Bundles the complete matching CPU set so packaged upgrades cannot resolve incompatible companions |
 
-**Lower bound rationale:** torch 2.6.0 is the first version that resolves
-CVEs GHSA-3749-ghw9-m3mg and GHSA-887c-mr87-cxwp (DoS vulnerabilities).
+**Transformers policy | `>=5.5.0,<6.0`**: Python 3.11 only, with
+`rex/compat/transformers_shims.py` preserving Coqui TTS 0.22.0's legacy
+`BeamSearchScorer` import. `Pipfile.lock` resolves `5.5.0`. The release audit
+has no ignore for CVE-2026-1839 or PYSEC-2025-217.
 
-**Upper bound:** `<2.9.0` — tracked by `scripts/validate_deployment.py`.
+The managed-runtime builder imports the shipped voice stack and checks its
+versions. The repository regression cross-checks these exact sets against the
+requirements profiles, extras, Dockerfile, builder, and this table. This is
+compatibility evidence for the declared profiles, not physical Windows or CUDA
+hardware acceptance.
 
 ## Overview
 

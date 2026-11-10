@@ -93,7 +93,7 @@ try {
     & $runtimePython -I -c "import rex, requests; print('managed-runtime-ok')"
     if ($LASTEXITCODE -ne 0) { throw 'Managed runtime import smoke test failed.' }
     if ($RuntimeProfile -eq 'Voice') {
-        & $runtimePython -I -c "import torch, whisper, openwakeword, scipy, onnxruntime, sklearn; assert torch.__version__.split('+', 1)[0] == '2.7.1'; print('managed-voice-runtime-ok')"
+        & $runtimePython -I -c "import torch, torchvision, torchaudio, whisper, openwakeword, scipy, onnxruntime, sklearn; assert torch.__version__.split('+', 1)[0] == '2.7.1'; assert torchvision.__version__.split('+', 1)[0] == '0.22.1'; assert torchaudio.__version__.split('+', 1)[0] == '2.7.1'; print('managed-voice-runtime-ok')"
         if ($LASTEXITCODE -ne 0) { throw 'Managed Voice runtime dependency smoke test failed.' }
     }
     & $runtimePython -I -c "import importlib.util, sys; sys.exit(1 if importlib.util.find_spec('flask') else 0)"

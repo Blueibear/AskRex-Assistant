@@ -205,6 +205,8 @@ def test_runtime_probe_uses_absolute_isolated_managed_python_and_complete_import
         "sounddevice",
         "soundfile",
         "torch",
+        "torchvision",
+        "torchaudio",
         "whisper",
         "imageio_ffmpeg",
         "openwakeword",
