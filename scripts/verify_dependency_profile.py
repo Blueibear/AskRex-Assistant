@@ -10,8 +10,8 @@ hardware acceptance or model-inference acceptance.
 from __future__ import annotations
 
 import argparse
-import importlib.metadata
 import sys
+from importlib import metadata
 
 
 PROFILE_VERSIONS = {
@@ -37,7 +37,7 @@ def _base_version(version: str) -> str:
 def verify(profile: str) -> dict[str, str]:
     """Fail closed unless the resolved profile imports and operates together."""
     expected = PROFILE_VERSIONS[profile]
-    actual = {package: importlib.metadata.version(package) for package in expected}
+    actual = {package: metadata.version(package) for package in expected}
     mismatches = {
         package: (actual[package], version)
         for package, version in expected.items()
@@ -51,6 +51,7 @@ def verify(profile: str) -> dict[str, str]:
     import torch
     import torchaudio
     import torchvision
+
     from rex.compat import ensure_transformers_compatibility
 
     ensure_transformers_compatibility()
