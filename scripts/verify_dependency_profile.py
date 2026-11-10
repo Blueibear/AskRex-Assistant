@@ -10,8 +10,8 @@ hardware acceptance or model-inference acceptance.
 from __future__ import annotations
 
 import argparse
-import sys
 from importlib import metadata
+import sys
 
 
 PROFILE_VERSIONS = {
