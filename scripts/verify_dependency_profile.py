@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 from importlib import metadata
 
-
 PROFILE_VERSIONS = {
     "cpu": {
         "torch": "2.7.1",
