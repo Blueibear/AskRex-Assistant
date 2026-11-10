@@ -13,6 +13,7 @@ torchaudio==2.6.0+cu124
 # generation API without the removed BeamSearchScorer.
 transformers>=5.5.0,<6.0
 coqui-tts==0.28.0
+six>=1.17,<2
 
 # The project ml extra is the CPU 2.7.1 profile. Installing it here would ask
 # pip to replace this CUDA 12.4 set, so this profile supplies ML wheels above

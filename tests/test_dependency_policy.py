@@ -37,6 +37,7 @@ def test_cuda_124_profile_uses_one_matching_torch_release_set() -> None:
     assert '-e ".[audio]"' in gpu
     assert '-e ".[ml,audio]"' not in gpu
     assert "coqui-tts==0.28.0" in gpu
+    assert "six>=1.17,<2" in gpu
 
 
 def test_project_and_profile_transformers_policy_matches_pipfile_lock() -> None:
@@ -53,6 +54,7 @@ def test_project_and_profile_transformers_policy_matches_pipfile_lock() -> None:
     for extra in ("ml", "full"):
         assert "transformers>=5.5.0,<6.0" in project["project"]["optional-dependencies"][extra]
         assert "coqui-tts==0.28.0" in project["project"]["optional-dependencies"][extra]
+        assert "six>=1.17,<2" in project["project"]["optional-dependencies"][extra]
         assert "TTS==0.22.0" not in project["project"]["optional-dependencies"][extra]
 
 
