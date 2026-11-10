@@ -200,6 +200,29 @@ class TestMacOSKeychainCredentialVault:
         assert vault.get_secret(_ref(), integration="openai", account=None, slot="api_key") is None
         assert vault.list_entries() == []
 
+    def test_index_write_retries_transient_windows_sharing_error(self, tmp_path, monkeypatch):
+        fake = _FakeKeyring()
+        monkeypatch.setattr(vault_module, "_keyring", fake)
+        original_replace = vault_module.os.replace
+        calls = {"count": 0}
+
+        def flaky_replace(source, destination):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                exc = PermissionError("transient sharing violation")
+                exc.winerror = 5
+                raise exc
+            return original_replace(source, destination)
+
+        monkeypatch.setattr(vault_module.os, "replace", flaky_replace)
+        monkeypatch.setattr(vault_module.time, "sleep", lambda _seconds: None)
+        vault = MacOSKeychainCredentialVault(index_path=tmp_path / "index.json")
+
+        vault.set_secret(_ref(), "secret", integration="openai", account=None, slot="api_key")
+
+        assert calls["count"] == 2
+        assert vault.list_entries()[0].key == _ref()
+
 
 def test_unsupported_platform_production_has_no_implicit_backend(monkeypatch):
     monkeypatch.setattr(vault_module.sys, "platform", "linux")

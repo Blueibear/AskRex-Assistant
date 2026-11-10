@@ -423,7 +423,9 @@ def _validate_schema(raw: object) -> dict:
     return raw
 
 
-def _replace_windows_file_with_retry(source: Path, destination: Path) -> None:
+def _replace_file_with_retry(
+    source: Path, destination: Path, *, description: str = "credential file"
+) -> None:
     """Atomically replace a vault file despite short-lived Windows sharing locks."""
     deadline = time.monotonic() + _WINDOWS_REPLACE_TIMEOUT_SECONDS
     while True:
@@ -435,10 +437,15 @@ def _replace_windows_file_with_retry(source: Path, destination: Path) -> None:
                 raise
             if time.monotonic() >= deadline:
                 raise VaultUnavailableError(
-                    "Could not atomically replace the credential vault after "
+                    f"Could not atomically replace the {description} after "
                     "waiting for a transient Windows file lock."
                 ) from exc
             time.sleep(_LOCK_POLL_SECONDS)
+
+
+def _replace_windows_file_with_retry(source: Path, destination: Path) -> None:
+    """Compatibility wrapper for the Windows DPAPI vault write path."""
+    _replace_file_with_retry(source, destination, description="credential vault")
 
 
 def _harden_file_acl(path: Path) -> None:
@@ -556,7 +563,7 @@ class WindowsDpapiCredentialVault:
                 handle.flush()
                 os.fsync(handle.fileno())
             _harden_file_acl(tmp_path)
-            _replace_windows_file_with_retry(tmp_path, self._vault_path)
+            _replace_file_with_retry(tmp_path, self._vault_path, description="credential vault")
             _harden_file_acl(self._vault_path)
         finally:
             try:
@@ -832,7 +839,12 @@ class MacOSKeychainCredentialVault:
                 os.chmod(tmp, 0o600)
             except OSError:
                 pass
-            os.replace(tmp, self._index_path)
+            # The macOS Keychain index is written in tests on Windows too.
+            # Antivirus/indexing can briefly hold the existing index open, so
+            # share the bounded atomic-replace retry used by the DPAPI vault.
+            _replace_file_with_retry(
+                tmp, self._index_path, description="macOS Keychain credential index"
+            )
             try:
                 os.chmod(self._index_path, 0o600)
             except OSError:
