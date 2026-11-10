@@ -19,9 +19,24 @@ has no ignore for CVE-2026-1839 or PYSEC-2025-217.
 
 The managed-runtime builder imports the shipped voice stack and checks its
 versions. The repository regression cross-checks these exact sets against the
-requirements profiles, extras, Dockerfile, builder, and this table. This is
-compatibility evidence for the declared profiles, not physical Windows or CUDA
-hardware acceptance.
+requirements profiles, extras, Dockerfile, builder, and this table. Those
+checks prevent policy drift, but are not compatibility evidence by themselves.
+
+For each release candidate, create an isolated Python 3.11 environment from
+the exact revision, install and resolve the selected profile, and retain the
+command output from the matching runtime verifier:
+
+```bash
+python scripts/verify_dependency_profile.py --profile cpu
+python scripts/verify_dependency_profile.py --profile cuda124
+```
+
+The verifier records the resolved `transformers`, `torch`, `torchvision`, and
+`torchaudio` versions and exercises imports, the Coqui compatibility shim, a
+Torch tensor operation, a torchvision transform, and torchaudio resampling.
+It fails if the resolved distributions differ from the declared profile. The
+CUDA verifier is dependency/runtime compatibility evidence only; it does not
+claim GPU hardware, packaged Windows, or end-to-end model acceptance.
 
 ## Overview
 

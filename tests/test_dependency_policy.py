@@ -68,6 +68,9 @@ def test_supported_release_profiles_match_the_documented_compatibility_matrix() 
         encoding="utf-8"
     )
     guide = (ROOT / "docs" / "DEPENDENCIES.md").read_text(encoding="utf-8")
+    verifier = (ROOT / "scripts" / "verify_dependency_profile.py").read_text(
+        encoding="utf-8"
+    )
 
     cpu_set = {"torch==2.7.1", "torchvision==0.22.1", "torchaudio==2.7.1"}
     cuda_124_set = {
@@ -91,6 +94,18 @@ def test_supported_release_profiles_match_the_documented_compatibility_matrix() 
         "Transformers policy | `>=5.5.0,<6.0`",
     ):
         assert expected in guide
+    for expected in (
+        '"cpu": {',
+        '"torch": "2.7.1"',
+        '"torchvision": "0.22.1"',
+        '"torchaudio": "2.7.1"',
+        '"cuda124": {',
+        '"torch": "2.6.0"',
+        '"torchvision": "0.21.0"',
+        '"torchaudio": "2.6.0"',
+        '"transformers": "5.5.0"',
+    ):
+        assert expected in verifier
 
 
 def test_ci_does_not_ignore_the_retired_transformers_vulnerabilities() -> None:
