@@ -10,7 +10,6 @@ hardware acceptance or model-inference acceptance.
 from __future__ import annotations
 
 import argparse
-import sys
 from importlib import metadata
 
 
@@ -96,4 +95,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
