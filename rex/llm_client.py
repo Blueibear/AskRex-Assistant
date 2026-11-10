@@ -705,8 +705,12 @@ class LanguageModel:
 
         strategy_cls = _STRATEGIES.get(self.provider)
         if strategy_cls is None:
-            logger.warning("Unknown LLM provider '%s'. Falling back to echo mode.", self.provider)
-            return cast(LLMStrategy, EchoStrategy(model_name))
+            supported = ", ".join(
+                sorted({*list(_STRATEGIES), "anthropic", "ollama", "openai", "openrouter"})
+            )
+            raise ConfigurationError(
+                f"Unknown LLM provider '{self.provider}'. Supported providers: {supported}."
+            )
 
         if strategy_cls is TransformersStrategy and not (
             TORCH_AVAILABLE and TRANSFORMERS_AVAILABLE
@@ -719,10 +723,9 @@ class LanguageModel:
         try:
             return cast(LLMStrategy, strategy_cls(model_name))
         except Exception as exc:
-            logger.warning(
-                "LLM backend init failed (%s). Falling back to echo. (%s)", self.provider, exc
-            )
-            return cast(LLMStrategy, EchoStrategy(model_name))
+            raise ConfigurationError(
+                f"Failed to initialize LLM provider '{self.provider}'."
+            ) from exc
 
     def set_request_model(self, model_name: str) -> contextvars.Token[str | None]:
         """Set a model override for the current request context only."""

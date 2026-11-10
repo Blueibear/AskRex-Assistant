@@ -155,24 +155,32 @@ def test_routing_transformers_unavailable_falls_back_to_offline(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Criterion 3: fallback behavior works
+# Criterion 3: unsupported-provider behavior is explicit
 # ---------------------------------------------------------------------------
 
 
-def test_unknown_provider_falls_back_to_echo():
-    """Completely unknown provider name falls back to EchoStrategy."""
+def test_unknown_provider_raises_configuration_error():
+    """Unknown provider names never produce a plausible-looking echo response."""
+    from rex.assistant_errors import ConfigurationError
+
     cfg = AppConfig(llm_model="x-model", llm_provider="nonexistent-provider-xyz")
-    model = LanguageModel(cfg)
-    assert isinstance(model.strategy, EchoStrategy)
+    with pytest.raises(ConfigurationError, match="Unknown LLM provider"):
+        LanguageModel(cfg)
 
 
-def test_unknown_provider_still_generates_response():
-    """Fallback EchoStrategy should still return a non-empty string."""
-    cfg = AppConfig(llm_model="x-model", llm_provider="totally-unknown")
-    model = LanguageModel(cfg)
-    result = model.generate("hello fallback")
-    assert isinstance(result, str)
-    assert len(result) > 0
+def test_provider_initialization_failure_raises_configuration_error(monkeypatch):
+    """A configured provider failing to initialize is not silently replaced by echo."""
+    from rex.assistant_errors import ConfigurationError
+    from rex import llm_client
+
+    class BrokenStrategy:
+        def __init__(self, _model_name: str) -> None:
+            raise RuntimeError("unavailable")
+
+    monkeypatch.setitem(llm_client._STRATEGIES, "broken", BrokenStrategy)
+    cfg = AppConfig(llm_model="x-model", llm_provider="broken")
+    with pytest.raises(ConfigurationError, match="Failed to initialize LLM provider 'broken'"):
+        LanguageModel(cfg)
 
 
 def test_provider_routing_respects_override(monkeypatch):
