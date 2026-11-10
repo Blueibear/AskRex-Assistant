@@ -36,6 +36,33 @@ def test_check_xtts_no_transformers():
     assert "transformers>=5.5.0,<6.0" in result.details
 
 
+def test_check_xtts_transformers_five_checks_real_import_path():
+    from rex.doctor import Status, check_xtts_transformers_compat
+
+    mock_tf = SimpleNamespace(__version__="5.22.2")
+    with patch("rex.doctor.find_spec", return_value=MagicMock()):
+        with patch.dict(sys.modules, {"transformers": mock_tf}):  # type: ignore[dict-item]
+            with patch("rex.doctor.import_module") as load:
+                result = check_xtts_transformers_compat()
+
+    assert result.status == Status.OK
+    assert load.call_count == 3
+    assert "XTTS imports passed" in result.message
+
+
+def test_check_xtts_transformers_five_rejects_failed_import():
+    from rex.doctor import Status, check_xtts_transformers_compat
+
+    mock_tf = SimpleNamespace(__version__="5.22.2")
+    with patch("rex.doctor.find_spec", return_value=MagicMock()):
+        with patch.dict(sys.modules, {"transformers": mock_tf}):  # type: ignore[dict-item]
+            with patch("rex.doctor.import_module", side_effect=ImportError("XTTS incompatible")):
+                result = check_xtts_transformers_compat()
+
+    assert result.status == Status.WARNING
+    assert "XTTS incompatible" in result.message
+
+
 def test_check_xtts_beamsearch_native():
     """Returns OK when BeamSearchScorer is natively available."""
     from rex.doctor import Status, check_xtts_transformers_compat

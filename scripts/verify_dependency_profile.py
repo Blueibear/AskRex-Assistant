@@ -13,18 +13,23 @@ from __future__ import annotations
 import argparse
 from importlib import metadata
 
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
+
 PROFILE_VERSIONS = {
     "cpu": {
         "torch": "2.7.1",
         "torchvision": "0.22.1",
         "torchaudio": "2.7.1",
-        "transformers": "5.5.0",
+        "transformers": ">=5.5.0,<6.0",
+        "coqui-tts": "0.28.0",
     },
     "cuda124": {
         "torch": "2.6.0",
         "torchvision": "0.21.0",
         "torchaudio": "2.6.0",
-        "transformers": "5.5.0",
+        "transformers": ">=5.5.0,<6.0",
+        "coqui-tts": "0.28.0",
     },
     "electron_voice": {
         "torch": "2.7.1",
@@ -43,6 +48,12 @@ def _base_version(version: str) -> str:
     return version.split("+", 1)[0]
 
 
+def _matches_version(package: str, actual: str, expected: str) -> bool:
+    if package == "transformers":
+        return Version(actual) in SpecifierSet(expected)
+    return _base_version(actual) == expected
+
+
 def verify(profile: str) -> dict[str, str]:
     """Fail closed unless the resolved profile imports and operates together."""
     expected = PROFILE_VERSIONS[profile]
@@ -50,7 +61,7 @@ def verify(profile: str) -> dict[str, str]:
     mismatches = {
         package: (actual[package], version)
         for package, version in expected.items()
-        if _base_version(actual[package]) != version
+        if not _matches_version(package, actual[package], version)
     }
     if mismatches:
         raise RuntimeError(f"resolved dependency versions do not match {profile}: {mismatches}")
@@ -60,10 +71,12 @@ def verify(profile: str) -> dict[str, str]:
     import torchvision
 
     if profile != "electron_voice":
-        from rex.compat import ensure_transformers_compatibility
+        from TTS.api import TTS
+        from TTS.tts.configs.xtts_config import XttsAudioConfig, XttsConfig
+        from TTS.tts.layers.xtts.stream_generator import NewGenerationMixin
 
-        ensure_transformers_compatibility()
-        from transformers import BeamSearchScorer
+        if not all(isinstance(item, type) for item in (TTS, XttsConfig, XttsAudioConfig, NewGenerationMixin)):
+            raise RuntimeError("Coqui XTTS import smoke failed")
 
     if _base_version(torch.__version__) != expected["torch"]:
         raise RuntimeError(f"torch runtime version differs from distribution: {torch.__version__}")
@@ -75,9 +88,6 @@ def verify(profile: str) -> dict[str, str]:
         raise RuntimeError(
             f"torchaudio runtime version differs from distribution: {torchaudio.__version__}"
         )
-    if profile != "electron_voice" and not isinstance(BeamSearchScorer, type):
-        raise RuntimeError("transformers compatibility shim did not expose BeamSearchScorer")
-
     tensor = torch.tensor([1.0, 2.0])
     if tensor.sum().item() != 3.0:
         raise RuntimeError("torch tensor smoke failed")

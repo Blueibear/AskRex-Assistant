@@ -27,13 +27,15 @@ def test_profile_verifier_has_exact_supported_release_sets() -> None:
             "torch": "2.7.1",
             "torchvision": "0.22.1",
             "torchaudio": "2.7.1",
-            "transformers": "5.5.0",
+            "transformers": ">=5.5.0,<6.0",
+            "coqui-tts": "0.28.0",
         },
         "cuda124": {
             "torch": "2.6.0",
             "torchvision": "0.21.0",
             "torchaudio": "2.6.0",
-            "transformers": "5.5.0",
+            "transformers": ">=5.5.0,<6.0",
+            "coqui-tts": "0.28.0",
         },
         "electron_voice": {
             "torch": "2.7.1",
@@ -52,6 +54,14 @@ def test_profile_verifier_accepts_local_version_suffixes() -> None:
     verifier = _load_verifier()
 
     assert verifier._base_version("2.6.0+cu124") == "2.6.0"
+
+
+def test_profile_verifier_enforces_transformers_security_range() -> None:
+    verifier = _load_verifier()
+
+    assert verifier._matches_version("transformers", "5.22.2", ">=5.5.0,<6.0")
+    assert not verifier._matches_version("transformers", "5.4.9", ">=5.5.0,<6.0")
+    assert not verifier._matches_version("transformers", "6.0.0", ">=5.5.0,<6.0")
 
 
 def test_electron_voice_profile_runs_its_runtime_only_import_smoke(

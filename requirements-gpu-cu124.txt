@@ -9,11 +9,13 @@ torch==2.6.0+cu124
 torchvision==0.21.0+cu124
 torchaudio==2.6.0+cu124
 
-# Transformers 5 is the tested policy used by Pipfile.lock. The compatibility
-# shim retains the legacy BeamSearchScorer import required by Coqui TTS 0.22.0.
+# Transformers 5 is the tested policy. The maintained Coqui fork supports its
+# generation API without the removed BeamSearchScorer.
 transformers>=5.5.0,<6.0
+coqui-tts==0.28.0
 
 # The project ml extra is the CPU 2.7.1 profile. Installing it here would ask
 # pip to replace this CUDA 12.4 set, so this profile supplies ML wheels above
-# and asks the project only for audio dependencies.
+# and asks the project only for audio dependencies. Coqui XTTS is installed
+# separately above, without pulling in the CPU ml extra.
 -e ".[audio]"

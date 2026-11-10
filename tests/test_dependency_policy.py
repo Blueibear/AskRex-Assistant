@@ -36,6 +36,7 @@ def test_cuda_124_profile_uses_one_matching_torch_release_set() -> None:
     } <= gpu
     assert '-e ".[audio]"' in gpu
     assert '-e ".[ml,audio]"' not in gpu
+    assert "coqui-tts==0.28.0" in gpu
 
 
 def test_project_and_profile_transformers_policy_matches_pipfile_lock() -> None:
@@ -51,6 +52,8 @@ def test_project_and_profile_transformers_policy_matches_pipfile_lock() -> None:
     assert lock["default"]["transformers"]["version"] == "==5.5.0"
     for extra in ("ml", "full"):
         assert "transformers>=5.5.0,<6.0" in project["project"]["optional-dependencies"][extra]
+        assert "coqui-tts==0.28.0" in project["project"]["optional-dependencies"][extra]
+        assert "TTS==0.22.0" not in project["project"]["optional-dependencies"][extra]
 
 
 def test_supported_release_profiles_match_the_documented_compatibility_matrix() -> None:
@@ -103,7 +106,8 @@ def test_supported_release_profiles_match_the_documented_compatibility_matrix() 
         '"torch": "2.6.0"',
         '"torchvision": "0.21.0"',
         '"torchaudio": "2.6.0"',
-        '"transformers": "5.5.0"',
+        '"transformers": ">=5.5.0,<6.0"',
+        '"coqui-tts": "0.28.0"',
     ):
         assert expected in verifier
 

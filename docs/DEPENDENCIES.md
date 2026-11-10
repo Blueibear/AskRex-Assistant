@@ -2,8 +2,9 @@
 
 ## Canonical Runtime Matrix
 
-This table is the single authoritative release matrix. Supported profiles use
-exact, tested package sets. A version change must update this table, the
+This table is the single authoritative release matrix. Torch companions and
+Coqui XTTS use exact package sets; Transformers uses the bounded range below.
+A version change must update this table, the
 profile regression, and the profile-specific install/import evidence together.
 
 | Profile | torch | torchvision | torchaudio | Notes |
@@ -13,8 +14,9 @@ profile regression, and the profile-specific install/import evidence together.
 | Managed Electron Voice | `2.7.1` | `0.22.1` | `2.7.1` | Bundles the complete matching CPU set so packaged upgrades cannot resolve incompatible companions |
 
 **Transformers policy | `>=5.5.0,<6.0`**: Python 3.11 only, with
-`rex/compat/transformers_shims.py` preserving Coqui TTS 0.22.0's legacy
-`BeamSearchScorer` import. `Pipfile.lock` resolves `5.5.0`. The release audit
+`coqui-tts==0.28.0` for XTTS. The original TTS 0.22.0 requires the removed
+`BeamSearchScorer` API and is not the supported Transformers 5 package.
+`Pipfile.lock` resolves `5.5.0`. The release audit
 has no ignore for CVE-2026-1839 or PYSEC-2025-217.
 
 The managed-runtime builder imports the shipped voice stack and checks its
@@ -31,8 +33,8 @@ python scripts/verify_dependency_profile.py --profile cpu
 python scripts/verify_dependency_profile.py --profile cuda124
 ```
 
-The verifier records the resolved `transformers`, `torch`, `torchvision`, and
-`torchaudio` versions and exercises imports, the Coqui compatibility shim, a
+The verifier records the resolved `transformers`, `coqui-tts`, `torch`,
+`torchvision`, and `torchaudio` versions and exercises XTTS imports, a
 Torch tensor operation, a torchvision transform, and torchaudio resampling.
 It fails if the resolved distributions differ from the declared profile. The
 CUDA verifier is dependency/runtime compatibility evidence only; it does not
@@ -115,17 +117,17 @@ pip install -r requirements-cpu.txt
 
 ### Transformers + TTS Compatibility
 
-**Issue:** Hugging Face Transformers 4.38+ moved `BeamSearchScorer` from top-level exports to internal modules. Coqui TTS still expects it at top level.
+**Issue:** Transformers 5 removed `BeamSearchScorer`; the original TTS 0.22.0 imports and uses it in XTTS generation. A top-level shim cannot restore the removed implementation.
 
-**Solution:** Compatibility shim in `rex/compat/transformers_shims.py`
+**Solution:** Use the maintained `coqui-tts==0.28.0` fork for the supported XTTS profile. It supports the Transformers 5 generation API. The old shim remains only for legacy 4.x installations.
 
-- Call `ensure_transformers_compatibility()` before importing libraries that require it
-- Allows upgrading to transformers 4.48+ for security fixes
-- No changes needed to TTS library code
+- Install the CPU or CUDA profile in an isolated Python 3.11 environment.
+- Run the profile verifier and retain the exact resolved versions and import output.
+- The verifier checks XTTS imports without downloading a model or claiming inference acceptance.
 
-**Testing the shim:**
+**Testing the supported XTTS import:**
 ```bash
-python -c "from transformers import BeamSearchScorer; print('OK')"
+python -c "from TTS.api import TTS; from TTS.tts.layers.xtts.stream_generator import NewGenerationMixin; print('XTTS imports OK')"
 ```
 
 ## Testing After Updates
@@ -161,14 +163,14 @@ rex-gui                 # Test Flask API / experimental browser dashboard starts
 
 ### Resolved
 
-✅ **transformers BeamSearchScorer** - Shim in `rex/compat/transformers_shims.py`
+✅ **Transformers 5 XTTS imports** - Supported with `coqui-tts==0.28.0`; the legacy shim remains for older optional installs.
 
 ✅ **Dependabot lock failure** - Removed heavy ML packages (torch, openai-whisper, openwakeword, TTS) from Pipfile; they remain in requirements-cpu.txt and pyproject.toml [ml] extras.
 
 ### Active Constraints
 
 - **torch**: Must use CPU builds (no CUDA). Not in Pipfile due to CUDA transitive deps on Linux PyPI.
-- **TTS**: Requires transformers compatibility shim
+- **XTTS**: Use the maintained Coqui fork for Transformers 5.
 - **Python**: Repository install paths are intentionally constrained to Python 3.11 until broader compatibility is validated end-to-end.
 - **numpy**: Keep <2.0 in requirements-cpu.txt for compatibility with numba/TTS/other scientific packages
 - **speechbrain / resemblyzer**: Voice identity optional extras only (`pip install '.[voice-id]'`). Not in Pipfile or default dependencies.
@@ -180,7 +182,7 @@ Heavy ML and audio dependencies are split into optional extras in `pyproject.tom
 | Extra group | Packages | Use case |
 |-------------|----------|----------|
 | `audio` | numpy, sounddevice, soundfile, simpleaudio | Audio I/O for voice loop |
-| `ml` | torch, torchvision, torchaudio, transformers, TTS, whisper, openwakeword | Full ML stack |
+| `ml` | torch, torchvision, torchaudio, transformers, coqui-tts, whisper, openwakeword | Full ML stack |
 | `voice-id` | speechbrain, resemblyzer | Speaker recognition embeddings |
 | `sms` | twilio | Twilio SMS backend |
 | `dev` | pytest, pytest-cov, pytest-asyncio, build, black, ruff, mypy | Development tools |

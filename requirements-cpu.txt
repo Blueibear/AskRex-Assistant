@@ -8,8 +8,8 @@ torch==2.7.1
 torchvision==0.22.1
 torchaudio==2.7.1
 
-# Transformers 5 is the tested policy used by Pipfile.lock. The compatibility
-# shim retains the legacy BeamSearchScorer import required by Coqui TTS 0.22.0.
+# Transformers 5 is the tested policy. The maintained Coqui fork in the ml
+# extra supports its generation API without the removed BeamSearchScorer.
 transformers>=5.5.0,<6.0
 
 # Install Rex with ML + audio extras

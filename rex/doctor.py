@@ -21,6 +21,7 @@ import stat
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
+from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -923,6 +924,16 @@ def check_xtts_transformers_compat() -> CheckResult:
         import transformers
 
         transformers_version = getattr(transformers, "__version__", "unknown")
+
+        if transformers_version.startswith("5."):
+            import_module("TTS.api")
+            import_module("TTS.tts.configs.xtts_config")
+            import_module("TTS.tts.layers.xtts.stream_generator")
+            return CheckResult(
+                name="XTTS Compatibility",
+                status=Status.OK,
+                message=f"transformers {transformers_version}: Coqui XTTS imports passed",
+            )
 
         if hasattr(transformers, "BeamSearchScorer"):
             return CheckResult(
