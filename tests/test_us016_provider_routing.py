@@ -170,8 +170,8 @@ def test_unknown_provider_raises_configuration_error():
 
 def test_provider_initialization_failure_raises_configuration_error(monkeypatch):
     """A configured provider failing to initialize is not silently replaced by echo."""
-    from rex.assistant_errors import ConfigurationError
     from rex import llm_client
+    from rex.assistant_errors import ConfigurationError
 
     class BrokenStrategy:
         def __init__(self, _model_name: str) -> None:
