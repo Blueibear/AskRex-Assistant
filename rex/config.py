@@ -12,7 +12,7 @@ import json
 import os
 import sys
 from dataclasses import asdict, dataclass, field
-from typing import IO, Any
+from typing import IO, Any, cast
 from urllib.parse import urlparse
 
 from rex.exception_handler import wrap_entrypoint
@@ -827,7 +827,7 @@ class AppConfig:
         raw["transcripts_dir"] = str(self.transcripts_dir)
         raw["log_path"] = str(self.log_path)
         raw["error_log_path"] = str(self.error_log_path)
-        return _redact_config_credentials(raw)
+        return cast(dict[Any, Any], _redact_config_credentials(raw))
 
     def __post_init__(self) -> None:
         if self.warm_runtime_max_cost_mb < 0 or self.warm_runtime_idle_timeout_s < 0:
