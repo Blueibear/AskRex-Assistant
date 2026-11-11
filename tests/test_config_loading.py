@@ -73,7 +73,7 @@ class TestConfigDisplayRedaction:
         assert displayed["llm_provider"] == "transformers"
 
     def test_show_config_never_prints_live_credential_values(self, capsys):
-        secret = "openai-live-secret"
+        secret = "openai-live-secret"  # pragma: allowlist secret
         show_config(AppConfig(openai_api_key=secret, wakeword="custom-wakeword"))
 
         output = capsys.readouterr().out
