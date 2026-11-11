@@ -58,9 +58,9 @@ class TestFullExtraCoversVoice:
         pkgs = self._packages(optional_deps)
         assert "openwakeword" in pkgs
 
-    def test_tts_in_full(self, optional_deps: dict) -> None:
+    def test_coqui_tts_in_full(self, optional_deps: dict) -> None:
         pkgs = self._packages(optional_deps)
-        assert "tts" in pkgs
+        assert "coqui-tts" in pkgs
 
     def test_transformers_in_full(self, optional_deps: dict) -> None:
         pkgs = self._packages(optional_deps)
