@@ -55,7 +55,9 @@ _TIME_REPLY_RE = re.compile(
 
 def _configured_input_device_index(active_settings: Any) -> int | None:
     """Return the microphone selected through canonical nested audio config."""
-    device_index = getattr(getattr(active_settings, "audio", None), "input_device", None)
+    device_index = getattr(
+        getattr(active_settings, "audio", None), "input_device", None
+    )
     return (
         device_index
         if isinstance(device_index, int) and not isinstance(device_index, bool)
@@ -101,7 +103,9 @@ def _compact_spoken_reply_for_gui(
     lower = clean.lower()
     handoff = _GUI_RECIPE_HANDOFF if "recipe" in lower else _GUI_LONG_ANSWER_HANDOFF
     sentences = [
-        sentence.strip() for sentence in _SENTENCE_SPLIT_RE.split(clean) if sentence.strip()
+        sentence.strip()
+        for sentence in _SENTENCE_SPLIT_RE.split(clean)
+        if sentence.strip()
     ]
 
     intro = ""
@@ -192,7 +196,10 @@ class _LazyAsyncResource:
 
 class _DeferredAssistant:
     def __init__(
-        self, factory: Callable[[], Any], *, event_observer: Callable[[Any], None] | None = None
+        self,
+        factory: Callable[[], Any],
+        *,
+        event_observer: Callable[[Any], None] | None = None,
     ) -> None:
         self._resource = _LazyAsyncResource("assistant", factory)
         self._event_observer = event_observer
@@ -257,7 +264,9 @@ def emit_log(level: str, message: str, extra: dict[str, object] | None = None) -
 
 def emit_audio_diagnostic(diagnostic: dict[str, object]) -> None:
     """Forward a structured audio diagnostic to the Electron error channel."""
-    user_message = str(diagnostic.get("user_message") or "Voice audio device unavailable.")
+    user_message = str(
+        diagnostic.get("user_message") or "Voice audio device unavailable."
+    )
     emit_log("ERROR", "Voice audio device unavailable", diagnostic)
     emit(
         {
@@ -280,7 +289,9 @@ def _move_stream_logging_to_stderr() -> None:
         stream = getattr(handler, "stream", None)
         stream_name = getattr(stream, "name", None)
         if isinstance(handler, logging.StreamHandler) and (
-            stream is sys.stdout or stream is sys.__stdout__ or stream_name == "<stdout>"
+            stream is sys.stdout
+            or stream is sys.__stdout__
+            or stream_name == "<stdout>"
         ):
             handler.setStream(sys.stderr)
 
@@ -288,10 +299,16 @@ def _move_stream_logging_to_stderr() -> None:
 def _install_voice_bridge_log_filter() -> None:
     root_logger = logging.getLogger()
     log_filter = _VoiceBridgeSessionFilter()
-    if not any(isinstance(existing, _VoiceBridgeSessionFilter) for existing in root_logger.filters):
+    if not any(
+        isinstance(existing, _VoiceBridgeSessionFilter)
+        for existing in root_logger.filters
+    ):
         root_logger.addFilter(log_filter)
     for handler in root_logger.handlers:
-        if not any(isinstance(existing, _VoiceBridgeSessionFilter) for existing in handler.filters):
+        if not any(
+            isinstance(existing, _VoiceBridgeSessionFilter)
+            for existing in handler.filters
+        ):
             handler.addFilter(log_filter)
 
 
@@ -371,7 +388,9 @@ def _run_stub_loop() -> None:
                 from rex.runtime.turn import TurnSource
 
                 with turn_invocation(TurnSource.VOICE):
-                    reply_text = str(asyncio.run(assistant.generate_reply(stub_user_text)))
+                    reply_text = str(
+                        asyncio.run(assistant.generate_reply(stub_user_text))
+                    )
             except Exception as exc:
                 reply_text = f"(Backend error: {exc})"
         else:
@@ -471,7 +490,9 @@ async def _run_real_loop() -> None:
 
     # Read voice settings from config with sensible defaults
     sample_rate = int(getattr(active_settings, "sample_rate", 16000) or 16000)
-    detection_seconds = float(getattr(active_settings, "detection_frame_seconds", 1.0) or 1.0)
+    detection_seconds = float(
+        getattr(active_settings, "detection_frame_seconds", 1.0) or 1.0
+    )
     capture_seconds = float(
         getattr(active_settings, "capture_seconds", None)
         or getattr(active_settings, "command_duration", 5.0)
@@ -481,7 +502,9 @@ async def _run_real_loop() -> None:
     device = str(getattr(active_settings, "whisper_device", "auto") or "auto")
     language = str(getattr(active_settings, "whisper_language", "en") or "en")
     detection_hop_seconds = max(0.125, detection_seconds / 8)
-    wakeword_threshold = float(getattr(active_settings, "wakeword_threshold", None) or 0.1)
+    wakeword_threshold = float(
+        getattr(active_settings, "wakeword_threshold", None) or 0.1
+    )
     microphone_label = (_MICROPHONE_LABEL or "").strip() or None
     configured_device_index = _configured_input_device_index(active_settings)
     microphone_device_index = (
@@ -514,8 +537,12 @@ async def _run_real_loop() -> None:
             "wakeword_threshold": wakeword_threshold,
             "wakeword_keyword": getattr(active_settings, "wakeword_keyword", None)
             or getattr(active_settings, "wakeword", None),
-            "wakeword_model_path": getattr(active_settings, "wakeword_model_path", None),
-            "wakeword_embedding_path": getattr(active_settings, "wakeword_embedding_path", None),
+            "wakeword_model_path": getattr(
+                active_settings, "wakeword_model_path", None
+            ),
+            "wakeword_embedding_path": getattr(
+                active_settings, "wakeword_embedding_path", None
+            ),
             "wakeword_fallback_to_builtin": getattr(
                 active_settings, "wakeword_fallback_to_builtin", True
             ),
@@ -545,8 +572,12 @@ async def _run_real_loop() -> None:
             "wakeword_threshold": wakeword_threshold,
             "wakeword_keyword": getattr(active_settings, "wakeword_keyword", None)
             or getattr(active_settings, "wakeword", None),
-            "wakeword_model_path": getattr(active_settings, "wakeword_model_path", None),
-            "wakeword_embedding_path": getattr(active_settings, "wakeword_embedding_path", None),
+            "wakeword_model_path": getattr(
+                active_settings, "wakeword_model_path", None
+            ),
+            "wakeword_embedding_path": getattr(
+                active_settings, "wakeword_embedding_path", None
+            ),
             "wakeword_fallback_to_builtin": getattr(
                 active_settings, "wakeword_fallback_to_builtin", True
             ),
@@ -603,8 +634,12 @@ async def _run_real_loop() -> None:
         model_path=getattr(active_settings, "wakeword_model_path", None),
         embedding_path=getattr(active_settings, "wakeword_embedding_path", None),
         backend=getattr(active_settings, "wakeword_backend", None),
-        fallback_to_builtin=getattr(active_settings, "wakeword_fallback_to_builtin", True),
-        fallback_keyword=getattr(active_settings, "wakeword_fallback_keyword", "hey jarvis"),
+        fallback_to_builtin=getattr(
+            active_settings, "wakeword_fallback_to_builtin", True
+        ),
+        fallback_keyword=getattr(
+            active_settings, "wakeword_fallback_keyword", "hey jarvis"
+        ),
         event_callback=lambda payload: emit_log(
             str(payload.get("level", "INFO")),
             str(payload.get("message", "Wake-word event")),
@@ -627,7 +662,9 @@ async def _run_real_loop() -> None:
     tts = _DeferredTextToSpeech(lambda: TextToSpeech(language=language))
     emit({"type": "status", "status": "initializing_acknowledgement"})
     ack = WakeAcknowledgement(is_speaking=tts.is_speaking)
-    ack_mode = str(getattr(active_settings, "acknowledgment_mode", "none") or "none").lower()
+    ack_mode = str(
+        getattr(active_settings, "acknowledgment_mode", "none") or "none"
+    ).lower()
     ack_sound = str(getattr(active_settings, "acknowledgment_sound", "") or "")
 
     async def wrapped_post_stt_ack() -> None:
@@ -697,16 +734,22 @@ async def _run_real_loop() -> None:
     # Wrap speak: emit speaking state + rex transcript; VoiceLoop emits cooldown/idle.
     async def wrapped_speak(text: str) -> None:
         text = _sanitize_user_facing_voice_text(text)
-        max_spoken_chars = int(getattr(active_settings, "tts_max_spoken_chars", 120) or 120)
+        max_spoken_chars = int(
+            getattr(active_settings, "tts_max_spoken_chars", 120) or 120
+        )
         spoken_text, compact_speech_used = _compact_spoken_reply_for_gui(
             text,
             max_chars=max_spoken_chars,
         )
-        fast_short_enabled = bool(getattr(active_settings, "tts_fast_short_reply_enabled", True))
+        fast_short_enabled = bool(
+            getattr(active_settings, "tts_fast_short_reply_enabled", True)
+        )
         fast_short_max_chars = int(
             getattr(active_settings, "tts_fast_short_reply_max_chars", 140) or 140
         )
-        prefer_fast_speech = fast_short_enabled and len(spoken_text) <= fast_short_max_chars
+        prefer_fast_speech = (
+            fast_short_enabled and len(spoken_text) <= fast_short_max_chars
+        )
         started_at = time.perf_counter()
         logger.info(
             "GUI voice bridge reply ready; starting TTS playback path",
@@ -729,7 +772,9 @@ async def _run_real_loop() -> None:
             {
                 "event": "voice_bridge_tts_path_selected",
                 "voice_bridge_session_id": _VOICE_BRIDGE_SESSION_ID,
-                "configured_tts_provider": getattr(active_settings, "tts_provider", None),
+                "configured_tts_provider": getattr(
+                    active_settings, "tts_provider", None
+                ),
                 "reply_chars": len(text),
                 "spoken_reply_chars": len(spoken_text),
                 "compact_speech_used": compact_speech_used,
@@ -803,7 +848,12 @@ async def _run_real_loop() -> None:
             )
             emit({"type": "state", "state": "followup_listening"})
         elif status == "error":
-            emit({"type": "error", "error": "Voice pipeline error; see logs for details."})
+            emit(
+                {
+                    "type": "error",
+                    "error": "Voice pipeline error; see logs for details.",
+                }
+            )
             emit({"type": "state", "state": "idle"})
 
     voice_loop = VoiceLoop(
