@@ -14,6 +14,7 @@ describe('wake-word microphone routing', () => {
     expect(preload).toContain(".invoke('rex:startVoice', options ?? {})")
     expect(handler).toContain("bridgeArgs.push('--microphone-label', microphoneLabel)")
     expect(handler).toContain("? ['-I', scriptPath, '--user', session.userId]")
+    expect(bridge).toContain('_configured_input_device_index(active_settings)')
     expect(bridge).toContain('resolve_input_device_index_by_name(microphone_label)')
     expect(bridge).toContain('getattr(getattr(active_settings, "audio", None), "input_device", None)')
     expect(bridge).toContain('resolve_input_capture_rate(microphone_device_index, sample_rate)')

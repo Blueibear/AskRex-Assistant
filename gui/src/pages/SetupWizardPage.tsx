@@ -474,6 +474,9 @@ function StepWakeWord({
           {previewing ? 'Playing wake-word sample…' : 'Preview wake-word sample'}
         </button>
       )}
+      {!canPreviewSample && data.wakeWordId && (
+        <p className="text-text-muted text-xs">No preview recording is available for this wake word.</p>
+      )}
       {samplePlayed && <p className="text-green-400 text-sm">Wake-word sample played</p>}
       {previewError && <p className="text-red-400 text-sm">{previewError}</p>}
       <p className="text-text-muted text-xs">

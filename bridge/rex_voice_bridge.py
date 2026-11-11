@@ -52,6 +52,12 @@ _TIME_REPLY_RE = re.compile(
 )
 
 
+def _configured_input_device_index(active_settings: Any) -> int | None:
+    """Return the microphone selected through canonical nested audio config."""
+    device_index = getattr(getattr(active_settings, "audio", None), "input_device", None)
+    return device_index if isinstance(device_index, int) and not isinstance(device_index, bool) else None
+
+
 def _sanitize_user_facing_voice_text(text: str) -> str:
     if not _INTERNAL_TOOL_SYNTAX_RE.search(text):
         return text
@@ -472,7 +478,7 @@ async def _run_real_loop() -> None:
     detection_hop_seconds = max(0.125, detection_seconds / 8)
     wakeword_threshold = float(getattr(active_settings, "wakeword_threshold", None) or 0.1)
     microphone_label = (_MICROPHONE_LABEL or "").strip() or None
-    configured_device_index = getattr(getattr(active_settings, "audio", None), "input_device", None)
+    configured_device_index = _configured_input_device_index(active_settings)
     microphone_device_index = (
         resolve_input_device_index_by_name(microphone_label)
         if microphone_label

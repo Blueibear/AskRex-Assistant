@@ -30,6 +30,7 @@ describe('US-125 setup wake-word UX', () => {
 
   it('previews a real wake-word sample without claiming detection', () => {
     expect(pageSource).toContain('window.rex.previewWakeWordSample(data.wakeWordId)')
+    expect(pageSource).toContain('No preview recording is available for this wake word.')
     expect(pageSource).toContain('Wake-word sample played')
     expect(pageSource).toContain('Actual wake detection is still required')
   })
