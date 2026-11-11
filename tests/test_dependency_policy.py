@@ -52,7 +52,9 @@ def test_project_and_profile_transformers_policy_matches_pipfile_lock() -> None:
     assert pipfile["packages"]["transformers"] == "==5.5.0"
     assert lock["default"]["transformers"]["version"] == "==5.5.0"
     for extra in ("ml", "full"):
-        assert "transformers>=5.5.0,<6.0" in project["project"]["optional-dependencies"][extra]
+        assert "transformers>=5.5.0,<6.0" in project["project"]["optional-dependencies"][
+            extra
+        ]
         assert "coqui-tts==0.28.0" in project["project"]["optional-dependencies"][extra]
         assert "six>=1.17,<2" in project["project"]["optional-dependencies"][extra]
         assert "TTS==0.22.0" not in project["project"]["optional-dependencies"][extra]

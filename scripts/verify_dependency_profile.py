@@ -64,7 +64,9 @@ def verify(profile: str) -> dict[str, str]:
         if not _matches_version(package, actual[package], version)
     }
     if mismatches:
-        raise RuntimeError(f"resolved dependency versions do not match {profile}: {mismatches}")
+        raise RuntimeError(
+            f"resolved dependency versions do not match {profile}: {mismatches}"
+        )
 
     import torch
     import torchaudio
@@ -75,11 +77,16 @@ def verify(profile: str) -> dict[str, str]:
         from TTS.tts.configs.xtts_config import XttsAudioConfig, XttsConfig
         from TTS.tts.layers.xtts.stream_generator import NewGenerationMixin
 
-        if not all(isinstance(item, type) for item in (TTS, XttsConfig, XttsAudioConfig, NewGenerationMixin)):
+        if not all(
+            isinstance(item, type)
+            for item in (TTS, XttsConfig, XttsAudioConfig, NewGenerationMixin)
+        ):
             raise RuntimeError("Coqui XTTS import smoke failed")
 
     if _base_version(torch.__version__) != expected["torch"]:
-        raise RuntimeError(f"torch runtime version differs from distribution: {torch.__version__}")
+        raise RuntimeError(
+            f"torch runtime version differs from distribution: {torch.__version__}"
+        )
     if _base_version(torchvision.__version__) != expected["torchvision"]:
         raise RuntimeError(
             f"torchvision runtime version differs from distribution: {torchvision.__version__}"

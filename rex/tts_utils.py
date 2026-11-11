@@ -42,7 +42,9 @@ _ABBREV_WORDS: frozenset[str] = frozenset(
         "blvd",
     ]
 )
-_ABBREV_DOT: frozenset[str] = frozenset(["e.g", "i.e", "a.m", "p.m", "u.s", "u.k", "u.n"])
+_ABBREV_DOT: frozenset[str] = frozenset(
+    ["e.g", "i.e", "a.m", "p.m", "u.s", "u.k", "u.n"]
+)
 _ABBREV_PLACEHOLDER = "\x00"
 
 
@@ -84,7 +86,9 @@ def _split_long_sentence(sentence: str, max_tokens: int) -> list[str]:
         return []
     if len(tokens) <= max_tokens:
         return [" ".join(tokens)]
-    return [" ".join(tokens[i : i + max_tokens]) for i in range(0, len(tokens), max_tokens)]
+    return [
+        " ".join(tokens[i : i + max_tokens]) for i in range(0, len(tokens), max_tokens)
+    ]
 
 
 def chunk_text_for_xtts(text: str, *, max_tokens: int = 300) -> list[str]:
@@ -172,7 +176,9 @@ def get_tts_engine(engine: str) -> type:
     """
     if engine == "xtts":
         if find_spec("TTS") is None:
-            raise ImportError("Coqui XTTS is not installed. Install it with: pip install coqui-tts==0.28.0")
+            raise ImportError(
+                "Coqui XTTS is not installed. Install it with: pip install coqui-tts==0.28.0"
+            )
         apply_xtts_safe_globals()
         from TTS.api import TTS
 

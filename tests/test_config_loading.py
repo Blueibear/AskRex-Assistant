@@ -56,9 +56,9 @@ class TestConfigDisplayRedaction:
 
     def test_to_dict_redacts_live_credential_values(self):
         cfg = AppConfig(
-            openai_api_key="openai-live-secret",
+            openai_api_key="openai-live-secret",  # pragma: allowlist secret
             ha_token="ha-live-token",
-            ha_secret="ha-live-secret",
+            ha_secret="ha-live-secret",  # pragma: allowlist secret
             shopping_pwa_pin="1234",
             push_topic="pushover-live-user-key",
         )
