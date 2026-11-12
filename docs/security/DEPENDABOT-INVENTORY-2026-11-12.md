@@ -99,12 +99,16 @@ Tinypool's two advisories are `GHSA-5gmw-xhrv-c9v3` (first fixed `2.1.1`)
 and `GHSA-85c8-ppgw-ccpr` (first fixed `2.1.2`).
 
 `requirements.in` is a separately maintained developer `pip-compile` input,
-not a Dependabot-alerted lock or packaged-runtime input. Its declared lower
-bounds are not resolver output and no regenerated output or exact-candidate
-resolver receipt is available in this scratch checkout. It is therefore not
-claimed as a remediation for any advisory. Any security-floor change to this
-input must be accompanied by regenerated output and exact-candidate resolver
-evidence before it is accepted.
+not a Dependabot-alerted lock or packaged-runtime input. Its Pillow floor is
+now `>=13.0.0`, matching the first fixed release for the five critical Pillow
+advisories. This source-level floor prevents a future developer resolution
+from selecting a known-vulnerable Pillow release, but it is not itself a
+resolved developer dependency tree. The repository does not track a generated
+output for this input (`requirements.txt` is a documented pointer to split
+profiles), and no exact-candidate `pip-compile` receipt is available in this
+offline scratch checkout. The supervisor must choose and record the canonical
+generated developer output, regenerate it with the exact candidate input, and
+validate the resolved tree before accepting this developer-path change.
 
 The supplied critical inventory identifies no other critical package groups.
 The listed historical high/medium/low packages require a separate refreshed

@@ -44,7 +44,9 @@ setuptools>=78.1.1
 pip>=25.3
 werkzeug>=3.0.0
 jinja2>=3.1.3
-pillow>=10.3.0
+# Pillow 13.0.0 is the first fixed release for the five critical Pillow
+# advisories recorded in docs/security/DEPENDABOT-INVENTORY-2026-11-12.md.
+pillow>=13.0.0
 urllib3>=2.7.0
 certifi>=2026.10.23
 

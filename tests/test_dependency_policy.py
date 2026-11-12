@@ -66,6 +66,7 @@ def test_developer_resolver_input_preserves_security_floors() -> None:
 
     assert {
         "cryptography>=46.0.5",
+        "pillow>=13.0.0",
         "urllib3>=2.7.0",
         "certifi>=2026.10.23",
     } <= developer
