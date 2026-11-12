@@ -21,7 +21,9 @@ vi.mock('electron', () => ({
   BrowserWindow: class {},
   Menu: { buildFromTemplate: mocks.buildFromTemplate },
   nativeImage: { createFromPath: mocks.createFromPath },
-  Tray: vi.fn(() => mocks.tray),
+  Tray: vi.fn(function Tray() {
+    return mocks.tray
+  }),
 }))
 vi.mock('../src/main/backgroundListening', () => ({
   readBackgroundListeningStatus: mocks.readStatus,

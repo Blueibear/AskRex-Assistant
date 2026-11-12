@@ -87,27 +87,40 @@ No alert has been marked closed.
 | Instances | Package/advisory | Actual path | Current state |
 | --- | --- | --- | --- |
 | 3 | `certifi` / `GHSA-6q48-6c7w-9gw2` | Pipenv direct/lock and packaged Electron Python runtime | Fixed in the prior reviewed certifi phase at `2026.10.23`; its exact-revision resolver and HTTPS evidence is above. |
-| 15 | `Pillow` / five current critical advisories | `Pipfile` direct runtime declaration, `Pipfile.lock` resolved runtime graph, and packaged Electron Python runtime requirements | `13.0.0` is the first fixed release for all five. The direct declaration and packaged runtime pin are prepared at `13.0.0`; the lock must be resolver-generated before this group can be called repaired. |
+| 15 | `Pillow` / five current critical advisories | `Pipfile` direct runtime declaration, `Pipfile.lock` resolved runtime graph, and packaged Electron Python runtime requirements | The direct declaration, verified resolver lock, and packaged runtime pin now select `13.0.0`, the first fixed release for all five. Exact-revision review and release checks remain pending. |
 | 2 | `PyJWT` / `GHSA-ffc3-869f-jxw9` | Project direct dependency range and packaged Electron Python runtime requirements | `2.14.0` is the first fixed release. The project range is prepared at `>=2.14.0` and the packaged runtime pin at `2.15.0`. PyJWT is absent from the current Pipenv graph, so no synthetic lock record was added. |
-| 2 | `tinypool` / two current critical advisories | GUI development test path through Vitest in `gui/package-lock.json` | Already resolved through the compatible Vitest 3.2.7 path to `tinypool` 2.2.0, above the latest fixed `2.1.2`, with the official registry integrity recorded in the lock. No untested override was added. |
+| 2 | `tinypool` / two current critical advisories | GUI development test path through Vitest in `gui/package-lock.json` | Vitest is updated to `4.1.11`; the explicit Tinypool override is removed, and the regenerated lock contains no Tinypool package. A clean isolated install and GUI tests passed; exact-revision review remains pending. |
+
+The five Pillow advisories are `GHSA-332p-7hrc-92wf`,
+`GHSA-5x8w-8jj5-q52h`, `GHSA-8g5g-8vmr-9782`,
+`GHSA-v9pv-5gc8-w2m6`, and `GHSA-w889-685w-c8fh`. Each had three alert
+instances in the 05:10 CST inventory and first fixed release `13.0.0`.
+Tinypool's two advisories are `GHSA-5gmw-xhrv-c9v3` (first fixed `2.1.1`)
+and `GHSA-85c8-ppgw-ccpr` (first fixed `2.1.2`).
 
 The supplied critical inventory identifies no other critical package groups.
 The listed historical high/medium/low packages require a separate refreshed
 per-advisory inventory before they are changed; they are unknown here, not
 treated as zero.
 
-### Lock and validation blocker
+### Resolver and validation evidence
 
-This disposable offline checkout has neither an authorized package resolver
-result nor complete official Pillow 13.0.0 artifact hashes. The only supplied
-Pillow hash is the Windows CPython 3.11 wheel hash
-`d7710eb676e9bb68965cb045be0d333b4c0d7f9dfbaa7fbf121385b1588683d3`.
-Replacing the existing multi-platform `Pipfile.lock` entry or its Pipfile hash
-without a resolver would create an unverified lock and could break supported
-developer platforms. The lock intentionally remains unmodified until the
-supervisor runs Pipenv resolution on the exact candidate and verifies the
-generated metadata and hashes. This means the Pillow lock alert is not claimed
-fixed by this candidate.
+The trusted operator resolved the exact candidate Pipfile with Pipenv
+2026.11.0 in isolation. The Pillow `13.0.0` entry has 83 artifact hashes and
+the generated Pipfile metadata hash is
+`4d32502e310473589bf6e33e9093f97a0a4006b31f13b686fb2156da5f6c6533`.
+Only that entry and metadata hash were applied to the existing lock; all other
+dependency records were preserved. `uvx --from pipenv pipenv verify` reported
+`Pipfile.lock is up-to-date` on this candidate. The resolver entry and its
+checksums are recorded in the coordination evidence for this task.
+
+An isolated GUI copy regenerated `gui/package-lock.json` with Vitest 4.1.11
+after removing the Tinypool override. `npm ci --offline` and `npm ls --all`
+passed against the resulting lock; all 343 GUI tests and typecheck passed
+after making the tray mock constructor-compatible. The isolated candidate
+also passed GUI build and `npm audit --audit-level=high` (zero critical/high
+findings at the time). These checks do not replace supervisor validation and
+independent review on the committed revision.
 
 Before any closure claim, the supervisor must additionally resolve/install the
 updated packaged runtime, run the mobile JWT regression suite and image
@@ -118,8 +131,8 @@ Windows acceptance is claimed.
 
 Required supervisor checks on the exact candidate revision:
 
-1. Regenerate/validate the Pipenv lock using the authorized resolver, then
-   confirm the lock metadata and both dependency groups match the Pipfile.
+1. Verify the committed Pipenv lock metadata and both dependency groups match
+   the exact candidate Pipfile.
 2. Resolve the managed runtime requirements with hash enforcement and perform
    ordinary HTTPS certificate validation without disabling certificate checks.
 3. Run the exact-revision repository gates and independent review before any
