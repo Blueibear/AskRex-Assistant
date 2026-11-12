@@ -110,6 +110,33 @@ The listed historical high/medium/low packages require a separate refreshed
 per-advisory inventory before they are changed; they are unknown here, not
 treated as zero.
 
+## High, medium, and low disposition register
+
+The authorized refresh supplied severity totals, but not the individual
+high/medium/low alert records. Therefore this scratch candidate cannot
+truthfully enumerate or close the 147 high, 120 medium, or 22 low instances.
+Each row below is an exposure-based disposition for a historical cluster, not
+a claim that the cluster has a current alert. The supervisor owns the next
+authoritative alert export and must replace this bounded register with one row
+per remaining advisory before a closure decision.
+
+| Historical cluster | Local path and exposure condition | Disposition and evidence | Owner | Next action |
+| --- | --- | --- | --- | --- |
+| Transformers | Optional ML/voice developer and packaged Voice paths. Exposure requires enabling a local model/voice profile. | The supported project, CPU, CUDA, and Pipenv paths require `>=5.5.0,<6.0` or `==5.5.0`. This change aligns `requirements.in`, which previously allowed an unsupported 4.x resolution. No current advisory is asserted. | backend | Resolve the regenerated developer requirements and run voice/model regressions, then match any refreshed advisory to the resolved graph. |
+| urllib3 | Direct Python HTTP client dependency in source, Pipenv, and packaged runtime. Exposure requires outbound HTTP(S). | Project and packaged paths require `>=2.7.0`; this change raises the developer resolver floor from `>=2.0.0` to `>=2.7.0`. No current advisory is asserted. | backend | Resolve `requirements.in`, run the HTTPS gate, and compare all direct/transitive instances with the authoritative alert export. |
+| cryptography | Direct TLS, credential, mobile-pairing, and packaged-runtime dependency. Exposure requires cryptographic or TLS operations. | Project requires `>=46.0.5`, Pipenv pins `50.0.0`, packaged runtime pins `49.0.0`; this change raises the developer resolver floor from `>=43.0.1`. No current advisory is asserted. | backend | Resolve the developer input and run auth, pairing, and HTTPS gates against the exact candidate. |
+| Undici, Electron, Vite, msgpack | JavaScript development/build trees. Electron is also in the shippable desktop build; `rex/ui` is developer-only. | The main GUI lock has prior isolated clean-install, test, build, and high-threshold audit evidence. This scratch checkout has no installed dependency trees, so a new local audit is unavailable. No current advisory is asserted. | supervisor | Run clean installs and `npm audit --audit-level=high` for both `gui/` and the developer-only `rex/ui/`, then record each remaining advisory, path, and action. |
+| CI Python audit exceptions | The repository `pip-audit --strict .` gate has an existing explicit exception list. Exposure depends on the dependency selected by the project install. | This task neither adds nor broadens an exception. An exception is not a disposition for a current Dependabot advisory. | supervisor | Reconcile every existing exception against the refreshed export and `VULNERABILITY-SCAN.md`; remove only after a compatible remediation is independently validated. |
+| Medium and low alerts not named in bounded evidence | Direct, transitive, dev, CI, and packaged-runtime paths are unknown per advisory. | Not accepted risk and not zero. Their identity and exploitability cannot be inferred from severity totals. | supervisor | Obtain the current per-alert export, assign each advisory an exposure condition, owner, and remediation or explicitly approved risk action. |
+
+### Status boundary
+
+This local patch prepares source declarations and documentation only. It has
+not regenerated `requirements.txt`, merged a pull request, built a release,
+deployed an artifact, or closed any Dependabot alert. Exact-candidate
+resolution, repository security gates, packaging, and independent review
+remain required.
+
 ### Resolver and validation evidence
 
 The trusted operator resolved the exact candidate Pipfile with Pipenv

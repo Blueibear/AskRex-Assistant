@@ -43,12 +43,14 @@ def test_cuda_124_profile_uses_one_matching_torch_release_set() -> None:
 def test_project_and_profile_transformers_policy_matches_pipfile_lock() -> None:
     cpu = _requirements("requirements-cpu.txt")
     gpu = _requirements("requirements-gpu-cu124.txt")
+    developer = _requirements("requirements.in")
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     pipfile = tomllib.loads((ROOT / "Pipfile").read_text(encoding="utf-8"))
     lock = json.loads((ROOT / "Pipfile.lock").read_text(encoding="utf-8"))
 
     assert "transformers>=5.5.0,<6.0" in cpu
     assert "transformers>=5.5.0,<6.0" in gpu
+    assert "transformers>=5.5.0,<6.0" in developer
     assert pipfile["packages"]["transformers"] == "==5.5.0"
     assert lock["default"]["transformers"]["version"] == "==5.5.0"
     for extra in ("ml", "full"):
@@ -56,6 +58,17 @@ def test_project_and_profile_transformers_policy_matches_pipfile_lock() -> None:
         assert "coqui-tts==0.28.0" in project["project"]["optional-dependencies"][extra]
         assert "six>=1.17,<2" in project["project"]["optional-dependencies"][extra]
         assert "TTS==0.22.0" not in project["project"]["optional-dependencies"][extra]
+
+
+def test_developer_resolver_input_preserves_security_floors() -> None:
+    """Do not let pip-compile resolve below the supported security baseline."""
+    developer = _requirements("requirements.in")
+
+    assert {
+        "cryptography>=46.0.5",
+        "urllib3>=2.7.0",
+        "certifi>=2026.10.23",
+    } <= developer
 
 
 def test_supported_release_profiles_match_the_documented_compatibility_matrix() -> None:
