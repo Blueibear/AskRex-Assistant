@@ -98,6 +98,13 @@ instances in the 05:10 CST inventory and first fixed release `13.0.0`.
 Tinypool's two advisories are `GHSA-5gmw-xhrv-c9v3` (first fixed `2.1.1`)
 and `GHSA-85c8-ppgw-ccpr` (first fixed `2.1.2`).
 
+`requirements.in` is a separately maintained developer `pip-compile` input,
+not a Dependabot-alerted lock or packaged-runtime input. Its former
+`pillow>=10.3.0` lower bound could resolve to a critical-vulnerable release,
+so it now requires `pillow>=13.0.0`. This is a source-range repair; its
+generated output must be resolved and validated by the supervisor on the
+exact final candidate.
+
 The supplied critical inventory identifies no other critical package groups.
 The listed historical high/medium/low packages require a separate refreshed
 per-advisory inventory before they are changed; they are unknown here, not
