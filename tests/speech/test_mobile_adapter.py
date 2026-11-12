@@ -31,6 +31,8 @@ from tests.helpers.fake_speech_providers import (
     LegacyTTSEngine,
 )
 
+TEST_AUDIO_PATH = "test-audio.wav"
+
 
 def _custom_router(
     stt: dict[str, Any],
@@ -121,7 +123,7 @@ class TestRoutedSpeechToTextAdapter:
     def test_native_provider_receives_decoded_numpy_audio(self) -> None:
         native = FakeSTTProvider(NATIVE_PROVIDER_ID, text="hello")
         adapter = RoutedSpeechToTextAdapter(_router({"native": native}, {}), decoder=FakeDecoder())
-        audio = adapter.decode("/tmp/a.wav")
+        audio = adapter.decode(TEST_AUDIO_PATH)
         assert adapter.transcribe(audio) == "hello"
         assert len(native.received) == 1
         assert native.received[0] is audio
@@ -131,7 +133,7 @@ class TestRoutedSpeechToTextAdapter:
         adapter = RoutedSpeechToTextAdapter(
             _router({"voicestudio": voicestudio}, {}), decoder=FakeDecoder()
         )
-        audio = adapter.decode("/tmp/a.wav")
+        audio = adapter.decode(TEST_AUDIO_PATH)
         assert adapter.transcribe(audio) == "vs-text"
         assert len(voicestudio.received) == 1
         assert isinstance(voicestudio.received[0], (bytes, bytearray))
@@ -140,7 +142,7 @@ class TestRoutedSpeechToTextAdapter:
     def test_provider_timeout_becomes_mobile_api_error(self) -> None:
         native = FakeSTTProvider(NATIVE_PROVIDER_ID, error=SpeechProviderTimeoutError("timed out"))
         adapter = RoutedSpeechToTextAdapter(_router({"native": native}, {}), decoder=FakeDecoder())
-        audio = adapter.decode("/tmp/a.wav")
+        audio = adapter.decode(TEST_AUDIO_PATH)
         with pytest.raises(MobileApiError) as exc_info:
             adapter.transcribe(audio)
         assert exc_info.value.retryable is True
@@ -164,7 +166,7 @@ class TestRoutedSpeechToTextAdapter:
             stt_fallback_order=(NATIVE_PROVIDER_ID,),
         )
         adapter = RoutedSpeechToTextAdapter(router, decoder=FakeDecoder())
-        audio = adapter.decode("/tmp/a.wav")
+        audio = adapter.decode(TEST_AUDIO_PATH)
         assert adapter.transcribe(audio) == "native-recovered"
 
 
@@ -415,7 +417,7 @@ class TestNativeRuntimeFailureFallback:
         )
         adapter = RoutedSpeechToTextAdapter(router, decoder=FakeDecoder())
 
-        assert adapter.transcribe(adapter.decode("/tmp/a.wav")) == "vs-recovered"
+        assert adapter.transcribe(adapter.decode(TEST_AUDIO_PATH)) == "vs-recovered"
 
     def test_undecodable_audio_is_not_retried_against_another_provider(self) -> None:
         """Client-input truth stays a 415 and must not be relabeled as an outage."""
@@ -434,6 +436,6 @@ class TestNativeRuntimeFailureFallback:
         adapter = RoutedSpeechToTextAdapter(router, decoder=FakeDecoder())
 
         with pytest.raises(MobileApiError) as exc_info:
-            adapter.transcribe(adapter.decode("/tmp/a.wav"))
+            adapter.transcribe(adapter.decode(TEST_AUDIO_PATH))
         assert exc_info.value.http_status == 415
         assert voicestudio.received == []

@@ -11,6 +11,8 @@ from rex.speech.policy import SpeechPolicy, SpeechPolicyError, SpeechPolicyMode
 from rex.speech.router import SpeechRouter
 from tests.helpers.fake_speech_providers import AliasTTSProvider
 
+TEST_AUDIO_PATH = "test-audio.wav"
+
 
 class FakeSTTProvider:
     def __init__(
@@ -104,10 +106,10 @@ class TestSpeechRouter:
     def test_transcribe_file_uses_resolved_provider(self) -> None:
         native = FakeSTTProvider("native", text="hello there")
         router = _router(stt={"native": native}, tts={})
-        result = router.transcribe_file("/tmp/audio.wav")
+        result = router.transcribe_file(TEST_AUDIO_PATH)
         assert result.text == "hello there"
         assert result.provider_id == "native"
-        assert native.decoded == ["/tmp/audio.wav"]
+        assert native.decoded == [TEST_AUDIO_PATH]
 
     def test_synthesize_uses_resolved_provider_and_voice(self) -> None:
         native = FakeTTSProvider("native")
@@ -141,7 +143,7 @@ class TestSpeechRouter:
             mode=SpeechPolicyMode.CUSTOM,
             stt_provider="voicestudio",
         )
-        result = router.transcribe_file("/tmp/a.wav")
+        result = router.transcribe_file(TEST_AUDIO_PATH)
         assert result.provider_id == "voicestudio"
         assert result.text == "vs-transcript"
 
@@ -180,7 +182,7 @@ class TestSpeechRouter:
             stt_fallback_order=("native",),
             allow_cloud=True,
         )
-        result = router.transcribe_file("/tmp/audio.wav")
+        result = router.transcribe_file(TEST_AUDIO_PATH)
         assert result.text == "native-recovered"
         assert result.provider_id == "native"
 
@@ -196,7 +198,7 @@ class TestSpeechRouter:
             allow_cloud=True,
         )
         with pytest.raises(SpeechPolicyError):
-            router.transcribe_file("/tmp/audio.wav")
+            router.transcribe_file(TEST_AUDIO_PATH)
 
     def test_synthesize_recovers_to_next_permitted_provider_on_runtime_failure(self) -> None:
         voicestudio = FakeTTSProvider(
@@ -289,5 +291,5 @@ class TestSpeechRouter:
             allow_cloud=True,
         )
         with pytest.raises(SpeechPolicyError):
-            router.transcribe_file("/tmp/audio.wav")
+            router.transcribe_file(TEST_AUDIO_PATH)
         assert cloud.transcribed == []

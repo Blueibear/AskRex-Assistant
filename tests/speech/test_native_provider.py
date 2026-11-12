@@ -17,6 +17,8 @@ from rex.speech.contracts import (
 from rex.speech.providers.native import NativeSTTProvider, NativeTTSProvider
 from tests.helpers.fake_speech_providers import LegacySTTEngine, LegacyTTSEngine
 
+TEST_AUDIO_PATH = "test-audio.m4a"
+
 
 def _adapter_with_voices(monkeypatch: pytest.MonkeyPatch, voices: list[str]) -> TextToSpeechAdapter:
     adapter = TextToSpeechAdapter(provider="edge-tts")
@@ -108,7 +110,7 @@ class TestNativeSTTFailureNormalization:
             error=MobileApiError(merr.INVALID_MEDIA, "The audio could not be decoded.", 415)
         )
         with pytest.raises(MobileApiError) as exc_info:
-            NativeSTTProvider(legacy).decode("/tmp/a.m4a")
+            NativeSTTProvider(legacy).decode(TEST_AUDIO_PATH)
         assert exc_info.value.http_status == 415
 
     def test_cancellation_is_never_normalized(self) -> None:
