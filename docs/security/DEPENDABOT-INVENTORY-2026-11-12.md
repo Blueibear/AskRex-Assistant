@@ -122,18 +122,42 @@ also passed GUI build and `npm audit --audit-level=high` (zero critical/high
 findings at the time). These checks do not replace supervisor validation and
 independent review on the committed revision.
 
-Before any closure claim, the supervisor must additionally resolve/install the
-updated packaged runtime, run the mobile JWT regression suite and image
-regressions, run `npm ci`, GUI Vitest/audit/typecheck/build and the Electron
-packaging smoke, then obtain independent review on the exact revision. These
-are not evidenced by this document, and no build, deployment, or physical
-Windows acceptance is claimed.
+### Final dependency and packaged-artifact checks
+
+On clean source commit `c2d5d27cfe877ccbfd1e6357a84d0cccefe9f4a7`,
+the trusted operator used a disposable clone and npm 11.19.1. `npm ci
+--offline` passed on the committed lock after adding five resolver-generated
+optional Electron package records; the same lock also passed npm 11.6.0
+offline installation. On the exact clone, all 343 GUI tests, typecheck,
+`npm run build`, and `npm audit --audit-level=high` passed. The audit reported
+zero high/critical and 19 moderate findings at that time. The committed lock
+SHA-256 is `AB3297820A1EC4D989267D52CE998CBEF6540BBC4BF4C808BC9F9BA0BC35FAB2`.
+
+In that clone, `build_managed_python_runtime.ps1 -RuntimeProfile Core`
+completed and its embedded Python import smoke passed. `electron-builder
+--win --dir --publish never` then produced an unpacked Windows artifact
+containing `AskRex.exe`, `resources/app.asar`, and Python 3.11.9. Running
+the packaged `python.exe -I` imported Rex and reported Pillow 13.0.0,
+PyJWT 2.15.0, and certifi 2026.10.23. The directory build was unsigned.
+This verifies a core-profile packaged dependency path, not the default Voice
+profile, an installed NSIS artifact, a launched GUI, deployment, or physical
+Windows acceptance. The build, Electron directory build, and GUI test log
+SHA-256 values are respectively
+`9D021785815B6CE0AA1532BD77280D4FBFC2C91E6EE87367CD6DBEEAE9BFAFED`,
+`48BADE1B5FAF1236E83AEE2EF6CF93DD3138451E48A296AA67D95D9A10977224`,
+and `80B3D135A92B4E43839834D65D7E49A254881BB16CC651C01BAA2DE1FD1A70FB`.
+
+Before any alert-closure or release claim, the supervisor must inspect the
+exact-revision backend gates and independent review. Release acceptance also
+requires the default Voice-profile package, installed artifact behavior, and
+physical Windows checks, none of which this core-profile directory build
+establishes. No merge, deployment, or alert closure is claimed.
 
 Required supervisor checks on the exact candidate revision:
 
 1. Verify the committed Pipenv lock metadata and both dependency groups match
    the exact candidate Pipfile.
-2. Resolve the managed runtime requirements with hash enforcement and perform
-   ordinary HTTPS certificate validation without disabling certificate checks.
+2. Inspect the recorded isolated runtime resolution and ordinary HTTPS
+   certificate-validation evidence for the exact dependency declarations.
 3. Run the exact-revision repository gates and independent review before any
    publication, merge, build, or deployment claim.
