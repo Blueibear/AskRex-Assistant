@@ -72,6 +72,17 @@ def test_developer_resolver_input_preserves_security_floors() -> None:
     } <= developer
 
 
+def test_developer_resolver_input_uses_the_supported_cpu_torch_family() -> None:
+    """Keep the optional developer resolver input internally compatible."""
+    developer = _requirements("requirements.in")
+
+    assert {
+        "torch>=2.7.1,<3.0.0",
+        "torchvision>=0.22.1,<0.23.0",
+        "torchaudio>=2.7.1,<2.8.0",
+    } <= developer
+
+
 def test_supported_release_profiles_match_the_documented_compatibility_matrix() -> None:
     """Keep the release profiles and their compatibility evidence in lockstep.
 

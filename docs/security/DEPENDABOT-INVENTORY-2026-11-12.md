@@ -105,10 +105,13 @@ advisories. This source-level floor prevents a future developer resolution
 from selecting a known-vulnerable Pillow release, but it is not itself a
 resolved developer dependency tree. The repository does not track a generated
 output for this input (`requirements.txt` is a documented pointer to split
-profiles), and no exact-candidate `pip-compile` receipt is available in this
-offline scratch checkout. The supervisor must choose and record the canonical
-generated developer output, regenerate it with the exact candidate input, and
-validate the resolved tree before accepting this developer-path change.
+profiles). The input now also constrains `torch`, `torchvision`, and
+`torchaudio` to the documented 2.7.1 CPU release family; its older 2.5.x
+companion ranges could not produce that supported family. No exact-candidate
+`pip-compile` receipt is available in this offline scratch checkout. The
+supervisor must choose and record the canonical generated developer output,
+regenerate it with the exact candidate input, and validate the resolved tree
+before accepting this developer-path change.
 
 The supplied critical inventory identifies no other critical package groups.
 The listed historical high/medium/low packages require a separate refreshed
