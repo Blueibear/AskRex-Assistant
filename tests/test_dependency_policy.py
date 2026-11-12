@@ -72,6 +72,16 @@ def test_developer_resolver_input_preserves_security_floors() -> None:
     } <= developer
 
 
+def test_direct_install_and_packaged_runtime_preserve_critical_dependency_floors() -> None:
+    """Keep non-Pipenv installation paths above reviewed critical fixes."""
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    runtime = _requirements("requirements-electron-runtime.txt")
+
+    assert "pillow>=13.0.0" in project["project"]["dependencies"]
+    assert "certifi>=2026.10.23" in project["project"]["dependencies"]
+    assert {"pillow==13.0.0", "certifi==2026.10.23", "PyJWT==2.15.0"} <= runtime
+
+
 def test_developer_resolver_input_uses_the_supported_cpu_torch_family() -> None:
     """Keep the optional developer resolver input internally compatible."""
     developer = _requirements("requirements.in")
