@@ -99,11 +99,12 @@ Tinypool's two advisories are `GHSA-5gmw-xhrv-c9v3` (first fixed `2.1.1`)
 and `GHSA-85c8-ppgw-ccpr` (first fixed `2.1.2`).
 
 `requirements.in` is a separately maintained developer `pip-compile` input,
-not a Dependabot-alerted lock or packaged-runtime input. Its former
-`pillow>=10.3.0` lower bound could resolve to a critical-vulnerable release,
-so it now requires `pillow>=13.0.0`. This is a source-range repair; its
-generated output must be resolved and validated by the supervisor on the
-exact final candidate.
+not a Dependabot-alerted lock or packaged-runtime input. Its declared lower
+bounds are not resolver output and no regenerated output or exact-candidate
+resolver receipt is available in this scratch checkout. It is therefore not
+claimed as a remediation for any advisory. Any security-floor change to this
+input must be accompanied by regenerated output and exact-candidate resolver
+evidence before it is accepted.
 
 The supplied critical inventory identifies no other critical package groups.
 The listed historical high/medium/low packages require a separate refreshed
@@ -122,9 +123,9 @@ per remaining advisory before a closure decision.
 
 | Historical cluster | Local path and exposure condition | Disposition and evidence | Owner | Next action |
 | --- | --- | --- | --- | --- |
-| Transformers | Optional ML/voice developer and packaged Voice paths. Exposure requires enabling a local model/voice profile. | The supported project, CPU, CUDA, and Pipenv paths require `>=5.5.0,<6.0` or `==5.5.0`. This change aligns `requirements.in`, which previously allowed an unsupported 4.x resolution. No current advisory is asserted. | backend | Resolve the regenerated developer requirements and run voice/model regressions, then match any refreshed advisory to the resolved graph. |
-| urllib3 | Direct Python HTTP client dependency in source, Pipenv, and packaged runtime. Exposure requires outbound HTTP(S). | Project and packaged paths require `>=2.7.0`; this change raises the developer resolver floor from `>=2.0.0` to `>=2.7.0`. No current advisory is asserted. | backend | Resolve `requirements.in`, run the HTTPS gate, and compare all direct/transitive instances with the authoritative alert export. |
-| cryptography | Direct TLS, credential, mobile-pairing, and packaged-runtime dependency. Exposure requires cryptographic or TLS operations. | Project requires `>=46.0.5`, Pipenv pins `50.0.0`, packaged runtime pins `49.0.0`; this change raises the developer resolver floor from `>=43.0.1`. No current advisory is asserted. | backend | Resolve the developer input and run auth, pairing, and HTTPS gates against the exact candidate. |
+| Transformers | Optional ML/voice developer and packaged Voice paths. Exposure requires enabling a local model/voice profile. | Supported project, CPU, CUDA, and Pipenv paths require `>=5.5.0,<6.0` or `==5.5.0`; the separate developer input has not been resolved on this candidate. No current advisory is asserted. | backend | Obtain the current advisory record, resolve the developer input, run voice/model regressions, then record an advisory-specific disposition. |
+| urllib3 | Direct Python HTTP client dependency in source, Pipenv, and packaged runtime. Exposure requires outbound HTTP(S). | Project and packaged paths require `>=2.7.0`; the separate developer input has not been resolved on this candidate. No current advisory is asserted. | backend | Obtain the current advisory record, resolve the developer input, run the HTTPS gate, then record an advisory-specific disposition. |
+| cryptography | Direct TLS, credential, mobile-pairing, and packaged-runtime dependency. Exposure requires cryptographic or TLS operations. | Project requires `>=46.0.5`, Pipenv pins `50.0.0`, and packaged runtime pins `49.0.0`; the separate developer input has not been resolved on this candidate. No current advisory is asserted. | backend | Obtain the current advisory record, resolve the developer input, run auth, pairing, and HTTPS gates, then record an advisory-specific disposition. |
 | Undici, Electron, Vite, msgpack | JavaScript development/build trees. Electron is also in the shippable desktop build; `rex/ui` is developer-only. | The main GUI lock has prior isolated clean-install, test, build, and high-threshold audit evidence. This scratch checkout has no installed dependency trees, so a new local audit is unavailable. No current advisory is asserted. | supervisor | Run clean installs and `npm audit --audit-level=high` for both `gui/` and the developer-only `rex/ui/`, then record each remaining advisory, path, and action. |
 | CI Python audit exceptions | The repository `pip-audit --strict .` gate has an existing explicit exception list. Exposure depends on the dependency selected by the project install. | This task neither adds nor broadens an exception. An exception is not a disposition for a current Dependabot advisory. | supervisor | Reconcile every existing exception against the refreshed export and `VULNERABILITY-SCAN.md`; remove only after a compatible remediation is independently validated. |
 | Medium and low alerts not named in bounded evidence | Direct, transitive, dev, CI, and packaged-runtime paths are unknown per advisory. | Not accepted risk and not zero. Their identity and exploitability cannot be inferred from severity totals. | supervisor | Obtain the current per-alert export, assign each advisory an exposure condition, owner, and remediation or explicitly approved risk action. |
