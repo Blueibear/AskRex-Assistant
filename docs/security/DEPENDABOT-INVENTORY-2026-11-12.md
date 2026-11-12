@@ -44,6 +44,38 @@ Existing open Dependabot PR #450,
 `Pipfile` and `Pipfile.lock`. This candidate does not merge or overwrite that
 branch and also updates the separately packaged runtime requirement.
 
+## Execution evidence
+
+Trusted operator execution used an isolated copy of exact revision
+`e22c6aaf3bce22d4602de71d70c520ccddd23fd4`. The copied source inputs had
+these SHA-256 values: `Pipfile`
+`21EC1234044CD124CF469CFD66770BD857F2528BE8E05EBB216427C21D304970`,
+`Pipfile.lock`
+`3CFD6A03985993E18EB1B3730F05A2DE3DA6AFD4783BA82C0426456D6360FA8A`, and
+`requirements-electron-runtime.txt`
+`D3AC3AD4363D4FF8181DC5788DB59D2D56832273773B7D9ABD49C9A80CE564C7`.
+
+Pipenv 2026.11.0 verified the exact copied Pipfile and lock successfully
+(`Pipfile.lock is up-to-date.`). On a separate isolated copy, `pipenv lock`
+with Python 3.11 resolved both dependency groups successfully and generated
+the recorded Pipfile hash
+`e758dc04e5ddee63a3b2432f9c365947026a400920515e64d3f7fb2d9b053c14`.
+`uv pip compile` and `uv pip install -r` both succeeded for the exact copied
+Electron runtime requirements in an isolated Python 3.11.9 environment.
+
+In that installed profile, `requests.get` with default certificate
+verification and `urllib.request.urlopen` using
+`ssl.create_default_context(cafile=certifi.where())` each returned HTTP 200
+from `https://pypi.org/pypi/certifi/json`, with certifi `2026.10.23`.
+Certificate verification was not disabled. The bounded command record and
+log SHA-256 values are in
+`evidence/certifi-e22c6aa-exact-resolution-https-20261112.json`
+(SHA-256 `AF806068D656D5665E252396ABF8FF019DD85628F290F3100B7061C423DBCCC1`).
+
+This evidence demonstrates isolated dependency resolution and ordinary HTTPS
+certificate validation only. It does not demonstrate installed Electron
+packaging, Dependabot alert closure, pull-request merge, build, or deployment.
+
 ## Remaining findings and required next phase
 
 The authoritative inventory identifies non-certifi alert instances, including
