@@ -43,7 +43,7 @@ dependencies = [
     "setuptools>=78.1.1",    # Fixes: PYSEC-2025-49 (path traversal)
     "werkzeug>=3.1.6",       # CVE-2024-34069, CVE-2024-49766, CVE-2024-49767, CVE-2025-66221, CVE-2026-21860, CVE-2026-27199 fixed in 3.1.x
     "jinja2>=3.1.6",         # CVE-2024-56201, CVE-2024-56326, CVE-2025-27516 fixed in 3.1.6
-    "pillow>=12.1.1",        # CVE-2026-25990 fixed in 12.1.1
+    "pillow>=13.0.0",        # Five critical 2026 Pillow advisories fixed in 13.0.0
     "idna>=3.15",            # CVE-2026-45409 fixed in 3.15
     "urllib3>=2.7.0",        # CVE-2025-50181, CVE-2025-50182, CVE-2025-66418, CVE-2025-66471, CVE-2026-21441 fixed in 2.6.x; PYSEC-2026-141, PYSEC-2026-142 fixed in 2.7.0
     "certifi>=2024.2.2",     # Certificate validation fixes
@@ -51,7 +51,7 @@ dependencies = [
 
     # Auth
     "bcrypt>=4.0.0",
-    "PyJWT>=2.8.0",
+    "PyJWT>=2.14.0",         # GHSA-ffc3-869f-jxw9 fixed in 2.14.0
 
     # TTS backends (lightweight, cross-platform)
     "edge-tts>=6.1.9",

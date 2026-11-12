@@ -39,8 +39,9 @@ setuptools = "==78.1.1"
 pip = "==26.1.2"
 werkzeug = "==3.1.6"
 jinja2 = "==3.1.6"
-# pillow >=11.2.0 fixes out-of-bounds write when loading PSD images
-pillow = "==12.1.1"
+# Pillow 13.0.0 is the first fixed release for the five current critical
+# Pillow advisories in the 2026-11-12 inventory.  It requires Python >=3.11.
+pillow = "==13.0.0"
 urllib3 = "==2.7.0"
 certifi = "==2026.10.23"
 

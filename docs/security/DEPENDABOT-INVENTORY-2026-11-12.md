@@ -76,12 +76,45 @@ This evidence demonstrates isolated dependency resolution and ordinary HTTPS
 certificate validation only. It does not demonstrate installed Electron
 packaging, Dependabot alert closure, pull-request merge, build, or deployment.
 
-## Remaining findings and required next phase
+## Refreshed critical inventory and bounded remediation state
 
-The authoritative inventory identifies non-certifi alert instances, including
-critical/high findings. Their complete package/advisory/path classification is
-unknown in this scratch checkout except for the supplied aggregate and should
-be handled in the queued compatible batches. No alert has been marked closed.
+The trusted operator refreshed the GitHub Dependabot and official package
+metadata inventory at 2026-11-12 05:10 CST. It reported 22 critical alert
+instances. The groups below account for all 22 instances in that inventory;
+the number is an alert-instance count, not an independent exploit-path count.
+No alert has been marked closed.
+
+| Instances | Package/advisory | Actual path | Current state |
+| --- | --- | --- | --- |
+| 3 | `certifi` / `GHSA-6q48-6c7w-9gw2` | Pipenv direct/lock and packaged Electron Python runtime | Fixed in the prior reviewed certifi phase at `2026.10.23`; its exact-revision resolver and HTTPS evidence is above. |
+| 15 | `Pillow` / five current critical advisories | `Pipfile` direct runtime declaration, `Pipfile.lock` resolved runtime graph, and packaged Electron Python runtime requirements | `13.0.0` is the first fixed release for all five. The direct declaration and packaged runtime pin are prepared at `13.0.0`; the lock must be resolver-generated before this group can be called repaired. |
+| 2 | `PyJWT` / `GHSA-ffc3-869f-jxw9` | Project direct dependency range and packaged Electron Python runtime requirements | `2.14.0` is the first fixed release. The project range is prepared at `>=2.14.0` and the packaged runtime pin at `2.15.0`. PyJWT is absent from the current Pipenv graph, so no synthetic lock record was added. |
+| 2 | `tinypool` / two current critical advisories | GUI development test path through Vitest in `gui/package-lock.json` | Already resolved through the compatible Vitest 3.2.7 path to `tinypool` 2.2.0, above the latest fixed `2.1.2`, with the official registry integrity recorded in the lock. No untested override was added. |
+
+The supplied critical inventory identifies no other critical package groups.
+The listed historical high/medium/low packages require a separate refreshed
+per-advisory inventory before they are changed; they are unknown here, not
+treated as zero.
+
+### Lock and validation blocker
+
+This disposable offline checkout has neither an authorized package resolver
+result nor complete official Pillow 13.0.0 artifact hashes. The only supplied
+Pillow hash is the Windows CPython 3.11 wheel hash
+`d7710eb676e9bb68965cb045be0d333b4c0d7f9dfbaa7fbf121385b1588683d3`.
+Replacing the existing multi-platform `Pipfile.lock` entry or its Pipfile hash
+without a resolver would create an unverified lock and could break supported
+developer platforms. The lock intentionally remains unmodified until the
+supervisor runs Pipenv resolution on the exact candidate and verifies the
+generated metadata and hashes. This means the Pillow lock alert is not claimed
+fixed by this candidate.
+
+Before any closure claim, the supervisor must additionally resolve/install the
+updated packaged runtime, run the mobile JWT regression suite and image
+regressions, run `npm ci`, GUI Vitest/audit/typecheck/build and the Electron
+packaging smoke, then obtain independent review on the exact revision. These
+are not evidenced by this document, and no build, deployment, or physical
+Windows acceptance is claimed.
 
 Required supervisor checks on the exact candidate revision:
 
