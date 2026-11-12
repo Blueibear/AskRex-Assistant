@@ -52,10 +52,7 @@ def test_project_and_profile_transformers_policy_matches_pipfile_lock() -> None:
     assert pipfile["packages"]["transformers"] == "==5.5.0"
     assert lock["default"]["transformers"]["version"] == "==5.5.0"
     for extra in ("ml", "full"):
-        assert (
-            "transformers>=5.5.0,<6.0"
-            in project["project"]["optional-dependencies"][extra]
-        )
+        assert "transformers>=5.5.0,<6.0" in project["project"]["optional-dependencies"][extra]
         assert "coqui-tts==0.28.0" in project["project"]["optional-dependencies"][extra]
         assert "six>=1.17,<2" in project["project"]["optional-dependencies"][extra]
         assert "TTS==0.22.0" not in project["project"]["optional-dependencies"][extra]
@@ -72,13 +69,9 @@ def test_supported_release_profiles_match_the_documented_compatibility_matrix() 
     gpu = _requirements("requirements-gpu-cu124.txt")
     electron = _requirements("requirements-electron-voice.txt")
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-    builder = (ROOT / "scripts" / "build_managed_python_runtime.ps1").read_text(
-        encoding="utf-8"
-    )
+    builder = (ROOT / "scripts" / "build_managed_python_runtime.ps1").read_text(encoding="utf-8")
     guide = (ROOT / "docs" / "DEPENDENCIES.md").read_text(encoding="utf-8")
-    verifier = (ROOT / "scripts" / "verify_dependency_profile.py").read_text(
-        encoding="utf-8"
-    )
+    verifier = (ROOT / "scripts" / "verify_dependency_profile.py").read_text(encoding="utf-8")
 
     cpu_set = {"torch==2.7.1", "torchvision==0.22.1", "torchaudio==2.7.1"}
     cuda_124_set = {
