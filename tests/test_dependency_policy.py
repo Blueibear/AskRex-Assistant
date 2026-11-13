@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tomllib
 from pathlib import Path
 
@@ -14,6 +15,21 @@ def _requirements(name: str) -> set[str]:
         for line in (ROOT / name).read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.startswith("#")
     }
+
+
+def _locked_version(
+    lock: dict[str, dict[str, dict[str, str]]], section: str, package: str
+) -> tuple[int, ...]:
+    """Return the numeric version selected by a Pipenv lock section.
+
+    Pipenv records exact versions prefixed with ``==``.  These security-policy
+    checks deliberately inspect the generated selection as well as the source
+    declaration, so a stale lock cannot satisfy the policy merely because a
+    manifest floor was raised.
+    """
+    version = lock[section][package]["version"]
+    assert version.startswith("==")
+    return tuple(int(part) for part in version.removeprefix("==").split("."))
 
 
 def test_cpu_and_electron_voice_use_the_same_published_torch_set() -> None:
@@ -39,30 +55,35 @@ def test_cuda_124_profile_uses_one_matching_torch_release_set() -> None:
     assert "six>=1.17,<2" in gpu
 
 
-def test_project_and_profile_transformers_policy_matches_source_declarations() -> None:
-    """Keep supported source profiles aligned while Pipenv lock work is pending.
-
-    ``Pipfile.lock`` is resolver-generated data.  The current dated security
-    inventory explicitly records its stale Transformers selection as an open
-    high-priority remediation item, so this source-policy regression must not
-    pretend that a hand-edited lock is a valid fix.  Resolver validation owns
-    the lock assertion once it produces a complete compatible lock.
-    """
+def test_project_and_profile_transformers_policy_matches_lock_selection() -> None:
+    """Keep supported source profiles and the resolver-generated lock aligned."""
     cpu = _requirements("requirements-cpu.txt")
     gpu = _requirements("requirements-gpu-cu124.txt")
     developer = _requirements("requirements.in")
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     pipfile = tomllib.loads((ROOT / "Pipfile").read_text(encoding="utf-8"))
+    lock = json.loads((ROOT / "Pipfile.lock").read_text(encoding="utf-8"))
 
     assert "transformers>=5.22.2,<6.0" in cpu
     assert "transformers>=5.22.2,<6.0" in gpu
     assert "transformers>=5.22.2,<6.0" in developer
     assert pipfile["packages"]["transformers"] == "==5.22.2"
+    assert _locked_version(lock, "default", "transformers") == (5, 22, 2)
     for extra in ("ml", "full"):
         assert "transformers>=5.22.2,<6.0" in project["project"]["optional-dependencies"][extra]
         assert "coqui-tts==0.28.0" in project["project"]["optional-dependencies"][extra]
         assert "six>=1.17,<2" in project["project"]["optional-dependencies"][extra]
         assert "TTS==0.22.0" not in project["project"]["optional-dependencies"][extra]
+
+
+def test_pipenv_lock_keeps_high_advisory_floors() -> None:
+    """Reject stale Pipenv selections in runtime and development dependency graphs."""
+    lock = json.loads((ROOT / "Pipfile.lock").read_text(encoding="utf-8"))
+
+    assert _locked_version(lock, "default", "urllib3") >= (2, 8, 0)
+    assert _locked_version(lock, "develop", "urllib3") >= (2, 8, 0)
+    assert _locked_version(lock, "develop", "msgpack") >= (1, 2, 3)
+    assert _locked_version(lock, "develop", "filelock") >= (4, 2, 1)
 
 
 def test_developer_resolver_input_preserves_security_floors() -> None:

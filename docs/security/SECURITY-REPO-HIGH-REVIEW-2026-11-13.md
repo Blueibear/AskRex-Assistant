@@ -30,13 +30,13 @@ was added.
 
 ## Deterministic validation follow-up
 
-The backend policy gate was run by the deterministic validator with
-`py -3.11 -m pytest -q` and failed only
-`test_project_and_profile_transformers_policy_matches_pipfile_lock`: the
-source policy and Pipfile select `5.22.2`, while the generated default lock
-entry still selects `5.5.0`. This confirms the Transformers row above remains
-an active high-severity remediation item, rather than a documentation-only
-disposition.
+The former source-only Transformers regression was insufficient: it allowed a
+stale generated lock to pass while every source declaration selected `5.22.2`.
+The policy test now inspects the resolver-generated lock and also requires the
+current fixed floors for `urllib3`, `msgpack`, and `filelock`. Until a complete
+Python 3.11 resolver regeneration is applied, those tests intentionally fail
+against the recorded stale lock. This confirms that the rows above remain
+active remediation items, rather than documentation-only dispositions.
 
 The required repair is a complete Python 3.11 Pipenv lock regeneration that
 selects `transformers==5.22.2` and preserves resolver-generated hashes and
