@@ -54,7 +54,7 @@ dependencies = [
 
     # Auth
     "bcrypt>=4.0.0",
-    "PyJWT>=2.14.0",         # GHSA-ffc3-869f-jxw9 fixed in 2.14.0
+    "PyJWT>=2.15.0",         # Current PyJWT advisories include fixes first released in 2.15.0
 
     # TTS backends (lightweight, cross-platform)
     "edge-tts>=6.1.9",

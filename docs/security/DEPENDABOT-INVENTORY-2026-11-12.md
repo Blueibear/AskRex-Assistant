@@ -226,3 +226,15 @@ and includes Pillow 13.0.0. This establishes Python 3.11 resolution only;
 installation, Voice compatibility, deployment, and alert closure are not
 established. The root `requirements.txt` remains an intentional entrypoint
 pointer and was not overwritten.
+
+The evening snapshot also lists 28 noncritical PyJWT instances across 14
+GHSAs. `GHSA-42vr-xj54-vc7v` and `GHSA-x33g-cr3x-6449` report 2.15.0 as
+their first fixed version; the prior project range `PyJWT>=2.14.0` could
+therefore still select a vulnerable release. The project range now requires
+`PyJWT>=2.15.0`, matching the packaged runtime pin. A clean isolated clone
+using PyJWT 2.15.0 passed 38 mobile JWT and user-auth tests. The first run
+in the operator's live development checkout had two secret-fixture failures;
+the same two tests passed in the clean clone, so those failures are not used
+as evidence of a PyJWT regression. Full exact-revision gates and independent
+review remain pending. The default-branch alerts remain open; this local
+range change does not close them or establish advisory-specific reachability.
