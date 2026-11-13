@@ -28,6 +28,25 @@ The Python lock is a generated security input. No lock record or artifact hash
 was hand-written from package metadata, and no audit override or suppression
 was added.
 
+## Deterministic validation follow-up
+
+The backend policy gate was run by the deterministic validator with
+`py -3.11 -m pytest -q` and failed only
+`test_project_and_profile_transformers_policy_matches_pipfile_lock`: the
+source policy and Pipfile select `5.22.2`, while the generated default lock
+entry still selects `5.5.0`. This confirms the Transformers row above remains
+an active high-severity remediation item, rather than a documentation-only
+disposition.
+
+The required repair is a complete Python 3.11 Pipenv lock regeneration that
+selects `transformers==5.22.2` and preserves resolver-generated hashes and
+transitive constraints. Do not hand-edit that generated entry or weaken the
+regression/audit gate. After the resolver output is applied, rerun the backend
+suite and the focused model, TTS, Voice, bridge, install, HTTPS, Electron
+build/package, auth, and security gates on the exact candidate before review.
+This worker scratch clone cannot start the Windows Python launcher, so it
+cannot produce or validate the resolver output locally.
+
 ## Other high-path reconciliation
 
 The local candidate already selects the reported fixed versions for these
