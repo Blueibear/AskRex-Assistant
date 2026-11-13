@@ -203,3 +203,26 @@ Required supervisor checks on the exact candidate revision:
    certificate-validation evidence for the exact dependency declarations.
 3. Run the exact-revision repository gates and independent review before any
    publication, merge, build, or deployment claim.
+
+## Evening high, medium, and low evidence handoff
+
+A fresh GitHub Dependabot API export on 2026-11-12 contains 311 open alert
+instances: 22 critical, 147 high, 120 medium, and 22 low. The bounded
+[`DEPENDABOT-OPEN-ALERTS-2026-11-12.json`](DEPENDABOT-OPEN-ALERTS-2026-11-12.json)
+records the 289 noncritical instances, covering 145 distinct GHSAs, with
+package, manifest, scope, vulnerable range, first patched version when
+reported, and source URL. Its SHA-256 is
+`4EF26CB56A4AA4E35031B024328A1038E6EA52E3FEA3C5E1DB47C34A412662E9`.
+These rows are evidence for review, not per-advisory exposure or remediation
+dispositions. Each still needs an owner and evidence-backed next action.
+
+The exact `requirements.in` input from checkpoint `4849f6c` (SHA-256
+`3F7E78C4B727D74100D5F1BE7D8690F4E6D76E740DC9B205B6AB94EDA096F55B`)
+was copied to isolated scratch and resolved with `uvx --python 3.11 --from
+pip-tools pip-compile --resolver=backtracking`. The generated
+[`REQUIREMENTS-IN-PY311-RESOLUTION-2026-11-12.txt`](REQUIREMENTS-IN-PY311-RESOLUTION-2026-11-12.txt)
+has SHA-256 `D830C2718DDCB9F67CC99E5E55D251100F57F3174494E34818E497D954084FCE`
+and includes Pillow 13.0.0. This establishes Python 3.11 resolution only;
+installation, Voice compatibility, deployment, and alert closure are not
+established. The root `requirements.txt` remains an intentional entrypoint
+pointer and was not overwritten.
