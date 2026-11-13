@@ -13,11 +13,12 @@ profile regression, and the profile-specific install/import evidence together.
 | CUDA 12.4 | `2.6.0+cu124` | `0.21.0+cu124` | `2.6.0+cu124` | Install through the PyTorch CUDA 12.4 index; do not install `[ml]` over it |
 | Managed Electron Voice | `2.7.1` | `0.22.1` | `2.7.1` | Bundles the complete matching CPU set so packaged upgrades cannot resolve incompatible companions |
 
-**Transformers policy | `>=5.5.0,<6.0`**: Python 3.11 only, with
+**Transformers policy | `>=5.22.2,<6.0`**: Python 3.11 only, with
 `coqui-tts==0.28.0` for XTTS. The original TTS 0.22.0 requires the removed
 `BeamSearchScorer` API and is not the supported Transformers 5 package.
-`Pipfile.lock` resolves `5.5.0`. The release audit
-has no ignore for CVE-2026-1839 or PYSEC-2025-217.
+The tracked `Pipfile.lock` must be regenerated with Python 3.11 before it
+can claim this policy: it still resolves `5.5.0`. The release audit has no
+ignore for CVE-2026-1839 or PYSEC-2025-217.
 
 The managed-runtime builder imports the shipped voice stack and checks its
 versions. The repository regression cross-checks these exact sets against the

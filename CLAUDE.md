@@ -79,11 +79,13 @@ Current install/runtime compatibility policy:
   `torchvision==0.22.1`, and `torchaudio==2.7.1` release set. CUDA 12.4 uses
   its separately published `2.6.0+cu124` / `0.21.0+cu124` / `2.6.0+cu124` set;
   install that profile without the CPU `ml` extra.
-- Transformers policy is `>=5.5.0,<6.0`; the Pipfile lock resolves `5.5.0`.
-  The supported XTTS package is `coqui-tts==0.28.0`, which imports with
-  Transformers 5 without the removed BeamSearchScorer API. Retain the legacy
-  shim for older optional installations and the dependency audit gate without
-  an ignore for CVE-2026-1839 or PYSEC-2025-217.
+- Transformers policy is `>=5.22.2,<6.0`. The Pipfile lock must be
+  resolver-regenerated before it may claim that policy; do not hand-edit
+  generated hashes or weaken the dependency audit to cover its current stale
+  selection. The supported XTTS package is `coqui-tts==0.28.0`, which imports
+  with Transformers 5 without the removed BeamSearchScorer API. Retain the
+  legacy shim for older optional installations and the dependency audit gate
+  without an ignore for CVE-2026-1839 or PYSEC-2025-217.
 - Do not claim Python 3.12+ support unless the dependency stack has been validated end-to-end and docs, CI, and package metadata are updated together
 
 Entry points:

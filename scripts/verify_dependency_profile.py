@@ -21,14 +21,14 @@ PROFILE_VERSIONS = {
         "torch": "2.7.1",
         "torchvision": "0.22.1",
         "torchaudio": "2.7.1",
-        "transformers": ">=5.5.0,<6.0",
+        "transformers": ">=5.22.2,<6.0",
         "coqui-tts": "0.28.0",
     },
     "cuda124": {
         "torch": "2.6.0",
         "torchvision": "0.21.0",
         "torchaudio": "2.6.0",
-        "transformers": ">=5.5.0,<6.0",
+        "transformers": ">=5.22.2,<6.0",
         "coqui-tts": "0.28.0",
     },
     "electron_voice": {

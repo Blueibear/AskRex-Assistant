@@ -48,13 +48,13 @@ def test_project_and_profile_transformers_policy_matches_pipfile_lock() -> None:
     pipfile = tomllib.loads((ROOT / "Pipfile").read_text(encoding="utf-8"))
     lock = json.loads((ROOT / "Pipfile.lock").read_text(encoding="utf-8"))
 
-    assert "transformers>=5.5.0,<6.0" in cpu
-    assert "transformers>=5.5.0,<6.0" in gpu
-    assert "transformers>=5.5.0,<6.0" in developer
-    assert pipfile["packages"]["transformers"] == "==5.5.0"
-    assert lock["default"]["transformers"]["version"] == "==5.5.0"
+    assert "transformers>=5.22.2,<6.0" in cpu
+    assert "transformers>=5.22.2,<6.0" in gpu
+    assert "transformers>=5.22.2,<6.0" in developer
+    assert pipfile["packages"]["transformers"] == "==5.22.2"
+    assert lock["default"]["transformers"]["version"] == "==5.22.2"
     for extra in ("ml", "full"):
-        assert "transformers>=5.5.0,<6.0" in project["project"]["optional-dependencies"][extra]
+        assert "transformers>=5.22.2,<6.0" in project["project"]["optional-dependencies"][extra]
         assert "coqui-tts==0.28.0" in project["project"]["optional-dependencies"][extra]
         assert "six>=1.17,<2" in project["project"]["optional-dependencies"][extra]
         assert "TTS==0.22.0" not in project["project"]["optional-dependencies"][extra]
@@ -67,7 +67,7 @@ def test_developer_resolver_input_preserves_security_floors() -> None:
     assert {
         "cryptography>=46.0.5",
         "pillow>=13.0.0",
-        "urllib3>=2.7.0",
+        "urllib3>=2.8.0",
         "certifi>=2026.10.23",
     } <= developer
 
@@ -127,7 +127,7 @@ def test_supported_release_profiles_match_the_documented_compatibility_matrix() 
     for expected in (
         "CPU / Docker / `[ml]` extra | `2.7.1` | `0.22.1` | `2.7.1`",
         "CUDA 12.4 | `2.6.0+cu124` | `0.21.0+cu124` | `2.6.0+cu124`",
-        "Transformers policy | `>=5.5.0,<6.0`",
+        "Transformers policy | `>=5.22.2,<6.0`",
     ):
         assert expected in guide
     for expected in (
@@ -139,7 +139,7 @@ def test_supported_release_profiles_match_the_documented_compatibility_matrix() 
         '"torch": "2.6.0"',
         '"torchvision": "0.21.0"',
         '"torchaudio": "2.6.0"',
-        '"transformers": ">=5.5.0,<6.0"',
+        '"transformers": ">=5.22.2,<6.0"',
         '"coqui-tts": "0.28.0"',
     ):
         assert expected in verifier
