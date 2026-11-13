@@ -79,6 +79,7 @@ def test_direct_install_and_packaged_runtime_preserve_critical_dependency_floors
 
     assert "pillow>=13.0.0" in project["project"]["dependencies"]
     assert "certifi>=2026.10.23" in project["project"]["dependencies"]
+    assert "PyJWT>=2.15.0" in project["project"]["dependencies"]
     assert {"pillow==13.0.0", "certifi==2026.10.23", "PyJWT==2.15.0"} <= runtime
 
 
