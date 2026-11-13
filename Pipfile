@@ -17,7 +17,9 @@ soundfile = "==0.12.1"
 # AI API clients (pure Python, no native GPU deps)
 openai = "==1.57.0"
 ollama = "==0.4.5"
-transformers = "==5.5.0"
+# 5.22.2 is outside the reported vulnerable ranges through 5.8.1 and <5.10.0.
+# Keep this aligned with every supported model-install profile.
+transformers = "==5.22.2"
 
 # Shared ML utility (compatible with numpy 1.x, no CUDA)
 numpy = "==1.26.4"
@@ -42,7 +44,8 @@ jinja2 = "==3.1.6"
 # Pillow 13.0.0 is the first fixed release for the five current critical
 # Pillow advisories in the 2026-11-12 inventory.  It requires Python >=3.11.
 pillow = "==13.0.0"
-urllib3 = "==2.7.0"
+# 2.8.0 is the first fixed release for the two current high urllib3 advisories.
+urllib3 = "==2.8.0"
 certifi = "==2026.10.23"
 
 # MQTT Messaging
@@ -60,6 +63,10 @@ asyncio-mqtt = "==0.16.2"
 [dev-packages]
 pytest-cov = "*"
 pip-audit = "*"
+# Pipenv's development graph currently includes msgpack. Keep the resolver
+# above both reported high advisory floors rather than preserving a stale
+# transitive selection in Pipfile.lock.
+msgpack = ">=1.2.3"
 
 [requires]
 python_version = "3.11"

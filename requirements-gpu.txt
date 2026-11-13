@@ -8,9 +8,9 @@ torch==2.12.0
 torchvision==0.21.0+cu118
 torchaudio==2.6.0+cu118
 
-# transformers: pin to a semver-compatible range for Coqui TTS 0.22.0.
-# BeamSearchScorer was removed in 4.38+; the rex/compat/ shim restores it.
-transformers>=4.38.0,<5.0
+# Transformers 5.22.2 is outside the remaining reported high advisory ranges.
+# The maintained Coqui fork uses the Rex compatibility shim for legacy imports.
+transformers>=5.22.2,<6.0
 
 # Install Rex with ML + audio extras
 -e ".[ml,audio]"

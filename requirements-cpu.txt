@@ -10,7 +10,7 @@ torchaudio==2.7.1
 
 # Transformers 5 is the tested policy. The maintained Coqui fork in the ml
 # extra supports its generation API without the removed BeamSearchScorer.
-transformers>=5.5.0,<6.0
+transformers>=5.22.2,<6.0
 
 # Install Rex with ML + audio extras
 -e ".[ml,audio]"

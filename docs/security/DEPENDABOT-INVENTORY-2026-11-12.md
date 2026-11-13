@@ -222,6 +222,27 @@ range change does not close them or establish advisory-specific reachability.
 
 ## Per-advisory noncritical disposition and developer-resolution provenance
 
+## 2026-11-13 local high-alert reconciliation
+
+The dated API export remains the authoritative remote-alert snapshot. This
+offline source inspection reconciles that snapshot to the candidate working
+tree; it is not a replacement for a Dependabot recheck and does not close an
+alert. Each row states the exposure condition, owner, and next action so a
+source-level change is not mistaken for merge, build, or deployment evidence.
+
+| Package/advisory group | Candidate path and local state | Exposure condition | Owner | Next action |
+| --- | --- | --- | --- | --- |
+| `cryptography` / `GHSA-g6cj-pr64-35w5` | `Pipfile.lock` already selects 50.0.0; the packaged Electron runtime is raised from 49.0.0 to 50.0.0. | An installed packaged runtime performs affected cryptographic operations. | backend | Resolve/install the exact runtime profile and run auth, bridge, HTTPS, and packaging gates. |
+| `transformers` / `GHSA-29pf-2h5f-8g72`, `GHSA-x9r9-c232-4q39`, `GHSA-xrqw-3rrv-vx5w` | All model profiles and source metadata now require `>=5.22.2,<6.0`; the existing Pipenv lock still selects 5.5.0 and therefore is not yet a completed lock remediation. | A Voice/model profile loads attacker-controlled model or tokenizer artifacts through the affected library. | backend | Regenerate and inspect the Pipenv lock with Python 3.11, then run focused model, TTS/voice, and packaged Voice-profile checks. |
+| `urllib3` / `GHSA-8988-9cw3-xx77`, `GHSA-vxq7-64xx-v4gw` | Direct source and packaged runtime declarations now require 2.8.0; the existing Pipenv default/develop locks remain 2.7.0/2.6.3 pending regeneration. | A runtime processes an affected HTTP response. | backend | Regenerate the Pipenv lock and run install plus ordinary HTTPS tests with certificate verification enabled. |
+| `msgpack` / `GHSA-6v7p-g79w-8964`, `GHSA-j586-36cw-2gc2` | The stale development lock selects 1.1.2. `Pipfile` now makes `msgpack>=1.2.3` explicit, but this is incomplete until a resolver writes the lock. | A developer/CI tool deserializes attacker-controlled MessagePack input. | backend | Regenerate the development lock and run the repository CI/security gates. |
+| `electron`, `undici`, `vite`, `source-map-js` high groups | Current GUI locks select Electron 42.11.18, top-level Undici 7.30.1 and nested node-gyp Undici 6.29.1, Vite 6.4.5, and source-map-js 1.2.2. These meet every fixed version reported in the dated high snapshot. | A shipped desktop build or developer tool actually installs the exact lock. | supervisor | Perform clean exact-candidate install, audit, GUI tests/typecheck/build, Electron smoke, package inspection, and remote alert recheck. |
+| `Pillow`, `PyJWT`, `filelock` high groups | Current source/locks select Pillow 13.0.0, packaged PyJWT 2.15.0, and filelock 3.29.7. These are outside the dated high vulnerable ranges. | A shipped or installed Python profile reaches affected image, token, or file-lock code. | supervisor | Validate exact candidate through image/auth/install/package gates and recheck remote alert state. |
+
+The unresolved lock rows above are intentionally retained as open work. No
+override, audit suppression, manually invented lock hash, merge, build,
+deployment, or alert-closure claim is made here.
+
 High, medium, and low alerts are recorded in the static, one-row-per-GHSA
 [`DEPENDABOT-NONCRITICAL-DISPOSITIONS-2026-11-12.md`](DEPENDABOT-NONCRITICAL-DISPOSITIONS-2026-11-12.md).
 It covers all 145 GHSAs in the dated export, including alert instance IDs,

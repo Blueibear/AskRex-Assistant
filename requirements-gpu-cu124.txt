@@ -11,7 +11,7 @@ torchaudio==2.6.0+cu124
 
 # Transformers 5 is the tested policy. The maintained Coqui fork supports its
 # generation API without the removed BeamSearchScorer.
-transformers>=5.5.0,<6.0
+transformers>=5.22.2,<6.0
 coqui-tts==0.28.0
 six>=1.17,<2
 
