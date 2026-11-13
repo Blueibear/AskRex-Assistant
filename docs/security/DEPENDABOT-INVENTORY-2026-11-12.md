@@ -237,11 +237,26 @@ source-level change is not mistaken for merge, build, or deployment evidence.
 | `urllib3` / `GHSA-8988-9cw3-xx77`, `GHSA-vxq7-64xx-v4gw` | Direct source and packaged runtime declarations now require 2.8.0; the existing Pipenv default/develop locks remain 2.7.0/2.6.3 pending regeneration. | A runtime processes an affected HTTP response. | backend | Regenerate the Pipenv lock and run install plus ordinary HTTPS tests with certificate verification enabled. |
 | `msgpack` / `GHSA-6v7p-g79w-8964`, `GHSA-j586-36cw-2gc2` | The stale development lock selects 1.1.2. `Pipfile` now makes `msgpack>=1.2.3` explicit, but this is incomplete until a resolver writes the lock. | A developer/CI tool deserializes attacker-controlled MessagePack input. | backend | Regenerate the development lock and run the repository CI/security gates. |
 | `electron`, `undici`, `vite`, `source-map-js` high groups | Current GUI locks select Electron 42.11.18, top-level Undici 7.30.1 and nested node-gyp Undici 6.29.1, Vite 6.4.5, and source-map-js 1.2.2. These meet every fixed version reported in the dated high snapshot. | A shipped desktop build or developer tool actually installs the exact lock. | supervisor | Perform clean exact-candidate install, audit, GUI tests/typecheck/build, Electron smoke, package inspection, and remote alert recheck. |
-| `Pillow`, `PyJWT`, `filelock` high groups | Current source/locks select Pillow 13.0.0, packaged PyJWT 2.15.0, and filelock 3.29.7. These are outside the dated high vulnerable ranges. | A shipped or installed Python profile reaches affected image, token, or file-lock code. | supervisor | Validate exact candidate through image/auth/install/package gates and recheck remote alert state. |
+| `Pillow`, `PyJWT` high groups | Current source/locks select Pillow 13.0.0 and packaged PyJWT 2.15.0. These are outside the dated high vulnerable ranges. | A shipped or installed Python profile reaches affected image or token code. | supervisor | Validate exact candidate through image/auth/install/package gates and recheck remote alert state. |
+| `filelock` / `GHSA-v4x8-3wr5-3wq8` | The Pipenv `develop` graph actually selects 3.24.3, which is inside the reported `>=3.20.4, <=4.2.0` range. A prior reference to 3.29.7 was generated developer-resolution evidence, not the tracked Pipenv lock. | A developer or CI environment installs the Pipenv development graph and reaches `filelock` on Windows. | backend | Regenerate the Pipenv lock with Python 3.11 so it selects at least 4.2.1, preserve resolver-generated hashes, then run the CI/security gates. |
 
 The unresolved lock rows above are intentionally retained as open work. No
 override, audit suppression, manually invented lock hash, merge, build,
 deployment, or alert-closure claim is made here.
+
+### Resolver boundary for the remaining Pipenv high batch
+
+Local offline inspection on 2026-11-13 confirmed that the tracked lock still
+selects Transformers 5.5.0, urllib3 2.7.0 in `default` and 2.6.3 in
+`develop`, msgpack 1.1.2 in `develop`, and filelock 3.24.3 in `develop`.
+Those selections leave the high-advisory rows above unresolved even though
+the source declarations have fixed floors. A disposable offline resolver
+attempt could not acquire Pipenv because it was absent from the local cache;
+no network access, lock override, or hand-written hash was used. The next
+action is an owner-supervised Python 3.11 Pipenv resolver run that produces
+the complete compatible lock and exact-candidate validation. This is a local
+patch-state record only, not evidence of a merge, build, deployment, or
+Dependabot closure.
 
 High, medium, and low alerts are recorded in the static, one-row-per-GHSA
 [`DEPENDABOT-NONCRITICAL-DISPOSITIONS-2026-11-12.md`](DEPENDABOT-NONCRITICAL-DISPOSITIONS-2026-11-12.md).
