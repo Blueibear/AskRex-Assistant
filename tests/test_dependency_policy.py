@@ -80,6 +80,13 @@ def test_pipenv_lock_keeps_high_advisory_floors() -> None:
     """Reject stale Pipenv selections in runtime and development dependency graphs."""
     lock = json.loads((ROOT / "Pipfile.lock").read_text(encoding="utf-8"))
 
+    # These direct Pipfile declarations use exact pins.  Checking them against
+    # the generated runtime graph prevents a raised source pin from masking a
+    # stale lock selection in CI or developer installs.
+    pipfile = tomllib.loads((ROOT / "Pipfile").read_text(encoding="utf-8"))
+    for package in ("transformers", "urllib3", "cryptography", "pillow", "certifi"):
+        assert lock["default"][package]["version"] == pipfile["packages"][package]
+
     assert _locked_version(lock, "default", "urllib3") >= (2, 8, 0)
     assert _locked_version(lock, "develop", "urllib3") >= (2, 8, 0)
     assert _locked_version(lock, "develop", "msgpack") >= (1, 2, 3)
