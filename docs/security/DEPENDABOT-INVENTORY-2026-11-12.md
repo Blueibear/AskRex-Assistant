@@ -107,35 +107,16 @@ resolved developer dependency tree. The repository does not track a generated
 output for this input (`requirements.txt` is a documented pointer to split
 profiles). The input now also constrains `torch`, `torchvision`, and
 `torchaudio` to the documented 2.7.1 CPU release family; its older 2.5.x
-companion ranges could not produce that supported family. No exact-candidate
-`pip-compile` receipt is available in this offline scratch checkout. The
-supervisor must choose and record the canonical generated developer output,
-regenerate it with the exact candidate input, and validate the resolved tree
-before accepting this developer-path change.
+companion ranges could not produce that supported family. The canonical
+Python 3.11 `pip-compile` output and matching input/output SHA-256 provenance
+are recorded below. That resolver evidence does not prove installation or
+Voice compatibility; the supervisor must validate the resolved tree on the
+exact candidate before accepting this developer-path change.
 
 The supplied critical inventory identifies no other critical package groups.
-The listed historical high/medium/low packages require a separate refreshed
-per-advisory inventory before they are changed; they are unknown here, not
-treated as zero.
-
-## High, medium, and low disposition register
-
-The authorized refresh supplied severity totals, but not the individual
-high/medium/low alert records. Therefore this scratch candidate cannot
-truthfully enumerate or close the 147 high, 120 medium, or 22 low instances.
-Each row below is an exposure-based disposition for a historical cluster, not
-a claim that the cluster has a current alert. The supervisor owns the next
-authoritative alert export and must replace this bounded register with one row
-per remaining advisory before a closure decision.
-
-| Historical cluster | Local path and exposure condition | Disposition and evidence | Owner | Next action |
-| --- | --- | --- | --- | --- |
-| Transformers | Optional ML/voice developer and packaged Voice paths. Exposure requires enabling a local model/voice profile. | Supported project, CPU, CUDA, and Pipenv paths require `>=5.5.0,<6.0` or `==5.5.0`; the separate developer input has not been resolved on this candidate. No current advisory is asserted. | backend | Obtain the current advisory record, resolve the developer input, run voice/model regressions, then record an advisory-specific disposition. |
-| urllib3 | Direct Python HTTP client dependency in source, Pipenv, and packaged runtime. Exposure requires outbound HTTP(S). | Project and packaged paths require `>=2.7.0`; the separate developer input has not been resolved on this candidate. No current advisory is asserted. | backend | Obtain the current advisory record, resolve the developer input, run the HTTPS gate, then record an advisory-specific disposition. |
-| cryptography | Direct TLS, credential, mobile-pairing, and packaged-runtime dependency. Exposure requires cryptographic or TLS operations. | Project requires `>=46.0.5`, Pipenv pins `50.0.0`, and packaged runtime pins `49.0.0`; the separate developer input has not been resolved on this candidate. No current advisory is asserted. | backend | Obtain the current advisory record, resolve the developer input, run auth, pairing, and HTTPS gates, then record an advisory-specific disposition. |
-| Undici, Electron, Vite, msgpack | JavaScript development/build trees. Electron is also in the shippable desktop build; `rex/ui` is developer-only. | The main GUI lock has prior isolated clean-install, test, build, and high-threshold audit evidence. This scratch checkout has no installed dependency trees, so a new local audit is unavailable. No current advisory is asserted. | supervisor | Run clean installs and `npm audit --audit-level=high` for both `gui/` and the developer-only `rex/ui/`, then record each remaining advisory, path, and action. |
-| CI Python audit exceptions | The repository `pip-audit --strict .` gate has an existing explicit exception list. Exposure depends on the dependency selected by the project install. | This task neither adds nor broadens an exception. An exception is not a disposition for a current Dependabot advisory. | supervisor | Reconcile every existing exception against the refreshed export and `VULNERABILITY-SCAN.md`; remove only after a compatible remediation is independently validated. |
-| Medium and low alerts not named in bounded evidence | Direct, transitive, dev, CI, and packaged-runtime paths are unknown per advisory. | Not accepted risk and not zero. Their identity and exploitability cannot be inferred from severity totals. | supervisor | Obtain the current per-alert export, assign each advisory an exposure condition, owner, and remediation or explicitly approved risk action. |
+The critical inventory above does not itself classify noncritical advisories;
+the dated, per-advisory register below is the authoritative local
+disposition source for them.
 
 ### Status boundary
 
@@ -241,8 +222,7 @@ range change does not close them or establish advisory-specific reachability.
 
 ## Per-advisory noncritical disposition and developer-resolution provenance
 
-The former historical-cluster register is superseded for high, medium, and
-low alerts by the static, one-row-per-GHSA
+High, medium, and low alerts are recorded in the static, one-row-per-GHSA
 [`DEPENDABOT-NONCRITICAL-DISPOSITIONS-2026-11-12.md`](DEPENDABOT-NONCRITICAL-DISPOSITIONS-2026-11-12.md).
 It covers all 145 GHSAs in the dated export, including alert instance IDs,
 affected path/scope, vulnerable range, exposure condition, disposition,
