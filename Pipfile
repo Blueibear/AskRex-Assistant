@@ -67,6 +67,9 @@ pip-audit = "*"
 # above both reported high advisory floors rather than preserving a stale
 # transitive selection in Pipfile.lock.
 msgpack = ">=1.2.3"
+# Keep the development/CI resolver above GHSA-v4x8-3wr5-3wq8.  This must
+# remain explicit until the complete regenerated lock records the fixed graph.
+filelock = ">=4.2.1"
 
 [requires]
 python_version = "3.11"
