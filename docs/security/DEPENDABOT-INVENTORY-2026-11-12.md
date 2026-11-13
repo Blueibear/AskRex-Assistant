@@ -89,7 +89,7 @@ No alert has been marked closed.
 | 3 | `certifi` / `GHSA-6q48-6c7w-9gw2` | Pipenv direct/lock and packaged Electron Python runtime | Fixed in the prior reviewed certifi phase at `2026.10.23`; its exact-revision resolver and HTTPS evidence is above. |
 | 15 | `Pillow` / five current critical advisories | `Pipfile` direct runtime declaration, `Pipfile.lock` resolved runtime graph, and packaged Electron Python runtime requirements | The direct declaration, verified resolver lock, and packaged runtime pin now select `13.0.0`, the first fixed release for all five. Exact-revision review and release checks remain pending. |
 | 2 | `PyJWT` / `GHSA-ffc3-869f-jxw9` | Project direct dependency range and packaged Electron Python runtime requirements | `2.14.0` is the first fixed release. The project range is prepared at `>=2.14.0` and the packaged runtime pin at `2.15.0`. PyJWT is absent from the current Pipenv graph, so no synthetic lock record was added. |
-| 2 | `tinypool` / two current critical advisories | GUI development test path through Vitest in `gui/package-lock.json` | Vitest is updated to `4.1.11`; the explicit Tinypool override is removed, and the regenerated lock contains no Tinypool package. A clean isolated install and GUI tests passed; exact-revision review remains pending. |
+| 2 | `tinypool` / two current critical advisories | GUI development test path through Vitest in `gui/package-lock.json` | Vitest is updated to `4.1.12`; the explicit Tinypool override is removed, and the regenerated lock contains no Tinypool package. A clean isolated install and GUI tests passed; exact-revision review remains pending. |
 
 The five Pillow advisories are `GHSA-332p-7hrc-92wf`,
 `GHSA-5x8w-8jj5-q52h`, `GHSA-8g5g-8vmr-9782`,
@@ -238,3 +238,24 @@ the same two tests passed in the clean clone, so those failures are not used
 as evidence of a PyJWT regression. Full exact-revision gates and independent
 review remain pending. The default-branch alerts remain open; this local
 range change does not close them or establish advisory-specific reachability.
+
+## Per-advisory noncritical disposition and developer-resolution provenance
+
+The former historical-cluster register is superseded for high, medium, and
+low alerts by the static, one-row-per-GHSA
+[`DEPENDABOT-NONCRITICAL-DISPOSITIONS-2026-11-12.md`](DEPENDABOT-NONCRITICAL-DISPOSITIONS-2026-11-12.md).
+It covers all 145 GHSAs in the dated export, including alert instance IDs,
+affected path/scope, vulnerable range, exposure condition, disposition,
+owner, and next action. It intentionally retains unresolved advisories as
+open remediation work rather than turning the inventory into a suppression.
+
+The canonical developer input currently has SHA-256
+`3F7E78C4B727D74100D5F1BE7D8690F4E6D76E740DC9B205B6AB94EDA096F55B`.
+That is the same input digest recorded for the isolated Python 3.11
+`pip-compile --resolver=backtracking` execution. Its generated output is
+[`REQUIREMENTS-IN-PY311-RESOLUTION-2026-11-12.txt`](REQUIREMENTS-IN-PY311-RESOLUTION-2026-11-12.txt),
+SHA-256 `D830C2718DDCB9F67CC99E5E55D251100F57F3174494E34818E497D954084FCE`.
+The generated output selects Pillow 13.0.0, cryptography 50.0.2, torch
+2.7.1, Transformers 5.22.2, and urllib3 2.8.0. It is resolver-generated
+evidence for this exact developer input, not an installation, Voice
+compatibility, package, merge, deployment, or Dependabot-closure claim.
