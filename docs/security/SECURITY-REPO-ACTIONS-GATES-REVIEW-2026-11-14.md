@@ -36,6 +36,16 @@ Nothing in this session's own tool access could confirm or refute that
 claimed state, so it is neither relied upon nor disputed here — only noted
 as unverifiable from this container.
 
+As a substitute check at the git level (not a replacement for the actual
+coordination script), this session fetched
+`ralph/cloud/backend/backend-security-repo-actions-gates-2026-fa207d09`
+before making any change, confirmed `git branch --show-current` matched it
+exactly, and re-fetched after each push: the remote ref advanced only by
+exactly the commits this session made (`433ee1c -> 3941263 -> 52cbe72`),
+with no unexpected intervening commit from another writer. That rules out a
+concurrent competing writer *on this exact branch during this session*, but
+does not confirm the broader claimed supervisor/live-worktree state above.
+
 ## Audit findings
 
 ### Least-privilege permissions
