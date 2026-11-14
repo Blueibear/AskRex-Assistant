@@ -80,6 +80,32 @@ def test_cloud_bootstrap_waits_for_bounded_context_without_putting_it_on_argv() 
     assert "Implement it" not in prompt
     assert "review feedback" not in prompt
     assert "validated coordination evidence" not in prompt
+    assert "cannot access the Windows coordination root" in prompt
+    assert "do not create the final completion commit" in prompt
+
+
+def test_cloud_handoff_rejects_unverified_windows_execution_claims() -> None:
+    session = ClaudeCloudSession(
+        role="backend",
+        task_id="backend-implementation",
+        session_id="session_abc123",
+        url="https://claude.ai/code/session_abc123",
+        branch="ralph/cloud/backend/implementation-abcd1234",
+        base_head="a" * 40,
+        launched_at="2026-11-14T00:00:00+00:00",
+        invocation_id="inv-123",
+        status="running",
+    )
+    message = claude_cloud._cloud_context_message(
+        session,
+        TaskItem("backend-implementation", "Implement the backend change."),
+        "Supervisor provided bounded local evidence.",
+    )
+
+    assert "Windows-local coordination checks" in message
+    assert "Do not claim to have run Windows" in message
+    assert "without a completion commit" in message
+    assert "Supervisor provided bounded local evidence." in message
 
 
 def test_launch_persists_machine_readable_session_metadata(

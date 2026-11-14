@@ -599,8 +599,10 @@ def _task_prompt(role: str, task, coordination_root: Path, context: str, invocat
         "the implementation and tests needed for the task. Shell/Bash/Web/MCP tools are intentionally unavailable; "
         "do not attempt to run tests or create commits because the deterministic supervisor owns validation and Git checkpointing. "
         "Do not modify the other repository or the frozen "
-        "rex-ai-pc-test worktree. You do not have filesystem write access to the shared coordination root; "
-        "use structured coordination_messages for requested shared-state changes; issue_updates must be an empty array "
+        "rex-ai-pc-test worktree. You cannot directly run Windows-local coordination checks or write "
+        "shared coordination files; the supervisor owns local checks and publishes structured messages. "
+        "Never claim a check was run unless its result is present in the supplied evidence. "
+        "Use structured coordination_messages for shared-state changes; issue_updates must be an empty array "
         "during implementation and may only be requested by independent review. "
         f"The supervisor will create the Git checkpoint with invocation identity {invocation_id}; do not alter Git metadata. "
         f"For continue or ready_for_review, return task_id={task.task_id!r}, role={role!r}, and invocation_id={invocation_id!r} exactly. "
@@ -1304,7 +1306,7 @@ class CliAgentInvoker:
     @staticmethod
     def _cloud_task_allowed(task: TaskItem) -> bool:
         task_id = task.task_id.casefold()
-        prompt = task.prompt.casefold()
+        prompt = f"{task.prompt}\n{task.feedback}".casefold()
         if any(
             marker in task_id
             for marker in (
@@ -1314,6 +1316,27 @@ class CliAgentInvoker:
                 "evidence-packet",
                 "coordination-closeout",
                 "coordination-only",
+                "exact-head-review",
+            )
+        ):
+            return False
+        # Cloud worktrees cannot execute Windows-local coordination actions.
+        # Keep mixed implementation/coordination tasks local until they are
+        # explicitly split into repo-scoped work and supervisor-owned follow-up.
+        if any(
+            marker in prompt
+            for marker in (
+                "check-coordination.ps1",
+                "run the coordination check",
+                "re-run the coordination check",
+                "rerun the coordination check",
+                "required backend coordination check",
+                "required mobile coordination check",
+                "update the coordination issue",
+                "update coordination issue",
+                "write to the coordination mailbox",
+                "post to the coordination mailbox",
+                "send a mailbox message",
             )
         ):
             return False

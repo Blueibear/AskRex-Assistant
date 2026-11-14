@@ -2113,6 +2113,59 @@ def test_evidence_packet_completion_never_dispatches_to_cloud() -> None:
     assert CliAgentInvoker._cloud_task_allowed(task) is False
 
 
+def test_exact_head_review_with_local_coordination_stays_off_cloud() -> None:
+    from scripts.dev_orchestrator.runner import CliAgentInvoker
+
+    task = TaskItem(
+        "backend-security-exact-head-review-aa1f43f7",
+        (
+            "Independently review the exact commit and Windows Electron receipt. "
+            "First run the required backend coordination check. "
+            "Update the coordination issue and send review evidence to testing. "
+            "Do not modify unrelated files."
+        ),
+    )
+
+    assert CliAgentInvoker._cloud_task_allowed(task) is False
+
+
+def test_mixed_product_and_windows_mailbox_task_stays_off_cloud() -> None:
+    from scripts.dev_orchestrator.runner import CliAgentInvoker
+
+    task = TaskItem(
+        "backend-mobile-contract-fix",
+        (
+            "Implement the API contract and its tests, then run check-coordination.ps1 "
+            "and send a mailbox message to mobile."
+        ),
+    )
+
+    assert CliAgentInvoker._cloud_task_allowed(task) is False
+
+
+def test_cloud_routing_respects_local_requirements_in_reviewer_feedback() -> None:
+    from scripts.dev_orchestrator.runner import CliAgentInvoker
+
+    task = TaskItem(
+        "backend-sse-fix",
+        "Implement the SSE repair with unit tests.",
+        "Re-run the coordination check before declaring this complete.",
+    )
+
+    assert CliAgentInvoker._cloud_task_allowed(task) is False
+
+
+def test_repo_only_implementation_remains_cloud_eligible() -> None:
+    from scripts.dev_orchestrator.runner import CliAgentInvoker
+
+    task = TaskItem(
+        "backend-sse-fix",
+        "Implement SSE repair with tests. Do not modify unrelated files.",
+    )
+
+    assert CliAgentInvoker._cloud_task_allowed(task) is True
+
+
 def test_read_only_evidence_closeout_never_dispatches_to_cloud(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
