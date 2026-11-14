@@ -33,6 +33,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Validate PowerShell artifact scripts
         shell: powershell
