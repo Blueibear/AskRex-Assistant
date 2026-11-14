@@ -65,3 +65,46 @@ physical Windows acceptance. The deterministic supervisor must retain those
 boundaries while validating the exact candidate and obtaining independent
 review. The reviewer should inspect the complete generated lock diff, this
 document, the policy test, and the exact-revision validation receipt.
+
+## Reviewer-response: current evidence and GitHub Actions review
+
+The dated noncritical register now explicitly says that its snapshot-time
+`Unresolved` language is historical. Its current reconciliation covers all
+medium/low package groups and calls out the still-open React Router and Torch
+selections. It neither deletes dated evidence nor turns an advisory into an
+audit exception.
+
+### Workflow source review
+
+This source-only review inspected `.github/workflows/ci.yml` and
+`.github/workflows/windows-electron-artifact.yml`. Both declare top-level
+`permissions: contents: read`; the Windows artifact workflow uses that
+explicit permission, limits pull requests to `master`, and only reads signing
+inputs at its signing step. When no certificate secret is available it reports
+an unsigned artifact rather than claiming a signature.
+
+The workflows reference maintained major-version actions (`checkout@v4`,
+`setup-node@v4`, `setup-python@v5`, `cache@v4`, and `upload-artifact@v4`),
+not immutable commit SHAs. That is a documented supply-chain hardening
+follow-up, not evidence of compromise. Converting the action policy to
+reviewed SHAs needs owner approval because it changes CI maintenance policy.
+No workflow token, secret, permission, audit ignore, or verification gate was
+widened or weakened by this task.
+
+### Affected-path validation matrix and limits
+
+| Path | Local evidence | Required exact-candidate validation or limit |
+| --- | --- | --- |
+| Model, TTS, Voice | Transformers policy/lock selects `5.22.2`. | Run focused model/TTS/Voice and managed Voice-profile packaging; scratch does not establish these executions. |
+| Auth and bridge | PyJWT floor/pin is `2.15.0`; bounded clean-clone evidence recorded 38 JWT/user-auth tests. | Re-run auth/token and bridge tests on the final candidate; prior clean-clone evidence is not final-head evidence. |
+| HTTPS | Certifi record documents isolated Python 3.11 resolution and certificate-verified HTTPS; urllib3 selects `2.8.0`. | Re-run ordinary HTTPS/install validation without disabling verification. |
+| Electron/package | Current JS selections meet dated Electron/Undici/Vite/source-map-js floors; isolated GUI/core-package evidence is in the inventory. | Clean install, audit, test/typecheck/build, Electron smoke, default Voice-profile packaging. No installed artifact, signing, release, or physical Windows acceptance is claimed. |
+| CI/security | Dependency policy binds generated Pipenv selections; workflow source review is above. | Deterministic tests, lint/diff, audits, and independent review must run on the new exact revision; remote alert recheck remains required. |
+
+### Status separation
+
+This checkout supplies only source/lock/policy/documentation patch evidence.
+It does not establish a commit, merge, remote alert closure, build,
+deployment, release signing, installed-artifact behavior, or physical
+acceptance. The supervisor owns exact-revision validation and the independent
+reviewer owns review disposition.

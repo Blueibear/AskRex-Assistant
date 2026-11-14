@@ -16,12 +16,44 @@ reachability or local-version proof.
 
 "Prepared locally" means only that the separate candidate documentation records
 a source/lock change meeting the export's reported first fixed version. It does
-not close the default-branch alert. Every other row is explicitly unresolved.
+not close the default-branch alert. Snapshot-time unresolved rows are updated
+by the current reconciliation below; remaining vulnerable selections stay
+explicitly open there.
 The stated exposure condition is necessary, not sufficient: the advisory's
 specific trigger and the actual resolved version must be confirmed during the
 named next action.
 
 ## 2026-11-13 current local reconciliation
+
+The per-advisory register below is a faithful record of the 2026-11-12
+snapshot. Its snapshot-time `Unresolved` language is superseded by this
+current reconciliation; it is not a statement that the current candidate
+selects a vulnerable version. A local fixed selection remains patch evidence,
+not a remote-alert closure. A row that remains in range is kept as open work,
+not converted into an audit exception.
+
+### Medium/low disposition coverage
+
+The following package groups cover all 120 medium and 22 low instances in the
+dated export. The historical register retains the advisory IDs, paths,
+ranges, owners, and alert numbers. Every `recheck` below means remote
+Dependabot re-evaluation, which this offline checkout cannot perform.
+
+| Package group | Current candidate state | Exposure, owner, and next action |
+| --- | --- | --- |
+| `@vitest/mocker`, `vitest` | GUI lock selects `4.1.12`; no Tinypool override remains. | Development test runner exposure. supervisor: clean install, audit, GUI tests, and recheck. |
+| `brace-expansion`, `fast-uri`, `minimatch`, `postcss-selector-parser` | Resolver-selected JS tree; `fast-uri` `3.1.9`, top-level `minimatch` `10.2.6`, and `brace-expansion` `5.0.12`. | Dev-tooling exposure to malicious workspace/input. backend: preserve individual rows pending clean-lock audit; supervisor: audit and recheck. |
+| `electron` | GUI lock selects `42.11.18`, meeting every dated medium/low fixed floor. | Packaged desktop exposure. supervisor: GUI build/package smoke, audit, and recheck. |
+| `filelock` | Regenerated Pipenv default/develop select `4.2.10`. | Developer/CI file-lock exposure, including Windows. supervisor: Pipenv/security gates and recheck. |
+| `idna`, `Pygments`, `pytest`, `setuptools`, `soupsieve`, `Werkzeug` | Regenerated Python graph and `pyproject.toml` floors govern these selections; Werkzeug and setuptools have explicit secure floors. | Runtime or CI/test exposure. backend: keep open until exact-candidate resolver/install; supervisor: CI/security gates and recheck. |
+| `Pillow`, `PyJWT`, `urllib3` | Pillow `13.0.0`, PyJWT `2.15.0`, urllib3 `2.8.0`; Pipenv default/develop select urllib3 `2.8.0`. | Image/JWT/HTTP exposure. supervisor: image/auth/HTTPS/install/package gates and recheck. |
+| `pip` | CI bootstraps `pip>=26.1`; pip is not a bundled application runtime. | CI-only install exposure. supervisor: workflow execution and recheck, without treating a runner tool as product remediation. |
+| `react-router`, `react-router-dom` | GUI and developer-only UI locks select `6.30.6`; dated affected rows report `7.18.0` as fixed. | Renderer/developer UI route exposure remains open. backend: evaluate compatible React Router 7 migration and route regression; supervisor: UI smoke and recheck. |
+| `torch` | CPU/managed-Voice policy pins `2.7.1`; CUDA has a separate documented profile. | Voice/model exposure remains open pending a compatible supported upgrade. backend: evaluate without changing CPU/CUDA contract; supervisor: model/Voice/package checks and recheck. |
+| `undici`, `vite`, `source-map-js` | GUI lock selects Undici `7.30.1` and node-gyp Undici `6.29.1`, Vite `6.4.5`, source-map-js `1.2.2`. | Desktop/dev network-build exposure. supervisor: clean install, audit, test/typecheck/build, Electron smoke, and recheck. |
+
+No disposition above changes an audit gate, adds an ignore, or claims merge,
+build, deployment, physical acceptance, or remote alert closure.
 
 The following current selections supersede any older "Unresolved" or
 "Prepared locally" wording in individual rows for these package groups. They
