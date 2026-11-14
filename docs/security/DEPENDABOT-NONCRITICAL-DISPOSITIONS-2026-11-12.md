@@ -21,6 +21,22 @@ The stated exposure condition is necessary, not sufficient: the advisory's
 specific trigger and the actual resolved version must be confirmed during the
 named next action.
 
+## 2026-11-13 current local reconciliation
+
+The following current selections supersede any older "Unresolved" or
+"Prepared locally" wording in individual rows for these package groups. They
+are resolver/source evidence only, not a remote alert closure. Every remaining
+remote advisory keeps the exposure condition, owner, and next action in its
+row below.
+
+| Package group | Current local selection and reason | Exposure condition | Owner | Next action |
+| --- | --- | --- | --- | --- |
+| Transformers | Source profiles require `>=5.22.2,<6.0`; regenerated Pipenv `default` selects `5.22.2`, outside the dated high ranges. | A model or Voice profile loads attacker-controlled model/tokenizer content. | backend | Supervisor: exact-candidate model, TTS, Voice, and packaged Voice-profile checks; independent review and alert recheck. |
+| urllib3 | Pipfile, packaged runtime, and regenerated Pipenv `default`/`develop` select `2.8.0`, the dated first fixed version. | An installed profile handles an affected HTTP response. | backend | Supervisor: exact-candidate installation and normal HTTPS validation; independent review and alert recheck. |
+| msgpack | Regenerated Pipenv `develop` selects `1.2.4`, above both dated reported fixed floors. | A developer or CI tool deserializes attacker-controlled MessagePack input. | backend | Supervisor: exact-candidate CI/security gates; independent review and alert recheck. |
+| filelock | Regenerated Pipenv `default` and `develop` select `4.2.10`, above the dated `4.2.1` fixed floor. | A developer or CI Pipenv environment reaches file locking on Windows. | backend | Supervisor: exact-candidate CI/security gates; independent review and alert recheck. |
+| Electron, Undici, Vite, source-map-js | Current GUI locks select Electron `42.11.18`, top-level Undici `7.30.1`, node-gyp Undici `6.29.1`, Vite `6.4.5`, and source-map-js `1.2.2`, meeting every dated reported fixed version. | A shipped desktop build or developer tool installs the affected tree. | supervisor | Clean exact-candidate install, audit, GUI tests, typecheck, Electron build/package smoke, independent review, and alert recheck. |
+
 ## Per-advisory register
 
 | Advisory | Severity | Package | Alert instances | Alerted path(s) | Vulnerable range in export | First patched in export | Exposure condition | Disposition and reason | Owner | Next action |

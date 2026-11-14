@@ -90,6 +90,7 @@ def test_pipenv_lock_keeps_high_advisory_floors() -> None:
     assert _locked_version(lock, "default", "urllib3") >= (2, 8, 0)
     assert _locked_version(lock, "develop", "urllib3") >= (2, 8, 0)
     assert _locked_version(lock, "develop", "msgpack") >= (1, 2, 3)
+    assert _locked_version(lock, "default", "filelock") >= (4, 2, 1)
     assert _locked_version(lock, "develop", "filelock") >= (4, 2, 1)
     assert pipfile["dev-packages"]["msgpack"] == ">=1.2.3"
     assert pipfile["dev-packages"]["filelock"] == ">=4.2.1"
