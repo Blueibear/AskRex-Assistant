@@ -268,3 +268,82 @@ remote Dependabot alert closure, a merge to `master`, a packaged build
 artifact, a deployment, a release signature, or physical Windows acceptance
 (US-130). Independent review of commits `623571ec` and `d42a5379` remains
 required before any of those claims could be made.
+
+## 2026-11-14 completion-commit correction and Electron-evidence blocker
+
+`HEAD` at `647d66f` (`ralph-cloud-complete: ...`) is an **empty** commit with
+no file changes. It was created immediately after the receipt above without
+satisfying the matrix row this document itself states is still outstanding:
+"From a clean candidate checkout, run install, audit, GUI tests, typecheck,
+build, Electron harness, default Voice-profile package build,
+package-content verification, and installed-artifact smoke." That row was
+never executed, so the completion claim was premature. This is consistent
+with independent reviewer feedback relayed into this session, which withheld
+approval for the same reason. No new `ralph-cloud-complete` commit is made
+in this session; the prior one should not be treated as a valid completion
+signal.
+
+### Why this worker cannot close that gap
+
+This session's container is Linux-only (`uname -a`: `Linux ... x86_64 GNU/Linux`)
+with no `powershell`/`pwsh` and no `wine` installed. Checked directly in
+this container before writing this note:
+
+- `gui/package.json`'s `predist` script is `npm run runtime:build && npm run
+  build`, and `runtime:build` is `powershell.exe -NoProfile
+  -ExecutionPolicy Bypass -File ../scripts/build_managed_python_runtime.ps1
+  -Profile Voice`. `npm run dist` (`electron-builder --publish never`) runs
+  `predist` first, so it fails immediately in this container for lack of
+  `powershell.exe` before `electron-builder` ever runs, independent of any
+  dependency-version fix made here.
+- `scripts/test_installed_electron_artifact.ps1` is a PowerShell script that
+  exercises Windows-specific installed-artifact behavior (Task Scheduler
+  `ONLOGON` registration, DPAPI-backed credential vault, an installed NSIS
+  binary). It requires an actual Windows host, which this container is not,
+  and which `list_computer_folders` confirmed has no attached machine to
+  connect to in this session.
+
+These are the same Windows-only mechanisms CLAUDE.md itself documents
+(managed Python Voice runtime build, NSIS installer, DPAPI vault, Windows
+Task Scheduler background runtime, PowerShell installed-artifact smoke).
+Producing this evidence needs a Windows-capable worker or the repository
+owner's own Windows machine, not more effort inside this Linux container.
+
+### Remote alert recheck is still unavailable to this session
+
+Re-verified directly: `gh api repos/Blueibear/AskRex-Assistant/dependabot/alerts`
+returns `403 Resource not accessible by integration`. This session's GitHub
+access genuinely cannot list or recheck individual Dependabot alerts, matching
+the prior finding in this document. Alert-instance counts quoted anywhere in
+coordination material (including figures attributed to an "owner-operator")
+are therefore unverifiable from inside this session and must not be relied on
+as current.
+
+### What remains true and unchanged
+
+The dependency-selection evidence recorded earlier in this document (Python
+gates, `pip-audit --strict`, GUI `npm test`/`typecheck`/`build`/`audit`,
+dependency-policy tests, the `minimatch` override, and the Transformers/
+urllib3/msgpack/filelock/cryptography/Pillow/PyJWT/Electron/Undici/Vite/
+source-map-js reconciliation) is unaffected by this note and was not redone.
+The deferred `react-router`/`react-router-dom` major-version bump and the
+coordinated `torch`/`torchvision`/`torchaudio` upgrade remain open,
+evidence-backed dispositions (breaking-change batches, correctly out of
+scope for a small compatible batch), not suppressions.
+
+### Disposition
+
+Status: **blocked**, narrowly, on Electron packaging/package-content/
+installed-artifact evidence and on remote Dependabot alert recheck, both of
+which require capabilities this session does not have (a Windows host for
+the former, Dependabot API access for the latter). Everything else this
+task asked for that is achievable from a Linux worker with this session's
+GitHub access has real, reproduced evidence above. Next action: a
+Windows-capable session (or the repository owner, on their own Windows
+machine) runs `npm run dist`, `scripts/verify_electron_package_contents.py`,
+and `scripts/test_installed_electron_artifact.ps1` against this exact branch
+head, and a repository owner with Dependabot API access re-pulls the current
+alert list, before independent review can accept completion. Owner:
+backend (packaging step), repository owner (Dependabot access). This
+session does not claim merge, deployment, build, or physical-acceptance
+status.
