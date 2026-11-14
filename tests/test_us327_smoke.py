@@ -37,6 +37,7 @@ def _patch_all_checks(monkeypatch) -> None:
     monkeypatch.setattr(dm, "check_config_file", lambda root: _ok("Config"))
     monkeypatch.setattr(dm, "check_config_types", lambda root: _ok("ConfigTypes"))
     monkeypatch.setattr(dm, "check_env_file", lambda root: _ok("Env"))
+    monkeypatch.setattr(dm, "check_credential_vault_backend", lambda: _ok("Vault"))
     monkeypatch.setattr(dm, "check_environment_variables", lambda: _ok("APIKeys"))
     monkeypatch.setattr(dm, "check_config_permissions", lambda root: _ok("Perms"))
     monkeypatch.setattr(dm, "check_audio_input_device", lambda: _ok("AudioIn"))
