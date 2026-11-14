@@ -91,15 +91,23 @@ reviewed SHAs needs owner approval because it changes CI maintenance policy.
 No workflow token, secret, permission, audit ignore, or verification gate was
 widened or weakened by this task.
 
-### Affected-path validation matrix and limits
+### Affected-path validation matrix and exact-candidate receipt requirements
 
-| Path | Local evidence | Required exact-candidate validation or limit |
+| Path | Local evidence | Exact-candidate receipt required before acceptance |
 | --- | --- | --- |
-| Model, TTS, Voice | Transformers policy/lock selects `5.22.2`. | Run focused model/TTS/Voice and managed Voice-profile packaging; scratch does not establish these executions. |
-| Auth and bridge | PyJWT floor/pin is `2.15.0`; bounded clean-clone evidence recorded 38 JWT/user-auth tests. | Re-run auth/token and bridge tests on the final candidate; prior clean-clone evidence is not final-head evidence. |
-| HTTPS | Certifi record documents isolated Python 3.11 resolution and certificate-verified HTTPS; urllib3 selects `2.8.0`. | Re-run ordinary HTTPS/install validation without disabling verification. |
-| Electron/package | Current JS selections meet dated Electron/Undici/Vite/source-map-js floors; isolated GUI/core-package evidence is in the inventory. | Clean install, audit, test/typecheck/build, Electron smoke, default Voice-profile packaging. No installed artifact, signing, release, or physical Windows acceptance is claimed. |
-| CI/security | Dependency policy binds generated Pipenv selections; workflow source review is above. | Deterministic tests, lint/diff, audits, and independent review must run on the new exact revision; remote alert recheck remains required. |
+| Model, TTS, Voice | Transformers policy/lock selects `5.22.2`; the repository verifier checks declared versions, XTTS imports, Torch tensor operation, torchvision transform, and torchaudio resampling. | Resolve the default managed Voice profile from the candidate, run `python scripts/verify_dependency_profile.py --profile electron_voice`, then run focused model/TTS/Voice tests. Record the candidate revision, source/artifact SHA-256 values, commands, exit codes, and retained log hashes. |
+| Auth and bridge | PyJWT floor/pin is `2.15.0`; bounded clean-clone evidence recorded 38 JWT/user-auth tests. | Run the focused JWT/user-auth and bridge suites from the candidate's installed environment. Record the candidate revision, installed PyJWT version, commands, exit codes, and log hashes. Prior clean-clone evidence is not final-head evidence. |
+| HTTPS | Certifi record documents isolated Python 3.11 resolution and certificate-verified HTTPS; urllib3 selects `2.8.0`. | Install the candidate runtime profile and run the normal `requests` and `urllib` HTTPS probes with certificate verification enabled. Record the candidate revision, installed certifi/urllib3 versions, endpoint, commands, exit codes, and log hashes. |
+| Electron/package | Current JS selections meet dated Electron/Undici/Vite/source-map-js floors; isolated GUI/core-package evidence is in the inventory. | From a clean candidate checkout, run install, audit, GUI tests, typecheck, build, Electron harness, default Voice-profile package build, package-content verification, and installed-artifact smoke. Record the candidate revision, lock and artifact SHA-256 values, commands, exit codes, and log hashes. No signing, release, or physical Windows acceptance is implied. |
+| CI/security | Dependency policy binds generated Pipenv selections; workflow source review is above. | Run deterministic pytest, Ruff, diff, and dependency/security gates on the same candidate and obtain independent review. Record the candidate revision, commands, exit codes, and log hashes. Remote alert recheck remains required. |
+
+An exact-candidate receipt is valid only when its stated revision and recorded
+source hashes match the candidate that is independently reviewed. This scratch
+checkout cannot create that receipt: it has no Python interpreter capable of
+running the repository suite and no installed GUI dependency tree. It therefore
+does not relabel prior isolated-copy results as final-candidate evidence. The
+supervisor must execute and retain the required receipt after publishing this
+patch to its candidate worktree.
 
 ### Status separation
 

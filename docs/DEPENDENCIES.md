@@ -16,9 +16,11 @@ profile regression, and the profile-specific install/import evidence together.
 **Transformers policy | `>=5.22.2,<6.0`**: Python 3.11 only, with
 `coqui-tts==0.28.0` for XTTS. The original TTS 0.22.0 requires the removed
 `BeamSearchScorer` API and is not the supported Transformers 5 package.
-The tracked `Pipfile.lock` must be regenerated with Python 3.11 before it
-can claim this policy: it still resolves `5.5.0`. The release audit has no
-ignore for CVE-2026-1839 or PYSEC-2025-217.
+The Python 3.11 resolver-regenerated tracked `Pipfile.lock` selects
+`transformers==5.22.2`. Regenerate the lock with Python 3.11 after any
+Pipfile change; do not hand-edit generated hashes or treat a manifest-only
+floor as proof that the installed profile is compatible. The release audit
+has no ignore for CVE-2026-1839 or PYSEC-2025-217.
 
 The managed-runtime builder imports the shipped voice stack and checks its
 versions. The repository regression cross-checks these exact sets against the

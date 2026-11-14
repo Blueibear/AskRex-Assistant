@@ -76,6 +76,16 @@ def test_project_and_profile_transformers_policy_matches_lock_selection() -> Non
         assert "TTS==0.22.0" not in project["project"]["optional-dependencies"][extra]
 
 
+def test_dependency_guide_reports_the_current_transformers_lock_selection() -> None:
+    """Keep release guidance from contradicting the generated Pipenv lock."""
+    guide = (ROOT / "docs" / "DEPENDENCIES.md").read_text(encoding="utf-8")
+    lock = json.loads((ROOT / "Pipfile.lock").read_text(encoding="utf-8"))
+
+    assert lock["default"]["transformers"]["version"] == "==5.22.2"
+    assert "Pipfile.lock` selects\n`transformers==5.22.2`" in guide
+    assert "it still resolves `5.5.0`" not in guide
+
+
 def test_pipenv_lock_keeps_high_advisory_floors() -> None:
     """Reject stale Pipenv selections in runtime and development dependency graphs."""
     lock = json.loads((ROOT / "Pipfile.lock").read_text(encoding="utf-8"))
