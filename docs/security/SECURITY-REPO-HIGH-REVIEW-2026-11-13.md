@@ -347,3 +347,47 @@ alert list, before independent review can accept completion. Owner:
 backend (packaging step), repository owner (Dependabot access). This
 session does not claim merge, deployment, build, or physical-acceptance
 status.
+
+## Windows operator follow-up, 2026-11-14 UTC
+
+The Linux worker's packaging and alert-access blockers above were resolved by
+the authorized Windows operator without changing the dependency selections.
+This follow-up supersedes the earlier session's blocked disposition for those
+two evidence items; it does not claim alert closure, merge, deployment, or
+physical-device acceptance.
+
+On commit `3a9afecadfbafb024dd35a34d1e6a99c770ef8f3`, a clean Windows
+`npm run dist` completed with exit 0. The installer was 450,052,540 bytes,
+SHA-256 `6F6923EB274DB4E90BCE5DF647D324FDA905EB4717C435F04BC40F3E93763557`.
+The package-content check exited 0, and the Electron harness passed (1 test).
+The existing [Windows Electron Artifact workflow run](https://github.com/Blueibear/AskRex-Assistant/actions/runs/43559782518)
+was explicitly dispatched on the same commit and completed successfully. It
+passed the managed-runtime build, installer, package-content check, clean
+first-run setup, and full installed-artifact smoke, including detached
+background survival, uninstall, reinstall, and final uninstall. The uploaded
+first-run and installed-artifact diagnostics both report `status: success`;
+their SHA-256 hashes are `1AEF3F83C3F5E4C64590DC06CA4A29AC237A0B5D15AABE67D8899FA6CFC05A0E`
+and `6E40ED3474430B4A93FADFF207DACCF1A4FE58DB615E5AB5CE9EA136EC29D5E5`.
+The complete job-log SHA-256 is
+`06F1006D25A3D751382055B5EBD30DE41CBCBF351D1271C3B9A0E19AB227EF9F`.
+The local coordination receipt is
+`evidence/windows-electron-1893009-20261113/RECEIPT.md`.
+
+The installed smoke script was corrected to use the ID of the user it actually
+created and to force the background-startup path it asserts. The managed
+runtime import probe now distinguishes a timeout from a launch error and
+allows 180 seconds for a cold installed runtime. These changes are in
+`3a9afec`, and the workflow ran those committed scripts. The local desktop's
+non-elevated token cannot create even a separate harmless ONLOGON task
+(`Access is denied`); an elevated local run passed, and the Windows CI run
+passed. Normal non-elevated background registration on this particular desktop
+remains an observed limitation, not a claim about every Windows host.
+
+The Windows operator also queried the authenticated Dependabot API at
+`2026-11-14T05:01:26Z`: 321 open alert instances on the default branch,
+22 critical, 152 high, 125 medium, and 22 low. These are current remote
+counts, while the 147-high snapshot above is historical. The local branch
+fixes cannot close alerts until merged and re-evaluated; the per-advisory
+exposure/owner/next-action dispositions remain in the dated register.
+Independent review of the final Ralph candidate and the supervisor's own
+exact-revision gates are still required before this task can be accepted.
