@@ -377,8 +377,9 @@ try {
     $env:LOCALAPPDATA = $localAppData
     $env:APPDATA = $appData
     $env:ASKREX_RUNTIME_DIR = $runtimeRoot
-    & $runtimePython -I -c "from rex.auth import create_user; from rex.identity import set_session_user; from rex.permissions import bootstrap_admin_if_first_user; u=create_user('artifact-smoke-user','artifact-smoke-password'); bootstrap_admin_if_first_user(str(u['id'])); set_session_user('artifact-ci-user')"
+    $bootstrapResult = & $runtimePython -I -c "from rex.auth import create_user; from rex.identity import set_session_user; from rex.permissions import bootstrap_admin_if_first_user; u=create_user('artifact-smoke-user','artifact-smoke-password'); bootstrap_admin_if_first_user(str(u['id'])); set_session_user(str(u['id'])); print(u['id'])"
     if ($LASTEXITCODE -ne 0) { throw 'Managed runtime could not bootstrap setup state and establish the smoke identity.' }
+    $expectedUserId = @($bootstrapResult | Select-Object -Last 1)[0].Trim()
 
     Set-SmokePhase 'identity-bridge'
     $identityPayload = '{"action":"resolve_electron_session"}'
@@ -407,12 +408,13 @@ try {
         throw "Read-only identity bridge returned no JSON: $($identityResult.Stdout) $($identityResult.Stderr)"
     }
     $identity = $identityJson | ConvertFrom-Json
-    if (-not $identity.ok -or $identity.user_id -ne 'artifact-ci-user') {
-        throw 'Read-only identity bridge returned an unexpected result.'
+    if (-not $identity.ok -or $identity.user_id -ne $expectedUserId) {
+        throw "Read-only identity bridge returned an unexpected result: $identityJson"
     }
 
     Set-SmokePhase 'electron-ipc-smoke'
     $env:ASKREX_ARTIFACT_SMOKE = '1'
+    $env:ASKREX_ARTIFACT_SMOKE_FORCE_BACKGROUND = '1'
     $env:ASKREX_ARTIFACT_SMOKE_RUNTIME_ROOT = $runtimeRoot
     $env:ASKREX_ARTIFACT_SMOKE_OUTPUT = $smokeOutput
     $env:PATH = Join-Path $env:SystemRoot 'System32'
@@ -481,6 +483,7 @@ try {
 } finally {
     Remove-SmokeBackgroundStartupTask
     Remove-Item Env:ASKREX_ARTIFACT_SMOKE -ErrorAction SilentlyContinue
+    Remove-Item Env:ASKREX_ARTIFACT_SMOKE_FORCE_BACKGROUND -ErrorAction SilentlyContinue
     Remove-Item Env:ASKREX_ARTIFACT_SMOKE_OUTPUT -ErrorAction SilentlyContinue
     Remove-Item Env:ASKREX_ARTIFACT_SMOKE_RUNTIME_ROOT -ErrorAction SilentlyContinue
     Remove-Item Env:ASKREX_RUNTIME_DIR -ErrorAction SilentlyContinue

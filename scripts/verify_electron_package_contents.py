@@ -108,10 +108,12 @@ def probe_managed_runtime(python_exe: Path) -> list[str]:
             check=False,
             capture_output=True,
             text=True,
-            timeout=60.0,
+            timeout=180.0,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return ["managed runtime import probe could not execute"]
+    except subprocess.TimeoutExpired as exc:
+        return [f"managed runtime import probe timed out after {exc.timeout}s"]
+    except OSError as exc:
+        return [f"managed runtime import probe could not execute: {exc}"]
 
     if result.returncode == 0:
         return []
