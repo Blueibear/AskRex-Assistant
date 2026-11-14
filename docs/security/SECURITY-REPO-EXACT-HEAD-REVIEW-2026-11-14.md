@@ -218,6 +218,16 @@ this session's vantage point either way. Nothing in the reviewed material
 claims those alerts are closed, and this review does not claim that
 either.
 
+**Addendum**: pushing this review's own commit produced GitHub's
+standard post-push advisory banner, which independently states the exact
+same default-branch figure from GitHub itself: "GitHub found 321
+vulnerabilities on Blueibear/AskRex-Assistant's default branch (22
+critical, 152 high, 125 moderate, 22 low)." This is first-party evidence
+(unprompted, from `git push`'s own remote output, not from the `gh api`
+call that returned 403) and corroborates the coordination message's count
+as of this review. It still does not establish alert closure, merge, or
+deployment, and alert counts are expected to keep drifting.
+
 ## "Exact-head supervisor gate manifest"
 
 The task asked to "run the applicable exact-head supervisor gate manifest
