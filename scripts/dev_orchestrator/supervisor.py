@@ -26,6 +26,7 @@ from .handoff import (
     validate_handoff,
 )
 from .lifecycle import ControlPlaneLock
+from .review_fallback import fallback_active, load_hourly_review, review_receipt_path
 from .routing import SOL_MODEL, select_implementer_model, select_reviewer_model
 from .runner import (
     AgentInvocationError,
@@ -374,6 +375,16 @@ class Supervisor:
     def _run_role(self, role: str) -> None:
         state = self.load_state(role)
         if state.status is WorkerStatus.BLOCKED_SYSTEM:
+            if state.blocker_kind in {"review_fallback_wait", "review_fallback_invalid"}:
+                if fallback_active(self.config):
+                    if state.blocker_kind == "review_fallback_invalid" or state.task is None:
+                        return
+                    head = self._capture_task_base_head(role)
+                    receipt_path = review_receipt_path(
+                        self.config, role, state.task.task_id, head
+                    )
+                    if not receipt_path.is_file():
+                        return
             if state.resume_status is None:
                 return
             state = replace(
@@ -879,22 +890,55 @@ class Supervisor:
 
     def _review(self, role: str, state: WorkerState, context: str) -> None:
         assert state.task is not None
-        model = (
-            SOL_MODEL
-            if self._last_provider(role) == "codex"
-            else select_reviewer_model(state, self.config)
-        )
-        try:
-            result = self._invoke_or_recover(
-                role,
-                state,
-                phase="review",
-                task_id=state.task.task_id,
-                invoke=lambda: self.invoker.review(role, state, state.task, context, model),
+        using_fallback = fallback_active(self.config)
+        if using_fallback:
+            try:
+                result = load_hourly_review(
+                    self.config,
+                    role,
+                    state,
+                    head=self._capture_task_base_head(role),
+                    implementation_provider=self._last_provider(role),
+                )
+            except (FileNotFoundError, ValueError) as exc:
+                self.save_state(
+                    replace(
+                        state,
+                        status=WorkerStatus.BLOCKED_SYSTEM,
+                        blocked_reason=f"invalid independent fallback review: {exc}",
+                        blocker_kind="review_fallback_invalid",
+                        resume_status=WorkerStatus.REVIEWING,
+                    )
+                )
+                return
+            if result is None:
+                self.save_state(
+                    replace(
+                        state,
+                        status=WorkerStatus.BLOCKED_SYSTEM,
+                        blocked_reason="Awaiting revision-bound hourly ChatGPT review receipt",
+                        blocker_kind="review_fallback_wait",
+                        resume_status=WorkerStatus.REVIEWING,
+                    )
+                )
+                return
+        else:
+            model = (
+                SOL_MODEL
+                if self._last_provider(role) == "codex"
+                else select_reviewer_model(state, self.config)
             )
-        except AgentInvocationError as exc:
-            self._handle_invocation_error(role, state, "review", exc, context)
-            return
+            try:
+                result = self._invoke_or_recover(
+                    role,
+                    state,
+                    phase="review",
+                    task_id=state.task.task_id,
+                    invoke=lambda: self.invoker.review(role, state, state.task, context, model),
+                )
+            except AgentInvocationError as exc:
+                self._handle_invocation_error(role, state, "review", exc, context)
+                return
         if not self._accept_result(
             role,
             state,
@@ -907,7 +951,7 @@ class Supervisor:
             self._record_completed_task(
                 role,
                 state.task,
-                source="independent_review",
+                source="chatgpt_hourly_review" if using_fallback else "independent_review",
                 invocation_id=result.invocation_id,
             )
             if result.issue_updates and not _updates_are_retest_handoff(result.issue_updates):
