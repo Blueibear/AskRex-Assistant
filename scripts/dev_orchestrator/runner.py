@@ -507,6 +507,13 @@ def _bounded_failure_detail(text: str, limit: int = 4000) -> str:
 
 def classify_cli_failure(text: str, returncode: int) -> str:
     normalized = text.lower()
+    # Prefer the last explicit CLI error over unrelated MCP login warnings.
+    for line in reversed(normalized.splitlines()):
+        terminal_error = line.lstrip()
+        if terminal_error.startswith("error: "):
+            if terminal_error.startswith("error: selected model is at capacity"):
+                return "transient"
+            break
     if (
         "usage limit" in normalized
         or "session limit" in normalized

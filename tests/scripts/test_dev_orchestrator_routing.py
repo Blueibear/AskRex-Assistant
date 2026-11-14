@@ -237,6 +237,37 @@ def test_runner_pipe_timeout_takes_precedence_over_incidental_auth_noise() -> No
     assert classify_cli_failure(output, 1) == "timeout"
 
 
+def test_codex_model_capacity_overrides_unrelated_mcp_auth_warnings() -> None:
+    from scripts.dev_orchestrator import runner
+
+    output = (
+        "2026-11-14 ERROR rmcp::transport::worker: AuthRequired(Authentication required)\n"
+        "2026-11-14 ERROR rmcp::transport::worker: HTTP 403 from optional connector\n"
+        "ERROR: Selected model is at capacity. Please try a different model.\n"
+    )
+    assert classify_cli_failure(output, 1) == "transient"
+    invoker = object.__new__(runner.CliAgentInvoker)
+    with pytest.raises(runner.AgentInvocationError) as exc:
+        invoker._finish("codex", runner.ProcessResult(1, "", output))
+    assert exc.value.kind == "transient"
+
+
+def test_incidental_model_capacity_phrase_does_not_mask_actual_auth_error() -> None:
+    output = (
+        "user prompt: Investigate selected model is at capacity errors.\n"
+        "ERROR: Failed to authenticate. 401 OAuth access token has expired.\n"
+    )
+    assert classify_cli_failure(output, 1) == "auth"
+
+
+def test_later_cli_auth_error_takes_precedence_over_earlier_capacity_error() -> None:
+    output = (
+        "ERROR: Selected model is at capacity. Please try a different model.\n"
+        "ERROR: Failed to authenticate. 401 OAuth access token has expired.\n"
+    )
+    assert classify_cli_failure(output, 1) == "auth"
+
+
 def test_codex_runner_pipe_failure_resets_windows_sandbox_before_retry(monkeypatch) -> None:
     from scripts.dev_orchestrator import runner
 
