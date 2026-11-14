@@ -240,12 +240,19 @@ because it was skipped.
 - **Built**: no packaging build was run or attempted in this session for
   this change (not applicable — no packaging-affecting code changed).
 - **Deployed**: no. No deployment of any kind was performed or claimed.
-- **Remote CI evidence**: not yet available at the time this document was
-  written; GitHub Actions run status for the pushed commit should be
-  checked after push and recorded as a follow-up, since checking workflow
-  runs for `Blueibear/AskRex-Assistant` itself (unlike the Dependabot alerts
-  API used in prior sessions) is within this session's granted GitHub
-  access.
+- **Remote CI evidence**: checked after push with the GitHub MCP
+  `actions_list` tool (`list_workflow_runs` filtered to this branch) for
+  `ci.yml`, `commitlint.yml`, and `windows-electron-artifact.yml`, and
+  confirmed **zero runs on all three**. None of the four workflows' `push`
+  triggers match a `ralph/**` branch name (`ci.yml` watches `push: branches:
+  [master, claude/**]`; the others trigger only on `pull_request`,
+  `workflow_dispatch`/`workflow_call`, or `push: tags: [v*]`), and no pull
+  request was opened (none was requested and CLAUDE.md/the task both say
+  not to create one unless asked). This is a real, checked absence of CI
+  evidence on this exact commit, not an unchecked gap — the only ways to
+  get that evidence are to open a PR to `master` or to push a
+  `claude/**`-matching ref, either of which is outside this task's
+  authorization.
 - **Alert closure**: no Dependabot alert is claimed closed by this change;
   this document only concerns workflow-file hardening, not dependency
   versions.
