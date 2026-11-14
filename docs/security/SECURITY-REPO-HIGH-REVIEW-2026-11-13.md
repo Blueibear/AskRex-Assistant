@@ -116,3 +116,155 @@ It does not establish a commit, merge, remote alert closure, build,
 deployment, release signing, installed-artifact behavior, or physical
 acceptance. The supervisor owns exact-revision validation and the independent
 reviewer owns review disposition.
+
+## 2026-11-14 exact-candidate affected-path execution receipt
+
+This section supplies the exact-candidate execution evidence the prior
+section said was still missing. It was produced in this session's own
+container (Python 3.11.18, Node 22.23.4/npm 10.9.9), not a disposable
+pre-review scratch copy, by actually installing and running the suites below
+against the exact commits named — not by trusting any externally-supplied
+claim. It still does not establish a merge, remote alert closure, packaged
+build artifact, deployment, release signing, or physical Windows acceptance.
+
+Candidate revisions: `623571ecfa1531c95bcd365fd30426df2ec14329` (GUI
+`minimatch` fix) then `d42a537905168cf3e40d94a8a9abf2208a82b176` (doctor
+smoke-test mock fix), both on `claude/backend-security-repo-high-g3hdno`
+(mirrored by fast-forward to
+`ralph/cloud/backend/backend-security-repo-high-and-dispositi-ea5a451a`).
+
+### Refreshed alert count
+
+A `git push` of this work to GitHub on 2026-11-14 reported the live
+default-branch (`master`) Dependabot count as **22 critical, 152 high, 125
+moderate, 22 low (321 total)** — higher than the 2026-11-12 dated snapshot's
+289 non-critical + 22 critical = 311, confirming the task instruction that
+counts drift and must not be assumed current. This repository/session has no
+tool that lists individual Dependabot alerts (the available GitHub MCP tools
+and the permitted `gh api search/*` do not cover `dependabot/alerts`), so the
+per-advisory detail could not be independently re-pulled here; the 2026-11-12
+per-advisory register remains the best available detail and is corrected
+below where it is independently verifiable as stale.
+
+### Python gates (`.venv311`, Python 3.11.18)
+
+- `pip install .` then `pip install -r requirements-dev.txt`: both exit 0.
+- `pytest -q tests/test_dependency_policy.py`: **10/10 passed**.
+- `python scripts/security_audit.py --release-gate`: **passed** (no merge
+  markers, no exposed secrets, 0 actionable placeholder findings).
+- `ruff check` and `black --check --diff` on every file this session
+  changed: **clean**.
+- `pip-audit --strict .` against the fully installed graph, including
+  `requirements-electron-voice.txt` (torch 2.7.1/torchvision
+  0.22.1/torchaudio 2.7.1/openai-whisper 20250625/openwakeword
+  0.6.0/scipy 1.15.3/onnxruntime 1.22.0/scikit-learn 1.6.1) and
+  `transformers==5.22.2`: **"No known vulnerabilities found."** `pip-audit`
+  draws on PyPI/OSV advisory data, which is a different source and coverage
+  than GitHub's GHSA/Dependabot feed, so this is corroborating evidence, not
+  a replacement for a Dependabot recheck.
+- `python scripts/verify_dependency_profile.py --profile electron_voice`:
+  **passed** — `{'torch': '2.7.1', 'torchvision': '0.22.1', 'torchaudio':
+  '2.7.1', 'openai-whisper': '20250625', 'openwakeword': '0.6.0', 'scipy':
+  '1.15.3', 'onnxruntime': '1.22.0', 'scikit-learn': '1.6.1'}`, matching the
+  pinned `requirements-electron-voice.txt` set exactly, with the torch
+  tensor/torchvision transform/torchaudio resample smoke operations and the
+  Whisper/openWakeWord/onnxruntime/scikit-learn/sounddevice/soundfile/
+  imageio-ffmpeg imports all succeeding. (This container has no PortAudio
+  system library by default; `libportaudio2` was installed from the
+  distribution's own package repository to let `sounddevice` import, a
+  container-local system-library install with no effect on the repository,
+  secrets, or any other session.)
+- HTTPS/certificate verification: `requests.get("https://pypi.org/...")`
+  with default verification, and `urllib.request.urlopen` with
+  `ssl.create_default_context(cafile=certifi.where())`, both returned
+  HTTP 200 with urllib3 2.8.0 / certifi 2026.10.23 once the TLS trust
+  anchor matched the actual path in use. This container routes all
+  outbound HTTPS through a pinned local proxy (its own CA, not a public
+  CA); a certifi-only trust store fails here for that sandbox-specific
+  reason, not because of any urllib3/certifi defect — verification was
+  never disabled, and a real end-user machine reaching PyPI's actual CA
+  chain directly would not hit this proxy-specific case at all.
+- `pytest -m "not slow and not audio and not gpu" -rs -q` (the CI-mirroring
+  marker set), run twice:
+  1. First pass (before any fix in this section): **2 failed, 9858 passed,
+     63 skipped**. Both failures were root-caused, not left unexplained:
+     - `tests/mobile_api/test_attachments.py::...test_ingests_private_attachment_and_returns_safe_provenance`
+       failed only because this session's ad hoc `pip install .` resolved
+       Werkzeug to 3.1.9 (pyproject.toml's floor is `werkzeug>=3.1.6`,
+       unpinned) instead of the Pipenv-lock-pinned `3.1.6`
+       (`Pipfile.lock` `default.werkzeug == 3.1.6`). Reinstalling
+       `werkzeug==3.1.6` made all 29 tests in that file pass. This is a
+       test-environment reproduction gap in a floor-only dependency range,
+       not a regression in the exact Pipenv-locked candidate; it is noted
+       here rather than silently fixed because tightening the floor is a
+       dependency-policy decision this task has not been asked to make.
+     - `tests/test_us327_smoke.py::TestDoctorSmoke::test_exits_zero_with_mocked_checks`
+       failed because `_patch_all_checks()` never mocked
+       `check_credential_vault_backend`, which `run_diagnostics()` does
+       call. On any non-Windows/macOS platform `get_credential_vault()`
+       raises `VaultUnavailableError` by the documented S4 fail-closed
+       design, so that real check returns `Status.WARNING`, and the smoke
+       test's "ready to use" / zero-warning assertion fails — on every
+       Linux run, independent of any dependency change. This is a genuine,
+       narrow pre-existing test gap (missing mock for a check added after
+       the test was written), fixed in commit `d42a5379` by mocking it like
+       every other check in that helper; verified 8/8 passed afterward.
+  2. Second pass (werkzeug pinned back to the resolver-locked `3.1.6`,
+     `test_us327_smoke.py` fix applied, transformers/electron-voice stack
+     installed): **9863 passed, 60 skipped, 0 failed** in 513s. (The skip
+     count drop from 63 to 60 is the three `test_transformers_shim.py`
+     cases that previously skipped for lack of an installed `transformers`
+     and now run and pass.)
+
+### GUI gates (`gui/`, Node 22.23.4, npm 10.9.9)
+
+Run at commit `623571ec` (the `minimatch` override) and reconfirmed
+unaffected by the later test-only commit:
+
+- `npm ci`: exit 0.
+- `npm audit --audit-level=high`: exit 0, **0 critical/high** both before
+  (16 moderate) and after (2 moderate) the `minimatch` override.
+- `npm audit --json` before the override showed Undici, Vite, Electron,
+  source-map-js, brace-expansion, fast-uri, and postcss-selector-parser are
+  **no longer present as current `npm audit` findings at all** on this
+  lock — only `minimatch` (transitive, via `electron-builder`'s
+  `@electron/universal`/`app-builder-lib`, `GHSA-g3hv-75wg-m249`, range
+  `>=7.0.0 <11.0.1`) and the already-tracked `react-router`/
+  `react-router-dom` moderate pair remained.
+- Added `"minimatch": "^11.0.1"` to `gui/package.json`'s existing
+  `overrides` block (the same pattern already used there for `undici` and
+  `brace-expansion`), regenerated the lock with
+  `npm install --package-lock-only`, then reran `npm ci` from the new lock,
+  `npm test -- --run` (**343/343 passed**), `npm run typecheck` (clean),
+  `npm run lint` (clean, 2 pre-existing warnings), and `npm run build`
+  (succeeded) — all green. `npm audit` dropped from 16 to 2 moderate
+  findings; the remaining 2 are `react-router`/`react-router-dom`
+  (`GHSA-wrjc-x8rr-h8h6`, `GHSA-337j-9hxr-rhxg`), which need a 6→7 major
+  migration and were deliberately not attempted here (a breaking-change
+  batch, not a small compatible one).
+
+### Disposition correction
+
+`DEPENDABOT-NONCRITICAL-DISPOSITIONS-2026-11-12.md` labeled all four
+Transformers high-severity rows (`GHSA-29pf-2h5f-8g72`, `GHSA-fgcw-684q-jj6r`,
+`GHSA-x9r9-c232-4q39`, `GHSA-xrqw-3rrv-vx5w`) "Unresolved compatibility
+batch," but every one of those rows' own listed vulnerable ranges
+(`< 5.3.0`, `< 5.5.0`, `>= 4.49.0, <= 5.8.1`, `< 5.10.0`) already excludes
+the current `transformers==5.22.2` pin. That stale wording is corrected in
+this session to match the file's own 2026-11-13 reconciliation table, which
+already had this right. `torch` (`GHSA-rrmf-rvhw-rf47`, range `<= 2.12.1`)
+was independently rechecked against the current `2.7.1` pin and remains
+genuinely open — `2.7.1` falls inside that range — so its "Unresolved"
+disposition is accurate and was left as-is; a torch upgrade needs a
+coordinated `torch`/`torchvision`/`torchaudio` bump across every pinned
+profile plus full Voice/model regression, which is out of scope for a small
+compatible batch.
+
+### Status separation (2026-11-14)
+
+This is real local execution evidence against the exact commits named above,
+gathered in this session's own container. It still does not establish a
+remote Dependabot alert closure, a merge to `master`, a packaged build
+artifact, a deployment, a release signature, or physical Windows acceptance
+(US-130). Independent review of commits `623571ec` and `d42a5379` remains
+required before any of those claims could be made.
