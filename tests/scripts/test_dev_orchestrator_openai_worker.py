@@ -254,7 +254,6 @@ def test_review_marks_reserved_spend_uncertain_after_transport_failure(
 def test_openai_review_rejects_implementation_outcome_before_coordination_validation(
     tmp_path: Path,
 ) -> None:
-    from scripts.dev_orchestrator.openai_worker import OpenAIModelWorker
     from scripts.dev_orchestrator.runner import AgentInvocationError
     from scripts.dev_orchestrator.types import TaskItem
 
