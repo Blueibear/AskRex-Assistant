@@ -4,7 +4,7 @@ import hashlib
 from typing import Any
 
 from .openai_budget import CONSERVATIVE_PRICE_PER_MILLION, OpenAIBudgetLedger
-from .routing import SOL_MODEL
+from .routing import METERED_OPENAI_API_ALLOWED_ROLES, SOL_MODEL
 from .runner import AgentInvocationError
 from .storage import AtomicJsonStore
 from .types import AgentResult, OrchestratorConfig, TaskItem, WorkerState
@@ -65,7 +65,8 @@ class ProviderRoutingInvoker:
             return self.cli_invoker.review(role, state, task, context, selected_model)
         except AgentInvocationError as exc:
             if (
-                not self.config.openai_worker_enabled
+                role not in METERED_OPENAI_API_ALLOWED_ROLES
+                or not self.config.openai_worker_enabled
                 or exc.kind not in _SUBSCRIPTION_API_FALLBACK_KINDS
             ):
                 raise
@@ -82,7 +83,8 @@ class ProviderRoutingInvoker:
             subscription_result = self.cli_invoker.lead(role, state, context, task=task)
         except AgentInvocationError as exc:
             if (
-                not self.config.openai_worker_enabled
+                role not in METERED_OPENAI_API_ALLOWED_ROLES
+                or not self.config.openai_worker_enabled
                 or exc.kind not in _SUBSCRIPTION_API_FALLBACK_KINDS
             ):
                 raise
@@ -90,7 +92,10 @@ class ProviderRoutingInvoker:
         else:
             if task is None or subscription_result.outcome != "failed":
                 return subscription_result
-            if not self.config.openai_worker_enabled:
+            if (
+                not self.config.openai_worker_enabled
+                or role not in METERED_OPENAI_API_ALLOWED_ROLES
+            ):
                 return subscription_result
 
         phase = "adjudicate" if task is not None else "plan"
@@ -118,10 +123,11 @@ class ProviderRoutingInvoker:
         assert task is not None
         return self._maybe_astra(role, state, task, context, api_result)
 
-    def _astra_eligible(self, state: WorkerState, task: TaskItem, episode: str) -> bool:
+    def _astra_eligible(self, role: str, state: WorkerState, task: TaskItem, episode: str) -> bool:
         failures = max(state.implementation_failures, state.review_failures)
         return bool(
-            self.config.openai_worker_enabled
+            role in METERED_OPENAI_API_ALLOWED_ROLES
+            and self.config.openai_worker_enabled
             and self.config.openai_astra_enabled
             and failures >= self.config.astra_adjudication_after
             and self.config.openai_astra_model in CONSERVATIVE_PRICE_PER_MILLION
@@ -137,7 +143,7 @@ class ProviderRoutingInvoker:
         fallback: AgentResult,
     ) -> AgentResult:
         episode = escalation_episode_key(role, task, state)
-        if not self._astra_eligible(state, task, episode):
+        if not self._astra_eligible(role, state, task, episode):
             return fallback
         return self.openai_worker.lead(
             role,

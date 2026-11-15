@@ -22,6 +22,7 @@ from .openai_budget import (
     OpenAIBudgetPolicyError,
 )
 from .openai_transport import OpenAIResponsesTransport, OpenAITransportError
+from .routing import METERED_OPENAI_API_ALLOWED_ROLES
 from .runner import AgentInvocationError
 from .schema import validate_agent_result, validate_phase_outcome
 from .scratch import _clone_scratch_repo, _temporary_scratch_root
@@ -55,6 +56,13 @@ class OpenAIModelWorker:
             monthly_cap_usd=config.openai_monthly_budget_usd,
         )
         self._invocation_id_factory = invocation_id_factory or (lambda: str(uuid4()))
+
+    @staticmethod
+    def _require_metered_api_permission(role: str) -> None:
+        if role not in METERED_OPENAI_API_ALLOWED_ROLES:
+            raise AgentInvocationError(
+                "openai", "policy", f"metered OpenAI API is not authorized for {role}"
+            )
 
     def _repo(self, role: str) -> Path:
         if role == "backend":
@@ -283,6 +291,7 @@ class OpenAIModelWorker:
         context: str,
         model: str,
     ) -> AgentResult:
+        self._require_metered_api_permission(role)
         repo = self._repo(role)
         invocation_id = self._invocation_id_factory()
         with ControlPlaneLock(role_lease_lock_path(self.config, role)):
@@ -346,6 +355,7 @@ class OpenAIModelWorker:
         budget_purpose: str = "",
         episode_key: str = "",
     ) -> AgentResult:
+        self._require_metered_api_permission(role)
         if phase not in {"plan", "adjudicate"}:
             raise ValueError(f"unsupported OpenAI lead phase: {phase}")
         if phase == "adjudicate" and task is None:

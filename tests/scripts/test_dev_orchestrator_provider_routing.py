@@ -500,3 +500,51 @@ def test_planning_does_not_spend_api_budget_for_local_codex_failures(
     assert caught.value.provider == "codex"
     assert caught.value.kind == kind
     assert openai.calls == []
+
+
+@pytest.mark.parametrize("kind", ["usage_limit", "auth"])
+def test_mobile_planning_never_falls_back_to_metered_api(tmp_path: Path, kind: str) -> None:
+    error = AgentInvocationError("codex", kind, "subscription unavailable")
+    cli = _FakeCli(lead=[error])
+    router, _config, cli, openai, budget = _router(tmp_path, cli=cli)
+    before = budget.status()
+
+    with pytest.raises(AgentInvocationError) as caught:
+        router.lead("mobile", WorkerState("mobile"), "ctx")
+
+    assert caught.value is error
+    assert cli.calls == [("lead", "mobile", "", SOL_MODEL)]
+    assert openai.calls == []
+    assert budget.status() == before
+
+
+@pytest.mark.parametrize("kind", ["usage_limit", "auth"])
+def test_mobile_review_never_falls_back_to_metered_api(tmp_path: Path, kind: str) -> None:
+    error = AgentInvocationError("codex", kind, "subscription unavailable")
+    cli = _FakeCli(review=[error])
+    router, _config, cli, openai, budget = _router(tmp_path, cli=cli)
+    task = TaskItem("M-1", "Review mobile")
+    before = budget.status()
+
+    with pytest.raises(AgentInvocationError) as caught:
+        router.review("mobile", WorkerState("mobile"), task, "ctx", TERRA_MODEL)
+
+    assert caught.value is error
+    assert cli.calls == [("review", "mobile", "M-1", TERRA_MODEL)]
+    assert openai.calls == []
+    assert budget.status() == before
+
+
+def test_mobile_adjudication_failure_never_invokes_api_or_astra(tmp_path: Path) -> None:
+    cli = _FakeCli(lead=[_result("failed", task_id="M-1")])
+    router, _config, cli, openai, budget = _router(tmp_path, cli=cli)
+    task = TaskItem("M-1", "Mobile task")
+    state = WorkerState("mobile", task=task, task_base_head="base", implementation_failures=9)
+    before = budget.status()
+
+    result = router.lead("mobile", state, "ctx", task=task)
+
+    assert result.outcome == "failed"
+    assert cli.calls == [("lead", "mobile", "M-1", SOL_MODEL)]
+    assert openai.calls == []
+    assert budget.status() == before

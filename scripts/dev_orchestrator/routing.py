@@ -10,6 +10,8 @@ ASTRA_MODEL = "gpt-6-astra"
 CLAUDE_ROUTINE_MODEL = "sonnet"
 CLAUDE_ESCALATION_MODEL = "opus"
 SUPPORTED_OPENAI_MODELS = frozenset({TERRA_MODEL, SOL_MODEL, ASTRA_MODEL})
+# Operator policy: mobile is subscription/local-only even with global API enabled.
+METERED_OPENAI_API_ALLOWED_ROLES = frozenset({"backend"})
 OPENAI_HARD_MONTHLY_CAP_USD = Decimal("30.00")
 
 

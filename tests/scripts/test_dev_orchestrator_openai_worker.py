@@ -446,3 +446,32 @@ def test_astra_lead_tags_actual_budget_reservation_with_episode(tmp_path: Path) 
     assert budget.reservations == [
         {"model": "gpt-6-astra", "purpose": "astra_adjudication", "episode_key": "episode-1"}
     ]
+
+
+def test_mobile_direct_api_calls_are_denied_before_budget_or_transport(tmp_path: Path) -> None:
+    config, _repo, _state, _task = _leased_review(tmp_path)
+    events: list[str] = []
+    budget = _FakeBudget(events)
+    transport = _FakeTransport(events, _agent_output("inv-mobile"))
+    worker = _worker(config, transport, budget, "inv-mobile")
+
+    with pytest.raises(AgentInvocationError, match="not authorized for mobile") as review:
+        worker.review(
+            "mobile",
+            WorkerState("mobile"),
+            TaskItem("M-1", "Review"),
+            "ctx",
+            "gpt-5.6-terra",
+        )
+    with pytest.raises(AgentInvocationError, match="not authorized for mobile") as plan:
+        worker.lead(
+            "mobile",
+            WorkerState("mobile"),
+            None,
+            "ctx",
+            phase="plan",
+            model="gpt-5.6-sol",
+        )
+    assert review.value.kind == "policy"
+    assert plan.value.kind == "policy"
+    assert events == []
