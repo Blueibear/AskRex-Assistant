@@ -1707,6 +1707,32 @@ def test_review_pass_records_completed_task_and_planner_cannot_resurrect_it(
         (config.coordination_root / "alerts").glob("duplicate-completed-task-backend-*.json")
     )
     assert len(alerts) == 1
+    assert state.idle_context_fingerprint
+
+    # An unchanged coordination context must not spend subscription calls
+    # proposing the same already-reviewed work on every supervisor tick.
+    calls_before = list(invoker.calls)
+    supervisor._run_role("backend")
+    assert invoker.calls == calls_before
+    assert len(list((config.coordination_root / "alerts").glob(
+        "duplicate-completed-task-backend-*.json"
+    ))) == 1
+
+    # A new authorized mailbox update wakes planning without clearing history.
+    (config.coordination_root / "mailbox" / "backend" / "new-task.md").write_text(
+        "From: testing\nTo: backend\nMessage: New bounded task available.\n",
+        encoding="utf-8",
+    )
+    invoker.add(
+        "backend", "lead",
+        result("assign", task_id="backend-us102-new", task_prompt="New bounded work"),
+    )
+    supervisor._run_role("backend")
+    awakened = supervisor.load_state("backend")
+    assert awakened.status is WorkerStatus.IMPLEMENTING
+    assert awakened.task is not None
+    assert awakened.task.task_id == "backend-us102-new"
+    assert awakened.idle_context_fingerprint == ""
 
 
 def test_completed_task_remains_closed_when_reviewed_head_is_ancestor(

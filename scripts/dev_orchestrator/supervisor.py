@@ -713,6 +713,16 @@ class Supervisor:
 
     def _plan(self, role: str, state: WorkerState, context: str) -> None:
         planning_context = context + self._completion_context(role)
+        planning_fingerprint = hashlib.sha256(
+            planning_context.encode("utf-8")
+        ).hexdigest()
+        # A rejected completed-task assignment is not new work. Replan only
+        # when coordination context changes or an explicit queue item arrives.
+        if (
+            state.status is WorkerStatus.IDLE
+            and state.idle_context_fingerprint == planning_fingerprint
+        ):
+            return
         try:
             result = self._invoke_or_recover(
                 role,
@@ -750,7 +760,7 @@ class Supervisor:
                         task_base_head="",
                         blocked_reason="",
                         blocker_kind="",
-                        idle_context_fingerprint="",
+                        idle_context_fingerprint=planning_fingerprint,
                     )
                 )
                 return
