@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -19,15 +20,10 @@ _PROTECTED_REVIEW_MARKERS = (
 )
 
 
-def temporary_fable_review_active(
-    config: OrchestratorConfig,
-    role: str,
-    task: TaskItem,
-    implementation_provider: str,
-    *,
-    now: datetime | None = None,
+def temporary_fable_policy_active(
+    config: OrchestratorConfig, role: str, *, now: datetime | None = None
 ) -> bool:
-    """Expiring Fable code review for ordinary Claude-origin checkpoints only."""
+    """Whether the temporary delegation suspends ChatGPT review for this role."""
     policy = config.metadata.get("temporary_fable_review", {})
     if not isinstance(policy, dict) or policy.get("enabled") is not True:
         return False
@@ -49,13 +45,41 @@ def temporary_fable_review_active(
     current = now or datetime.now(UTC)
     if expires > current + timedelta(days=7):
         raise ValueError("Fable review cannot be enabled more than seven days ahead")
-    if current >= expires or role not in roles:
+    return current < expires and role in roles
+
+
+def temporary_fable_review_active(
+    config: OrchestratorConfig,
+    role: str,
+    task: TaskItem,
+    implementation_provider: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Only routine Claude changes, never work requiring a protected gate."""
+    if not temporary_fable_policy_active(config, role, now=now):
         return False
     if implementation_provider not in {"claude", "claude_cloud"}:
         return False
     task_id = task.task_id.casefold()
-    prompt = task.prompt.casefold()
-    if any(marker in task_id or marker in prompt for marker in _PROTECTED_REVIEW_MARKERS):
+    if any(marker in task_id for marker in _PROTECTED_REVIEW_MARKERS):
+        return False
+    prompt = f"{task.prompt} {task.feedback}".casefold()
+    # The referenced audit-priority memo is an ordering source, not this task's scope.
+    prompt = prompt.replace("(msg-20261116-cross-surface-audit-priority.md)", "")
+    # These two S10 instructions prohibit changes to protected surfaces.
+    # Do not mistake their mentions of auth/privacy for requested modifications.
+    # Keep the exclusion exact and bounded so other security tasks fail closed.
+    prompt = re.sub(
+        r"do not implement the speculative client-side /mobile/status endpoint[^.]{0,500}\.",
+        "",
+        prompt,
+    )
+    prompt = prompt.replace(
+        "preserve existing device pairing, user identity, privacy, and approval flows unchanged.",
+        "",
+    )
+    if any(marker in prompt for marker in _PROTECTED_REVIEW_MARKERS):
         return False
     if any(marker in prompt for marker in ("codex", "cross-provider", "cross provider")):
         return False

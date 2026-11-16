@@ -26,7 +26,11 @@ from .handoff import (
     validate_handoff,
 )
 from .lifecycle import ControlPlaneLock
-from .provider_routing import FABLE_REVIEW_MODEL, temporary_fable_review_active
+from .provider_routing import (
+    FABLE_REVIEW_MODEL,
+    temporary_fable_policy_active,
+    temporary_fable_review_active,
+)
 from .review_fallback import fallback_active, load_hourly_review, review_receipt_path
 from .routing import SOL_MODEL, select_implementer_model, select_reviewer_model
 from .runner import (
@@ -377,7 +381,11 @@ class Supervisor:
         state = self.load_state(role)
         if state.status is WorkerStatus.BLOCKED_SYSTEM:
             if state.blocker_kind in {"review_fallback_wait", "review_fallback_invalid"}:
-                if fallback_active(self.config):
+                # A newly active Fable delegation supersedes old hourly receipt waits.
+                # Normal review eligibility is still checked before invoking Fable.
+                if not temporary_fable_policy_active(self.config, role) and fallback_active(
+                    self.config
+                ):
                     if state.blocker_kind == "review_fallback_invalid" or state.task is None:
                         return
                     head = self._capture_task_base_head(role)
@@ -901,15 +909,16 @@ class Supervisor:
 
     def _review(self, role: str, state: WorkerState, context: str) -> None:
         assert state.task is not None
-        # Temporary Fable review takes precedence over hourly ChatGPT receipts
-        # only for ordinary Claude-origin checkpoints. Protected gates stay Codex.
+        # An active delegation suspends ChatGPT receipts even when this task
+        # requires a protected Codex gate. Never substitute Fable for that gate.
+        fable_policy_active = temporary_fable_policy_active(self.config, role)
         using_fable = temporary_fable_review_active(
             self.config, role, state.task, self._last_provider(role)
         )
-        # A ChatGPT receipt can independently review ordinary Claude work,
-        # never a Codex checkpoint, final verification, or an explicit Codex gate.
+        # Ineligible checkpoints retain their mandatory Codex review route.
+        # During Fable delegation, ChatGPT fallback receipts remain suspended.
         using_fallback = (
-            not using_fable
+            not fable_policy_active
             and fallback_active(self.config)
             and self._last_provider(role) in {"claude", "claude_cloud"}
             and not any(
