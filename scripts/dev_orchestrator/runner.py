@@ -66,7 +66,9 @@ def _schema_json() -> str:
     return json.dumps(schema, separators=(",", ":"), sort_keys=True)
 
 
-def build_claude_command(repo: Path, prompt: str, model: str) -> list[str]:
+def build_claude_command(
+    repo: Path, prompt: str, model: str, *, read_only: bool = False
+) -> list[str]:
     return [
         "claude",
         "-p",
@@ -76,7 +78,7 @@ def build_claude_command(repo: Path, prompt: str, model: str) -> list[str]:
         "acceptEdits",
         "--safe-mode",
         "--tools",
-        "Read,Write,Edit,Glob,Grep",
+        "Read,Glob,Grep" if read_only else "Read,Write,Edit,Glob,Grep",
         "--no-session-persistence",
         "--output-format",
         "json",
@@ -87,12 +89,18 @@ def build_claude_command(repo: Path, prompt: str, model: str) -> list[str]:
 
 
 def build_claude_sandbox_command(
-    repo: Path, prompt: str, model: str, *, container_name: str, use_oauth_token_env: bool = False
+    repo: Path,
+    prompt: str,
+    model: str,
+    *,
+    container_name: str,
+    use_oauth_token_env: bool = False,
+    read_only: bool = False,
 ) -> list[str]:
     credentials = Path.home() / ".claude" / ".credentials.json"
     if not use_oauth_token_env and not credentials.is_file():
         raise RuntimeError("Claude sandbox credentials are unavailable")
-    inner = build_claude_command(Path("/workspace"), prompt, model)
+    inner = build_claude_command(Path("/workspace"), prompt, model, read_only=read_only)
     auth_args = (
         ["--env", "CLAUDE_CODE_OAUTH_TOKEN"]
         if use_oauth_token_env
@@ -115,7 +123,7 @@ def build_claude_sandbox_command(
         "--pids-limit",
         "256",
         "--mount",
-        f"type=bind,src={repo.resolve()},dst=/workspace",
+        f"type=bind,src={repo.resolve()},dst=/workspace" + (",readonly" if read_only else ""),
         "--mount",
         f"type=bind,src={(repo / '.git').resolve()},dst=/workspace/.git,readonly",
         *auth_args,
@@ -1091,6 +1099,8 @@ class CliAgentInvoker:
                             else None
                         )
                         sandbox_kwargs = {"container_name": container_name}
+                        if phase != "implement":
+                            sandbox_kwargs["read_only"] = True
                         if oauth_token:
                             sandbox_kwargs["use_oauth_token_env"] = True
                         run_cmd = build_claude_sandbox_command(
@@ -1135,11 +1145,11 @@ class CliAgentInvoker:
                             )
                             if self._production_executor:
                                 if (
-                                    parsed.task_id != task_id
+                                    (phase in {"implement", "review"} and parsed.task_id != task_id)
                                     or parsed.role != role
                                     or parsed.invocation_id != invocation_id
                                 ):
-                                    raise ValueError("implementation result binding mismatch")
+                                    raise ValueError("Claude result binding mismatch")
                         except (ValueError, OSError) as exc:
                             if self._production_executor:
                                 activity_file.unlink(missing_ok=True)
@@ -1499,6 +1509,11 @@ class CliAgentInvoker:
                     return self._dispatch_cloud_implementation(role, task, context)
                 except AgentInvocationError:
                     pass
+            from .provider_routing import temporary_claude_planning_active
+
+            if temporary_claude_planning_active(self.config, role):
+                # Preserve the Claude blocker instead of consuming exhausted Codex.
+                raise
 
         fallback_invocation_id = str(uuid.uuid4())
         fallback_prompt = _codex_task_prompt(
@@ -1562,6 +1577,24 @@ class CliAgentInvoker:
                 invocation_id,
                 phase="review",
                 task_id=task.task_id,
+            ),
+        )
+
+    def claude_plan(self, role, state, context) -> AgentResult:
+        from .routing import CLAUDE_ROUTINE_MODEL
+
+        repo = self._repo(role)
+        invocation_id = str(uuid.uuid4())
+        command = build_claude_command(
+            repo,
+            _lead_prompt(role, self.config.coordination_root, context, invocation_id),
+            CLAUDE_ROUTINE_MODEL,
+            read_only=True,
+        )
+        return self._finish(
+            "claude",
+            self._execute_agent(
+                command, repo, role, "claude", invocation_id, phase="plan"
             ),
         )
 

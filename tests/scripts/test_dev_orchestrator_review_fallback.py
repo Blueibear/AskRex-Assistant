@@ -214,3 +214,40 @@ def test_hourly_review_findings_require_action(tmp_path: Path) -> None:
         config, "backend", state, head=HEAD, implementation_provider="claude", now=now
     )
     assert result is not None and result.outcome == "changes_required"
+
+
+@pytest.mark.parametrize(
+    ("provider", "task_id", "prompt"),
+    [
+        ("codex", TASK, "Ordinary task"),
+        ("claude", "FINAL-VERIFY-backend", "Final gate"),
+        ("claude", "SECURITY-REPO-20261111", "Security gate"),
+        ("claude", "backend-security-exact-head-review", "Security gate"),
+        ("claude", TASK, "Explicit Codex independent approval required"),
+    ],
+)
+def test_hourly_fallback_preserves_explicit_codex_gates(
+    tmp_path: Path, provider: str, task_id: str, prompt: str
+) -> None:
+    from scripts.dev_orchestrator.types import AgentResult
+
+    config, state, _review, _now = _setup(tmp_path)
+    state = replace(state, task=TaskItem(task_id, prompt))
+    AtomicJsonStore(tmp_path / "handoff" / "backend.json").write(
+        {"last_provider": provider}
+    )
+    calls = []
+    class ReviewInvoker:
+        def review(self, role, _state, task, _context, model):
+            calls.append((role, task.task_id, model))
+            return AgentResult(
+                outcome="changes_required", summary="Independent review required",
+                next_action="Wait for required Codex gate", role=role,
+                task_id=task.task_id,
+            )
+
+    supervisor = Supervisor(config, ReviewInvoker())
+    supervisor.save_state(state)
+    supervisor._review("backend", state, "bounded context")
+    assert calls and calls[0][1] == task_id
+    assert supervisor.load_state("backend").status is WorkerStatus.IMPLEMENTING

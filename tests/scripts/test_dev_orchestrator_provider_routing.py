@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from scripts.dev_orchestrator.openai_budget import (
 from scripts.dev_orchestrator.provider_routing import (
     ProviderRoutingInvoker,
     escalation_episode_key,
+    temporary_claude_planning_active,
 )
 from scripts.dev_orchestrator.routing import ASTRA_MODEL, SOL_MODEL, TERRA_MODEL
 from scripts.dev_orchestrator.runner import AgentInvocationError
@@ -54,6 +56,10 @@ class _FakeCli:
 
     def lead(self, role, state, context, task=None):
         self.calls.append(("lead", role, task.task_id if task else "", SOL_MODEL))
+        return self._take(self.lead_results)
+
+    def claude_plan(self, role, state, context):
+        self.calls.append(("claude_plan", role))
         return self._take(self.lead_results)
 
 
@@ -548,3 +554,77 @@ def test_mobile_adjudication_failure_never_invokes_api_or_astra(tmp_path: Path) 
     assert cli.calls == [("lead", "mobile", "M-1", SOL_MODEL)]
     assert openai.calls == []
     assert budget.status() == before
+
+
+def _with_claude_planning(config: OrchestratorConfig) -> OrchestratorConfig:
+    return replace(
+        config,
+        metadata={
+            **config.metadata,
+            "temporary_claude_planning": {
+                "enabled": True,
+                "reason": "openai_weekly_usage_limit",
+                "expires_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+                "roles": ["backend", "mobile"],
+            },
+        },
+    )
+
+
+def test_temporary_claude_planning_routes_both_roles_without_api(tmp_path: Path) -> None:
+
+    router, config, cli, openai, budget = _router(tmp_path)
+    router.config = _with_claude_planning(config)
+    before = budget.status()
+    cli.lead_results.append(_result("assign"))
+    for role in ("backend", "mobile"):
+        assert router.lead(role, WorkerState(role), "ctx").outcome == "assign"
+    assert cli.calls == [("claude_plan", "backend"), ("claude_plan", "mobile")]
+    assert openai.calls == []
+    assert budget.status() == before
+
+
+def test_temporary_claude_planning_failure_never_falls_back(tmp_path: Path) -> None:
+    error = AgentInvocationError("claude", "usage_limit", "subscription exhausted")
+    cli = _FakeCli(lead=[error])
+    router, config, cli, openai, budget = _router(tmp_path, cli=cli)
+    router.config = _with_claude_planning(config)
+    before = budget.status()
+    with pytest.raises(AgentInvocationError) as caught:
+        router.lead("mobile", WorkerState("mobile"), "ctx")
+    assert caught.value is error
+    assert openai.calls == []
+    assert budget.status() == before
+
+
+def test_claude_planning_does_not_replace_adjudication(tmp_path: Path) -> None:
+    router, config, cli, openai, _budget = _router(tmp_path)
+    router.config = _with_claude_planning(config)
+    task = TaskItem("M-1", "Requires independent adjudication")
+    router.lead("mobile", WorkerState("mobile", task=task), "ctx", task=task)
+    assert cli.calls == [("lead", "mobile", "M-1", SOL_MODEL)]
+    assert openai.calls == []
+
+
+def test_temporary_claude_planning_is_expiring_and_fail_closed(tmp_path: Path) -> None:
+    config = _with_claude_planning(_config(tmp_path))
+    now = datetime.now(UTC)
+    assert temporary_claude_planning_active(config, "backend", now=now)
+    assert not temporary_claude_planning_active(config, "backend", now=now + timedelta(days=2))
+    invalid = replace(config, metadata={
+        **config.metadata,
+        "temporary_claude_planning": {
+            **config.metadata["temporary_claude_planning"],
+            "expires_at": (now + timedelta(days=8)).isoformat(),
+        },
+    })
+    with pytest.raises(ValueError, match="seven days"):
+        temporary_claude_planning_active(invalid, "mobile", now=now)
+    wrong = replace(config, metadata={
+        **config.metadata,
+        "temporary_claude_planning": {
+            **config.metadata["temporary_claude_planning"], "roles": ["unknown"],
+        },
+    })
+    with pytest.raises(ValueError, match="allowlist"):
+        temporary_claude_planning_active(wrong, "mobile", now=now)

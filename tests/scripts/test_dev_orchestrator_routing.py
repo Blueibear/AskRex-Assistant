@@ -2256,3 +2256,134 @@ def test_read_only_closeout_with_existing_cloud_session_fails_closed(
 
     assert caught.value.provider == "claude_cloud"
     assert caught.value.kind == "invalid_state"
+
+
+def test_claude_planning_command_is_read_only(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.runner import build_claude_sandbox_command
+
+    command = build_claude_command(tmp_path, "Plan next task", "sonnet", read_only=True)
+    assert command[command.index("--tools") + 1] == "Read,Glob,Grep"
+    assert "Write" not in command[command.index("--tools") + 1]
+    sandbox = build_claude_sandbox_command(
+        tmp_path, "Plan next task", "sonnet", container_name="askrex-plan-test",
+        use_oauth_token_env=True, read_only=True,
+    )
+    assert sandbox[sandbox.index("--tools") + 1] == "Read,Glob,Grep"
+    assert any(part.endswith("dst=/workspace,readonly") for part in sandbox)
+    assert build_claude_command(tmp_path, "Implement", "sonnet")[
+        command.index("--tools") + 1
+    ] == "Read,Write,Edit,Glob,Grep"
+
+
+def test_claude_planner_returns_task_id_without_repo_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from scripts.dev_orchestrator.runner import CliAgentInvoker
+
+    monkeypatch.setattr(
+        sys.modules[__name__], "_safe_config",
+        lambda _path: (SimpleNamespace(coordination_root=tmp_path), tmp_path, tmp_path),
+    )
+    monkeypatch.setattr(
+        CliAgentInvoker, "__init__",
+        lambda self, config, **_kwargs: setattr(self, "config", config),
+    )
+    monkeypatch.setattr(CliAgentInvoker, "_repo", lambda self, _role: tmp_path)
+    from scripts.dev_orchestrator import runner
+
+    # The existing seal implementation has its own security tests; avoid a
+    # full Windows filesystem hash when testing only the planner contract.
+    monkeypatch.setattr(runner, "_custom_executor_repository_state", lambda _cfg: ())
+    import json
+
+    from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
+
+    config, _backend, mobile = _safe_config(tmp_path)
+    calls = []
+    def execute(command, cwd, timeout_seconds=1800):
+        calls.append((command, cwd))
+        return ProcessResult(0, json.dumps({
+            "outcome": "assign",
+            "summary": "Bounded next task",
+            "next_action": "Implement",
+            "needs_user": False,
+            "blocker_reason": "",
+            "task_id": "M-NEW",
+            "task_prompt": "Implement the next authorized mobile task",
+            "role": "mobile",
+        }), "")
+
+    invoker = CliAgentInvoker(config, execute=execute, allow_test_executor=True)
+    monkeypatch.setattr(
+        invoker, "_execute_agent",
+        lambda command, repo, role, provider, invocation_id, **_kwargs: execute(
+            command, repo.parent / "isolated-test-scratch"
+        ),
+    )
+    result = invoker.claude_plan("mobile", WorkerState("mobile"), "bounded context")
+    assert result.outcome == "assign"
+    assert result.task_id == "M-NEW"
+    command, cwd = calls[0]
+    assert command[command.index("--tools") + 1] == "Read,Glob,Grep"
+    assert cwd.resolve() != mobile.resolve()
+    assert "bounded context" in command[-1]
+
+
+def test_temporary_claude_implementation_does_not_retry_codex(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+
+    from scripts.dev_orchestrator.runner import AgentInvocationError, CliAgentInvoker
+    from scripts.dev_orchestrator.types import OrchestratorConfig
+
+    monkeypatch.setattr(
+        sys.modules[__name__], "_safe_config",
+        lambda _path: (OrchestratorConfig.default(tmp_path), tmp_path, tmp_path),
+    )
+    monkeypatch.setattr(
+        CliAgentInvoker, "__init__",
+        lambda self, config, **_kwargs: setattr(self, "config", config),
+    )
+    monkeypatch.setattr(CliAgentInvoker, "_repo", lambda self, _role: tmp_path)
+
+    def fail_claude(self, command, repo, role, provider, invocation_id, **_kwargs):
+        calls.append(provider)
+        raise AgentInvocationError(provider, "usage_limit", "Claude subscription exhausted")
+
+    monkeypatch.setattr(CliAgentInvoker, "_execute_agent", fail_claude)
+    from dataclasses import replace
+    from datetime import UTC, datetime, timedelta
+
+    from scripts.dev_orchestrator.runner import (
+        CliAgentInvoker,
+        ProcessResult,
+    )
+
+    config, _backend, _mobile = _safe_config(tmp_path)
+    config = replace(config, metadata={
+        **config.metadata,
+        "temporary_claude_planning": {
+            "enabled": True,
+            "reason": "openai_weekly_usage_limit",
+            "expires_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+            "roles": ["mobile"],
+        },
+    })
+    calls = []
+    def execute(command, cwd, timeout_seconds=1800):
+        calls.append(command[0])
+        return ProcessResult(1, "You have reached your usage limit", "")
+
+    invoker = CliAgentInvoker(config, execute=execute, allow_test_executor=True)
+    with pytest.raises(AgentInvocationError) as caught:
+        invoker.implement(
+            "mobile", WorkerState("mobile"),
+            TaskItem("M-1", "Do not modify source, only inspect"), "ctx", "sonnet",
+        )
+    assert caught.value.provider == "claude"
+    assert caught.value.kind == "usage_limit"
+    assert calls == ["claude"]

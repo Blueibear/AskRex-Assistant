@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .openai_budget import CONSERVATIVE_PRICE_PER_MILLION, OpenAIBudgetLedger
@@ -10,6 +11,32 @@ from .storage import AtomicJsonStore
 from .types import AgentResult, OrchestratorConfig, TaskItem, WorkerState
 
 _SUBSCRIPTION_API_FALLBACK_KINDS = frozenset({"usage_limit", "auth"})
+
+
+def temporary_claude_planning_active(
+    config: OrchestratorConfig, role: str, *, now: datetime | None = None
+) -> bool:
+    """Owner-authorized, expiring subscription-only planning route."""
+    policy = config.metadata.get("temporary_claude_planning", {})
+    if not isinstance(policy, dict) or policy.get("enabled") is not True:
+        return False
+    if policy.get("reason") != "openai_weekly_usage_limit":
+        raise ValueError("Claude planning requires the explicit usage-limit reason")
+    roles = policy.get("roles")
+    if not isinstance(roles, list) or not roles or any(
+        value not in {"backend", "mobile"} for value in roles
+    ):
+        raise ValueError("Claude planning requires an explicit role allowlist")
+    try:
+        expires = datetime.fromisoformat(str(policy["expires_at"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Claude planning requires a valid expiry") from exc
+    if expires.tzinfo is None or expires.utcoffset() is None:
+        raise ValueError("Claude planning expiry must be timezone-aware")
+    current = now or datetime.now(UTC)
+    if expires > current + timedelta(days=7):
+        raise ValueError("Claude planning cannot be enabled more than seven days ahead")
+    return current < expires and role in roles
 
 
 def escalation_episode_key(role: str, task: TaskItem, state: WorkerState) -> str:
@@ -157,4 +184,7 @@ class ProviderRoutingInvoker:
         )
 
     def lead(self, role, state, context, task=None) -> AgentResult:
+        if task is None and temporary_claude_planning_active(self.config, role):
+            # Never fall back to Codex or a metered API while this route is active.
+            return self.cli_invoker.claude_plan(role, state, context)
         return self._sol_lead(role, state, context, task)

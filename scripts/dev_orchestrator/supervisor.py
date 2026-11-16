@@ -890,7 +890,21 @@ class Supervisor:
 
     def _review(self, role: str, state: WorkerState, context: str) -> None:
         assert state.task is not None
-        using_fallback = fallback_active(self.config)
+        # A ChatGPT receipt can independently review ordinary Claude work,
+        # never a Codex checkpoint, final verification, or an explicit Codex gate.
+        using_fallback = (
+            fallback_active(self.config)
+            and self._last_provider(role) in {"claude", "claude_cloud"}
+            and not any(
+                marker in state.task.task_id.casefold()
+                for marker in (
+                    "final-verify", "security", "privacy", "auth", "credential",
+                    "permission", "policy", "release", "deploy", "audit",
+                    "approval", "identity", "secret",
+                )
+            )
+            and "codex" not in state.task.prompt.casefold()
+        )
         if using_fallback:
             try:
                 result = load_hourly_review(
