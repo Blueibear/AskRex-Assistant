@@ -56,6 +56,21 @@ def test_fable_review_only_for_ordinary_claude_work(tmp_path):
         assert not temporary_fable_review_active(cfg, "mobile", task, "claude")
 
 
+def test_owner_authorized_codex_equivalent_reviews(tmp_path):
+    cfg = config(tmp_path)
+    cfg = replace(cfg, metadata={"temporary_fable_review": {
+        **cfg.metadata["temporary_fable_review"],
+        "allow_codex_equivalent_reviews": True,
+    }})
+    for task in (
+        TaskItem("backend-security", "Review authentication policy"),
+        TaskItem("FINAL-VERIFY-mobile", "Review release readiness"),
+        TaskItem("mobile-r16-01-status-payload-truth", "Review status payload"),
+    ):
+        assert temporary_fable_review_active(cfg, "mobile", task, "codex")
+        assert temporary_fable_review_active(cfg, "backend", task, "claude")
+
+
 def test_s10_no_change_guardrails_remain_eligible_for_fable(tmp_path):
     cfg = config(tmp_path)
     task = TaskItem(

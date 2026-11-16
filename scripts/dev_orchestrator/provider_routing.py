@@ -59,6 +59,11 @@ def temporary_fable_review_active(
     """Only routine Claude changes, never work requiring a protected gate."""
     if not temporary_fable_policy_active(config, role, now=now):
         return False
+    # Owner-approved, expiring Codex-equivalent review delegation. This changes
+    # reviewer selection, not validation, issue ownership, or physical acceptance.
+    policy = config.metadata["temporary_fable_review"]
+    if policy.get("allow_codex_equivalent_reviews") is True:
+        return True
     if implementation_provider not in {"claude", "claude_cloud"}:
         return False
     task_id = task.task_id.casefold()
