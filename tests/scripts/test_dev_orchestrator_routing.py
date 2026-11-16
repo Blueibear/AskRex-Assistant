@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -2387,3 +2388,43 @@ def test_temporary_claude_implementation_does_not_retry_codex(
     assert caught.value.provider == "claude"
     assert caught.value.kind == "usage_limit"
     assert calls == ["claude"]
+
+
+def test_fable_review_uses_read_only_claude_scratch_and_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
+
+    config, backend, _mobile = _safe_config(tmp_path)
+    from scripts.dev_orchestrator import runner
+    monkeypatch.setattr(runner, "_custom_executor_repository_state", lambda _config: ())
+    seen = {}
+
+    def execute(command, cwd, **_kwargs):
+        seen["command"] = command
+        seen["cwd"] = cwd.resolve()
+        return ProcessResult(
+            0,
+            json.dumps({
+                "outcome": "pass",
+                "summary": "Validated source and gate evidence",
+                "next_action": "Proceed",
+                "needs_user": False,
+                "blocker_reason": "",
+            }),
+            "",
+        )
+
+    result = CliAgentInvoker(
+        config, execute=execute, allow_test_executor=True
+    ).review(
+        "backend", WorkerState("backend"),
+        TaskItem("backend-layout", "Fix layout"), "review evidence", "fable"
+    )
+    assert result.outcome == "pass"
+    command = seen["command"]
+    assert command[command.index("--model") + 1] == "fable"
+    assert command[command.index("--tools") + 1] == "Read,Glob,Grep"
+    assert "--json-schema" in command
+    assert seen["cwd"] != backend.resolve()
+    assert str(backend.resolve()) not in command

@@ -1140,7 +1140,9 @@ class CliAgentInvoker:
                                 self.config.coordination_root,
                                 role,
                                 parsed,
-                                allow_issue_updates=False,
+                                allow_issue_updates=(
+                                    phase == "review" and parsed.outcome == "pass"
+                                ),
                                 task_id=task_id,
                             )
                             if self._production_executor:
@@ -1555,25 +1557,24 @@ class CliAgentInvoker:
                 evidence = None
             if evidence is not None and not evidence.truncated:
                 review_context = evidence.text
-        command = build_codex_command(
-            "review",
-            repo,
-            _review_prompt(
-                role,
-                task,
-                self.config.coordination_root,
-                review_context,
-                invocation_id,
-            ),
-            model,
+        prompt = _review_prompt(
+            role, task, self.config.coordination_root, review_context, invocation_id
         )
+        if model == "fable":
+            # The provider router authorizes this expiring route. Read-only
+            # Claude sandbox and revision-bound evidence are mandatory.
+            command = build_claude_command(repo, prompt, model, read_only=True)
+            provider = "claude"
+        else:
+            command = build_codex_command("review", repo, prompt, model)
+            provider = "codex"
         return self._finish(
-            "codex",
+            provider,
             self._execute_agent(
                 command,
                 repo,
                 role,
-                "codex",
+                provider,
                 invocation_id,
                 phase="review",
                 task_id=task.task_id,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from scripts.dev_orchestrator.supervisor import Supervisor, _is_coordination_only_task
@@ -1826,3 +1827,50 @@ def test_completed_task_prompt_reference_does_not_define_new_task_identity(
         )
         is not None
     )
+
+
+def test_temporary_fable_review_precedes_hourly_receipt_but_not_protected_gates(
+    tmp_path: Path,
+) -> None:
+    from scripts.dev_orchestrator.storage import AtomicJsonStore
+
+    config = make_config(tmp_path, observe_only=False)
+    config = replace(
+        config,
+        metadata={
+            **config.metadata,
+            "temporary_fable_review": {
+                "enabled": True,
+                "reason": "openai_weekly_usage_limit",
+                "model": "fable",
+                "expires_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+                "roles": ["backend", "mobile"],
+            },
+            "review_fallback": {
+                "enabled": True,
+                "reason": "openai_weekly_usage_limit",
+                "expires_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+            },
+        },
+    )
+    invoker = FakeInvoker()
+    supervisor = Supervisor(config, invoker)
+    AtomicJsonStore(config.coordination_root / "handoff" / "backend.json").write(
+        {"last_provider": "claude"}
+    )
+
+    normal = WorkerState(
+        "backend",
+        status=WorkerStatus.REVIEWING,
+        task=TaskItem("backend-layout-001", "Fix layout"),
+    )
+    invoker.add("backend", "review", result("changes_required"))
+    supervisor._review("backend", normal, "bounded review context")
+    assert invoker.review_models == ["fable"]
+
+    protected = replace(
+        normal, task=TaskItem("backend-security-001", "Review security issue")
+    )
+    invoker.add("backend", "review", result("changes_required"))
+    supervisor._review("backend", protected, "bounded review context")
+    assert invoker.review_models == ["fable", "gpt-5.6-terra"]

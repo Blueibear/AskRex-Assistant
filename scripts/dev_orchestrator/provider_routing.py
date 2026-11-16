@@ -11,6 +11,55 @@ from .storage import AtomicJsonStore
 from .types import AgentResult, OrchestratorConfig, TaskItem, WorkerState
 
 _SUBSCRIPTION_API_FALLBACK_KINDS = frozenset({"usage_limit", "auth"})
+FABLE_REVIEW_MODEL = "fable"
+_PROTECTED_REVIEW_MARKERS = (
+    "final-verify", "security", "privacy", "auth", "credential",
+    "permission", "policy", "release", "deploy", "audit",
+    "approval", "identity", "secret",
+)
+
+
+def temporary_fable_review_active(
+    config: OrchestratorConfig,
+    role: str,
+    task: TaskItem,
+    implementation_provider: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Expiring Fable code review for ordinary Claude-origin checkpoints only."""
+    policy = config.metadata.get("temporary_fable_review", {})
+    if not isinstance(policy, dict) or policy.get("enabled") is not True:
+        return False
+    if policy.get("reason") != "openai_weekly_usage_limit":
+        raise ValueError("Fable review requires the explicit usage-limit reason")
+    if policy.get("model") != FABLE_REVIEW_MODEL:
+        raise ValueError("Fable review requires the pinned fable model")
+    roles = policy.get("roles")
+    if not isinstance(roles, list) or not roles or any(
+        value not in {"backend", "mobile"} for value in roles
+    ):
+        raise ValueError("Fable review requires an explicit role allowlist")
+    try:
+        expires = datetime.fromisoformat(str(policy["expires_at"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Fable review requires a valid expiry") from exc
+    if expires.tzinfo is None or expires.utcoffset() is None:
+        raise ValueError("Fable review expiry must be timezone-aware")
+    current = now or datetime.now(UTC)
+    if expires > current + timedelta(days=7):
+        raise ValueError("Fable review cannot be enabled more than seven days ahead")
+    if current >= expires or role not in roles:
+        return False
+    if implementation_provider not in {"claude", "claude_cloud"}:
+        return False
+    task_id = task.task_id.casefold()
+    prompt = task.prompt.casefold()
+    if any(marker in task_id or marker in prompt for marker in _PROTECTED_REVIEW_MARKERS):
+        return False
+    if any(marker in prompt for marker in ("codex", "cross-provider", "cross provider")):
+        return False
+    return True
 
 
 def temporary_claude_planning_active(
@@ -85,6 +134,16 @@ class ProviderRoutingInvoker:
         return task.task_id.upper().startswith("FINAL-VERIFY-")
 
     def review(self, role, state, task, context, model) -> AgentResult:
+        if model == FABLE_REVIEW_MODEL:
+            if not temporary_fable_review_active(
+                self.config, role, task, self._last_provider(role)
+            ):
+                raise AgentInvocationError(
+                    "claude", "policy", "Fable review is not authorized for this checkpoint"
+                )
+            # Fable runs on the Claude subscription in a read-only scratch clone.
+            # No Codex or metered API fallback is permitted for this route.
+            return self.cli_invoker.review(role, state, task, context, FABLE_REVIEW_MODEL)
         selected_model = (
             SOL_MODEL if self._is_final_verify(task) else self._review_model(role, model)
         )

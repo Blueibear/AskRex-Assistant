@@ -26,6 +26,7 @@ from .handoff import (
     validate_handoff,
 )
 from .lifecycle import ControlPlaneLock
+from .provider_routing import FABLE_REVIEW_MODEL, temporary_fable_review_active
 from .review_fallback import fallback_active, load_hourly_review, review_receipt_path
 from .routing import SOL_MODEL, select_implementer_model, select_reviewer_model
 from .runner import (
@@ -900,10 +901,16 @@ class Supervisor:
 
     def _review(self, role: str, state: WorkerState, context: str) -> None:
         assert state.task is not None
+        # Temporary Fable review takes precedence over hourly ChatGPT receipts
+        # only for ordinary Claude-origin checkpoints. Protected gates stay Codex.
+        using_fable = temporary_fable_review_active(
+            self.config, role, state.task, self._last_provider(role)
+        )
         # A ChatGPT receipt can independently review ordinary Claude work,
         # never a Codex checkpoint, final verification, or an explicit Codex gate.
         using_fallback = (
-            fallback_active(self.config)
+            not using_fable
+            and fallback_active(self.config)
             and self._last_provider(role) in {"claude", "claude_cloud"}
             and not any(
                 marker in state.task.task_id.casefold()
@@ -948,9 +955,10 @@ class Supervisor:
                 return
         else:
             model = (
-                SOL_MODEL
-                if self._last_provider(role) == "codex"
-                else select_reviewer_model(state, self.config)
+                FABLE_REVIEW_MODEL if using_fable else (
+                    SOL_MODEL if self._last_provider(role) == "codex"
+                    else select_reviewer_model(state, self.config)
+                )
             )
             try:
                 result = self._invoke_or_recover(
