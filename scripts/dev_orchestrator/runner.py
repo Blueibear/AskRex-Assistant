@@ -228,6 +228,8 @@ def build_codex_command(kind: str, repo: Path, prompt: str, model: str) -> list[
         "exec",
         "--ignore-user-config",
         "--ignore-rules",
+        "-c",
+        'forced_login_method="chatgpt"',
         *git_check,
         "-c",
         'windows.sandbox="elevated"',
@@ -1479,63 +1481,36 @@ class CliAgentInvoker:
                     f"{existing_cloud.session_id}",
                 )
 
-        cloud_mode = self.config.claude_cloud_mode
-        if cloud_allowed and cloud_mode == "preferred":
-            try:
-                return self._dispatch_cloud_implementation(role, task, context)
-            except AgentInvocationError:
-                pass
-
+        # Subscription-authenticated Codex is the primary implementation provider.
         repo = self._repo(role)
         invocation_id = str(uuid.uuid4())
-        prompt = _task_prompt(role, task, self.config.coordination_root, context, invocation_id)
-        command = build_claude_command(repo, prompt, model)
+        prompt = _codex_task_prompt(
+            role, task, self.config.coordination_root, context, invocation_id
+        )
+        command = build_codex_command("implement", repo, prompt, TERRA_MODEL)
         try:
             return self._finish(
-                "claude",
+                "codex",
                 self._execute_agent(
-                    command,
-                    repo,
-                    role,
-                    "claude",
-                    invocation_id,
-                    phase="implement",
-                    task_id=task.task_id,
+                    command, repo, role, "codex", invocation_id,
+                    phase="implement", task_id=task.task_id,
                 ),
             )
         except AgentInvocationError as exc:
             if exc.kind not in {"usage_limit", "auth"}:
                 raise
-            if cloud_allowed and cloud_mode in {"fallback", "preferred"}:
-                try:
-                    return self._dispatch_cloud_implementation(role, task, context)
-                except AgentInvocationError:
-                    pass
-            from .provider_routing import temporary_claude_planning_active
 
-            if temporary_claude_planning_active(self.config, role):
-                # Preserve the Claude blocker instead of consuming exhausted Codex.
-                raise
-
-        fallback_invocation_id = str(uuid.uuid4())
-        fallback_prompt = _codex_task_prompt(
-            role,
-            task,
-            self.config.coordination_root,
-            context,
-            fallback_invocation_id,
+        # Fallback uses Claude CLI subscription, never an API-billed OpenAI worker.
+        fallback_id = str(uuid.uuid4())
+        fallback_prompt = _task_prompt(
+            role, task, self.config.coordination_root, context, fallback_id
         )
-        fallback_command = build_codex_command("implement", repo, fallback_prompt, TERRA_MODEL)
+        fallback_command = build_claude_command(repo, fallback_prompt, model)
         return self._finish(
-            "codex",
+            "claude",
             self._execute_agent(
-                fallback_command,
-                repo,
-                role,
-                "codex",
-                fallback_invocation_id,
-                phase="implement",
-                task_id=task.task_id,
+                fallback_command, repo, role, "claude", fallback_id,
+                phase="implement", task_id=task.task_id,
             ),
         )
 

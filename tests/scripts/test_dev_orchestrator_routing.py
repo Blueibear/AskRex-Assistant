@@ -368,7 +368,7 @@ def test_codex_output_schema_avoids_unsupported_conditionals(tmp_path: Path) -> 
     assert set(schema["required"]) == set(schema["properties"])
 
 
-def test_cli_invoker_runs_claude_in_correct_repo_with_coordination_access(tmp_path: Path) -> None:
+def test_cli_invoker_runs_codex_first_in_correct_repo_with_coordination_access(tmp_path: Path) -> None:
     import json
 
     from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
@@ -398,7 +398,7 @@ def test_cli_invoker_runs_claude_in_correct_repo_with_coordination_access(tmp_pa
     assert result.outcome == "continue"
     assert cwd != mobile
     assert cwd.name == "repo"
-    assert command[command.index("--model") + 1] == "sonnet"
+    assert command[command.index("-m") + 1] == TERRA_MODEL
     assert "--add-dir" not in command
     assert "context" in command[-1]
 
@@ -745,7 +745,7 @@ def test_live_mismatched_cloud_session_still_blocks_new_task(
     assert cleared == []
 
 
-def test_implementation_falls_back_to_codex_when_claude_is_usage_limited(tmp_path: Path) -> None:
+def test_implementation_falls_back_to_claude_when_codex_is_usage_limited(tmp_path: Path) -> None:
     import json
 
     from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
@@ -779,13 +779,14 @@ def test_implementation_falls_back_to_codex_when_claude_is_usage_limited(tmp_pat
 
     assert result.outcome == "continue"
     assert len(calls) == 2
-    assert calls[1][0].lower().startswith("codex")
-    assert calls[1][calls[1].index("-s") + 1] == "workspace-write"
-    assert "Shell/Bash/Web/MCP tools are intentionally unavailable" not in calls[1][-1]
-    assert "workspace-local" in calls[1][-1]
+    assert calls[0][0].lower().startswith("codex")
+    assert calls[1][0].lower().startswith("claude")
+    assert calls[0][calls[0].index("-s") + 1] == "workspace-write"
+    assert "Shell/Bash/Web/MCP tools are intentionally unavailable" not in calls[0][-1]
+    assert "workspace-local" in calls[0][-1]
 
 
-def test_implementation_falls_back_to_codex_on_claude_zero_exit_monthly_spend_limit(
+def test_implementation_falls_back_to_claude_on_codex_zero_exit_monthly_spend_limit(
     tmp_path: Path,
 ) -> None:
     import json
@@ -839,10 +840,11 @@ def test_implementation_falls_back_to_codex_on_claude_zero_exit_monthly_spend_li
 
     assert result.outcome == "continue"
     assert len(calls) == 2
-    assert calls[1][0].lower().startswith("codex")
+    assert calls[0][0].lower().startswith("codex")
+    assert calls[1][0].lower().startswith("claude")
 
 
-def test_implementation_falls_back_to_codex_when_claude_auth_is_revoked(tmp_path: Path) -> None:
+def test_implementation_falls_back_to_claude_when_codex_auth_is_revoked(tmp_path: Path) -> None:
     import json
 
     from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
@@ -884,11 +886,12 @@ def test_implementation_falls_back_to_codex_when_claude_auth_is_revoked(tmp_path
 
     assert result.outcome == "continue"
     assert len(calls) == 2
-    assert calls[1][0].lower().startswith("codex")
-    assert calls[1][calls[1].index("-s") + 1] == "workspace-write"
+    assert calls[0][0].lower().startswith("codex")
+    assert calls[1][0].lower().startswith("claude")
+    assert calls[0][calls[0].index("-s") + 1] == "workspace-write"
 
 
-def test_implementation_pauses_when_claude_and_codex_are_both_usage_limited(tmp_path: Path) -> None:
+def test_implementation_pauses_when_codex_and_claude_are_both_usage_limited(tmp_path: Path) -> None:
     from scripts.dev_orchestrator.runner import AgentInvocationError, CliAgentInvoker, ProcessResult
     from scripts.dev_orchestrator.types import TaskItem, WorkerState
 
@@ -907,7 +910,7 @@ def test_implementation_pauses_when_claude_and_codex_are_both_usage_limited(tmp_
         )
 
     assert calls == 2
-    assert exc.value.provider == "codex"
+    assert exc.value.provider == "claude"
     assert exc.value.kind == "usage_limit"
 
 
