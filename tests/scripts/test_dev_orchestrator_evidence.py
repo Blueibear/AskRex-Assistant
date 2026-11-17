@@ -445,6 +445,48 @@ def test_review_evidence_includes_task_relevant_outgoing_coordination(tmp_path: 
     assert bundle.truncated is False
 
 
+def test_review_evidence_surfaces_matching_supervisor_messages(tmp_path: Path) -> None:
+    repo = tmp_path / "backend"
+    base = _git_repo(repo)
+    head = _commit(repo, "base\nchanged\n")
+    config = _config(tmp_path, repo, [sys.executable, "-c", "print('OK')"])
+    assert run_iteration_validation(
+        config, "backend", "B-SUPERVISOR", base_head=base, head=head
+    ).passed
+    for recipient, name, related, content in (
+        ("supervisor", "matched.md", "B-SUPERVISOR", "CHECK-RESULT-0"),
+        ("backend", "reply.md", "B-SUPERVISOR", "EVIDENCE-PATH-VERIFIED"),
+        ("supervisor", "unrelated.md", "OTHER-TASK", "UNRELATED-RECORD"),
+        ("supervisor", "collision.md", "B-SUPERVISOR-EXTRA", "COLLIDING-TASK"),
+    ):
+        directory = config.coordination_root / "mailbox" / recipient
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / name).write_text(
+            "# AskRex Coordination Message\n"
+            f"From: supervisor\nTo: {recipient}\n"
+            f"Related: {related}\n\n{content}\n",
+            encoding="utf-8",
+        )
+    state = WorkerState(
+        role="backend",
+        task=TaskItem("B-SUPERVISOR", "read-only review"),
+        task_base_head=base,
+    )
+    bundle = build_review_evidence(
+        config, "backend", state, state.task, "bounded context", "inv-supervisor"
+    )
+    section = bundle.text.split("## supervisor_coordination\n", 1)[1].split(
+        "## diff_stat\n", 1
+    )[0]
+    assert "mailbox/supervisor/matched.md" in section
+    assert "mailbox/backend/reply.md" in section
+    assert "CHECK-RESULT-0" in section
+    assert "EVIDENCE-PATH-VERIFIED" in section
+    assert "UNRELATED-RECORD" not in section
+    assert "COLLIDING-TASK" not in section
+    assert bundle.truncated is False
+
+
 def test_review_evidence_includes_supervisor_validated_coordination_artifact(
     tmp_path: Path,
 ) -> None:

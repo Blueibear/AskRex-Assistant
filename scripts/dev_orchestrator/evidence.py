@@ -33,6 +33,7 @@ _DEFAULT_SECTION_LIMITS = {
     "task_issues": 12_000,
     "coordination": 6_000,
     "outgoing_coordination": 12_000,
+    "supervisor_coordination": 12_000,
     "diff_stat": 4_000,
     "task_diff": 70_000,
     "changed_file_contents": 35_000,
@@ -185,6 +186,44 @@ def _outgoing_coordination(config: OrchestratorConfig, role: str, task: TaskItem
         relative = path.relative_to(config.coordination_root).as_posix()
         rendered.append(f"### {relative}\n{text}")
     return "\n\n".join(rendered)
+
+
+def _supervisor_coordination(config: OrchestratorConfig, role: str, task: TaskItem) -> str:
+    """Expose task-matched supervisor messages without relying on truncated context.
+
+    Messages are evidence for a reviewer, not independent approval or proof
+    that the requirements described in those messages were satisfied.
+    """
+    mailbox = config.coordination_root / "mailbox"
+    task_id_pattern = re.compile(
+        rf"(?<![a-z0-9_.-]){re.escape(task.task_id)}(?![a-z0-9_.-])",
+        re.IGNORECASE,
+    )
+    matches: list[tuple[int, Path, str]] = []
+    try:
+        for recipient in ("supervisor", role):
+            directory = mailbox / recipient
+            if not directory.is_dir():
+                continue
+            for path in directory.glob("*.md"):
+                body = path.read_text(encoding="utf-8-sig", errors="replace")
+                if _message_field(body, "From").casefold() != "supervisor":
+                    continue
+                if _message_field(body, "To").casefold() != recipient:
+                    continue
+                if not task_id_pattern.search(_message_field(body, "Related")):
+                    continue
+                matches.append((path.stat().st_mtime_ns, path, body))
+    except OSError as exc:
+        raise EvidenceError("cannot read supervisor coordination evidence") from exc
+
+    if not matches:
+        return "No task-matching supervisor coordination message was recorded."
+    matches.sort(key=lambda item: item[0], reverse=True)
+    return "\n\n".join(
+        f"### {path.relative_to(config.coordination_root).as_posix()}\n{body}"
+        for _mtime, path, body in matches[:4]
+    )
 
 
 def _task_issue_contents(config: OrchestratorConfig, task: TaskItem) -> str:
@@ -440,6 +479,7 @@ def build_review_evidence(
         ("task_issues", _task_issue_contents(config, task)),
         ("coordination", coordination_context),
         ("outgoing_coordination", _outgoing_coordination(config, role, task)),
+        ("supervisor_coordination", _supervisor_coordination(config, role, task)),
         ("diff_stat", _git(repo, "diff", "--stat", f"{base_head}..{head}", "--")),
         ("task_diff", task_diff),
         ("changed_file_contents", changed_file_contents),
