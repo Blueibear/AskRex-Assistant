@@ -371,9 +371,12 @@ def test_cli_invoker_runs_claude_in_correct_repo_with_coordination_access(tmp_pa
     assert "context" in command[-1]
 
 
-def test_cli_invoker_uses_codex_for_review_and_sol_for_lead(tmp_path: Path) -> None:
+def test_cli_invoker_uses_codex_for_review_and_sol_for_lead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import json
 
+    from scripts.dev_orchestrator.evidence import ReviewEvidenceBundle
     from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
     from scripts.dev_orchestrator.types import TaskItem
 
@@ -395,9 +398,23 @@ def test_cli_invoker_uses_codex_for_review_and_sol_for_lead(tmp_path: Path) -> N
         return ProcessResult(0, payload, "")
 
     invoker = CliAgentInvoker(config, execute=execute, allow_test_executor=True)
+    monkeypatch.setattr(
+        "scripts.dev_orchestrator.runner.build_review_evidence",
+        lambda *args, **kwargs: ReviewEvidenceBundle(
+            text="validated test evidence",
+            truncated=False,
+            truncation_reasons=(),
+            base_head="1" * 40,
+            head="2" * 40,
+        ),
+    )
     assert (
         invoker.review(
-            "backend", WorkerState("backend"), TaskItem("B-1", "Fix"), "ctx", TERRA_MODEL
+            "backend",
+            WorkerState("backend", task_base_head="1" * 40),
+            TaskItem("B-1", "Fix"),
+            "ctx",
+            TERRA_MODEL,
         ).outcome
         == "pass"
     )

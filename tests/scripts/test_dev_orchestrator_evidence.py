@@ -315,9 +315,7 @@ def test_review_evidence_includes_named_canonical_issue_referenced_in_prompt(
     issue = config.coordination_root / "issues" / "SECURITY-HA-MACOS.md"
     issue.parent.mkdir(parents=True, exist_ok=True)
     issue.write_text(
-        "# SECURITY-HA-MACOS\n\n"
-        "Status: integrated-needs-retest\n"
-        "Owner: backend\n",
+        "# SECURITY-HA-MACOS\n\nStatus: integrated-needs-retest\nOwner: backend\n",
         encoding="utf-8",
     )
     mailbox = config.coordination_root / "mailbox" / "testing"
@@ -475,9 +473,7 @@ def test_review_evidence_surfaces_matching_supervisor_messages(tmp_path: Path) -
     bundle = build_review_evidence(
         config, "backend", state, state.task, "bounded context", "inv-supervisor"
     )
-    section = bundle.text.split("## supervisor_coordination\n", 1)[1].split(
-        "## diff_stat\n", 1
-    )[0]
+    section = bundle.text.split("## supervisor_coordination\n", 1)[1].split("## diff_stat\n", 1)[0]
     assert "mailbox/supervisor/matched.md" in section
     assert "mailbox/backend/reply.md" in section
     assert "CHECK-RESULT-0" in section
@@ -693,9 +689,7 @@ def test_review_evidence_includes_current_changed_file_contents_for_small_diff(
     tests_dir.mkdir()
     regression = tests_dir / "test_regression.py"
     regression.write_text(
-        "def test_existing_context():\n"
-        "    marker = 'FULL-CURRENT-CONTEXT'\n"
-        "    assert marker\n",
+        "def test_existing_context():\n    marker = 'FULL-CURRENT-CONTEXT'\n    assert marker\n",
         encoding="utf-8",
     )
     subprocess.run(["git", "add", "tests/test_regression.py"], cwd=repo, check=True)
@@ -854,7 +848,7 @@ def test_verbose_validation_output_does_not_critically_truncate_review_bundle(
     repo = tmp_path / "backend"
     base = _git_repo(repo)
     head = _commit(repo, "base\nchanged\n")
-    noisy = "print('START-VALIDATION'); " "print('X' * 40000); " "print('112 passed');"
+    noisy = "print('START-VALIDATION'); print('X' * 40000); print('112 passed');"
     config = _config(tmp_path, repo, [sys.executable, "-c", noisy])
     assert run_iteration_validation(config, "backend", "B-NOISY", base_head=base, head=head).passed
     state = WorkerState(

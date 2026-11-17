@@ -5,6 +5,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from .coordination_checks import CoordinationCheckError, read_check_summary
 from .types import OrchestratorConfig, TaskItem, WorkerState
 from .validation import ValidationReceipt, load_validation_receipt
 
@@ -34,6 +35,7 @@ _DEFAULT_SECTION_LIMITS = {
     "coordination": 6_000,
     "outgoing_coordination": 12_000,
     "supervisor_coordination": 12_000,
+    "coordination_checks": 4_000,
     "diff_stat": 4_000,
     "task_diff": 70_000,
     "changed_file_contents": 35_000,
@@ -45,6 +47,7 @@ _REVIEW_CRITICAL_SECTIONS = frozenset(
         "identity",
         "task",
         "task_issues",
+        "coordination_checks",
         "task_diff",
         "validated_artifacts",
         "validation",
@@ -104,9 +107,7 @@ def _message_field(text: str, field: str) -> str:
     return ""
 
 
-def _task_coordination_anchors(
-    config: OrchestratorConfig, task: TaskItem
-) -> tuple[str, ...]:
+def _task_coordination_anchors(config: OrchestratorConfig, task: TaskItem) -> tuple[str, ...]:
     anchors = {task.task_id.casefold()}
     task_text = f"{task.task_id}\n{task.prompt}\n{task.feedback}"
     for pattern in (
@@ -462,6 +463,11 @@ def build_review_evidence(
         config.coordination_root / "validation" / f"{role}-{task.task_id}.json"
     ).resolve()
 
+    try:
+        coordination_checks = read_check_summary(config, role, task, base_head, head, strict=True)
+    except CoordinationCheckError as exc:
+        raise EvidenceError(f"invalid supervisor coordination receipt: {exc}") from exc
+
     sections = (
         (
             "identity",
@@ -480,6 +486,7 @@ def build_review_evidence(
         ("coordination", coordination_context),
         ("outgoing_coordination", _outgoing_coordination(config, role, task)),
         ("supervisor_coordination", _supervisor_coordination(config, role, task)),
+        ("coordination_checks", coordination_checks),
         ("diff_stat", _git(repo, "diff", "--stat", f"{base_head}..{head}", "--")),
         ("task_diff", task_diff),
         ("changed_file_contents", changed_file_contents),

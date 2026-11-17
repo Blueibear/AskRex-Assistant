@@ -18,6 +18,7 @@ from .coordination import (
     build_coordination_context,
     recover_coordination_transactions,
 )
+from .coordination_checks import CoordinationCheckError, begin_checks, finish_checks
 from .evidence import EvidenceError, build_review_evidence
 from .handoff import (
     clear_pending_result,
@@ -794,6 +795,26 @@ class Supervisor:
         assert state.task is not None
         model = select_implementer_model(state, self.config)
         try:
+            if read_pending_result(self.config, role) is None:
+                begin_checks(
+                    self.config,
+                    role,
+                    state.task,
+                    state.task_base_head,
+                    self._capture_task_base_head(role),
+                )
+        except CoordinationCheckError as exc:
+            self.save_state(
+                replace(
+                    state,
+                    status=WorkerStatus.BLOCKED_SYSTEM,
+                    blocked_reason=f"initial coordination evidence unavailable: {exc}",
+                    blocker_kind="coordination_evidence",
+                    resume_status=None,
+                )
+            )
+            return
+        try:
             result = self._invoke_or_recover(
                 role,
                 state,
@@ -841,6 +862,27 @@ class Supervisor:
             if not self._accept_result(
                 role, state, result, phase="implement", allow_issue_updates=False
             ):
+                return
+            try:
+                if self._capture_task_base_head(role) != validation_head:
+                    raise CoordinationCheckError("revision changed after validation")
+                finish_checks(
+                    self.config,
+                    role,
+                    state.task,
+                    state.task_base_head,
+                    validation_head,
+                )
+            except CoordinationCheckError as exc:
+                self.save_state(
+                    replace(
+                        state,
+                        status=WorkerStatus.BLOCKED_SYSTEM,
+                        blocked_reason=f"final coordination evidence unavailable: {exc}",
+                        blocker_kind="coordination_evidence",
+                        resume_status=None,
+                    )
+                )
                 return
             self.save_state(
                 replace(

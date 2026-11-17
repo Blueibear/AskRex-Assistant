@@ -1495,21 +1495,28 @@ class CliAgentInvoker:
     def review(self, role, state, task, context, model) -> AgentResult:
         repo = self._repo(role)
         invocation_id = str(uuid.uuid4())
-        review_context = context
-        if state.task_base_head:
-            try:
-                evidence = build_review_evidence(
-                    self.config,
-                    role,
-                    state,
-                    task,
-                    context,
-                    invocation_id,
-                )
-            except EvidenceError:
-                evidence = None
-            if evidence is not None and not evidence.truncated:
-                review_context = evidence.text
+        if not state.task_base_head:
+            raise AgentInvocationError(
+                "codex", "incomplete_evidence", "review requires a captured base revision"
+            )
+        try:
+            evidence = build_review_evidence(
+                self.config,
+                role,
+                state,
+                task,
+                context,
+                invocation_id,
+            )
+        except EvidenceError as exc:
+            raise AgentInvocationError("codex", "incomplete_evidence", str(exc)) from exc
+        if evidence.truncated:
+            raise AgentInvocationError(
+                "codex",
+                "incomplete_evidence",
+                "review-critical evidence truncated: " + ", ".join(evidence.truncation_reasons),
+            )
+        review_context = evidence.text
         command = build_codex_command(
             "review",
             repo,

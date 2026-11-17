@@ -5,6 +5,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+from scripts.dev_orchestrator.coordination_checks import read_check_summary
 from scripts.dev_orchestrator.supervisor import Supervisor, _is_coordination_only_task
 from scripts.dev_orchestrator.types import (
     AgentResult,
@@ -85,6 +86,65 @@ def result(
         next_action=summary,
         task_id=task_id,
         task_prompt=task_prompt,
+    )
+
+
+def test_supervisor_captures_initial_and_final_checks_at_implementation_boundaries(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config = make_config(tmp_path, observe_only=False)
+    repo = config.backend_root
+    assert repo is not None
+    for command in (
+        ["git", "init", "-q"],
+        ["git", "config", "user.email", "test@example.com"],
+        ["git", "config", "user.name", "Test"],
+    ):
+        subprocess.run(command, cwd=repo, check=True)
+    (repo / "README.md").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+
+    scripts = config.coordination_root / "scripts"
+    scripts.mkdir()
+    (scripts / "check-coordination.ps1").write_text(
+        "param([string]$Role)\nWrite-Output $Role\n", encoding="utf-8"
+    )
+    calls = []
+    actual_run = subprocess.run
+
+    def check_only(command, **kwargs):
+        if command[0] != "powershell.exe":
+            return actual_run(command, **kwargs)
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, b"ROLE-CHECK-OK", b"")
+
+    monkeypatch.setattr(subprocess, "run", check_only)
+    invoker = FakeInvoker()
+    invoker.add("backend", "implement", result("ready_for_review"))
+    supervisor = Supervisor(config, invoker)
+    task = TaskItem("B-CAPTURE", "implement one task")
+    supervisor.enqueue("backend", task)
+    supervisor._run_role("backend")
+
+    state = supervisor.load_state("backend")
+    assert state.status is WorkerStatus.REVIEWING
+    assert len(calls) == 2
+    assert "initial: exit=0" in read_check_summary(
+        config,
+        "backend",
+        task,
+        state.task_base_head,
+        supervisor._capture_task_base_head("backend"),
+        strict=True,
+    )
+    assert "final: exit=0" in read_check_summary(
+        config,
+        "backend",
+        task,
+        state.task_base_head,
+        supervisor._capture_task_base_head("backend"),
+        strict=True,
     )
 
 
