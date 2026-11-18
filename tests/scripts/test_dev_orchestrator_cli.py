@@ -1456,17 +1456,177 @@ def test_run_loop_drains_workers_before_releasing_supervisor_lock(
         pass
 
 
-def test_run_loop_propagates_role_start_failure_on_final_poll(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("failure_stage", ["handoff", "invoker"])
+def test_run_loop_records_role_start_failure_on_final_poll(
+    tmp_path: Path, monkeypatch, failure_stage: str
+) -> None:
+    from scripts.dev_orchestrator import cli as cli_module
+    from scripts.dev_orchestrator.supervisor import Supervisor
+    from scripts.dev_orchestrator.types import WorkerStatus
+
+    config = _scheduler_runtime(tmp_path, monkeypatch)
+    expected = f"{failure_stage} startup unavailable"
+
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError(expected)
+
+    monkeypatch.setattr(cli_module, "_build_active_invoker", unavailable)
+    if failure_stage == "handoff":
+        monkeypatch.setattr(cli_module, "validate_handoff", unavailable)
+
+    cli_module.run_loop(config, max_cycles=1)
+
+    supervisor = Supervisor(config, object())
+    for role in ("backend", "mobile"):
+        state = supervisor.load_state(role)
+        assert state.status is WorkerStatus.BLOCKED_SYSTEM
+        assert expected in state.blocked_reason
+        assert state.resume_status is WorkerStatus.IDLE
+
+
+def test_run_loop_stops_on_invalid_global_config(tmp_path: Path, monkeypatch) -> None:
     from scripts.dev_orchestrator import cli as cli_module
 
     config = _scheduler_runtime(tmp_path, monkeypatch)
+    (config.coordination_root / "orchestrator-config.json").write_text("{invalid")
 
-    def unavailable_role(*_args, **_kwargs):
-        raise RuntimeError("role launch could not validate its lease")
+    def unexpected_dispatch(*_args, **_kwargs):
+        raise AssertionError("invalid global policy must not dispatch a worker")
 
-    monkeypatch.setattr(cli_module, "_run_role_cycle", unavailable_role)
-    with pytest.raises(RuntimeError, match="could not validate its lease"):
+    monkeypatch.setattr(cli_module, "_run_role_cycle", unexpected_dispatch)
+    with pytest.raises(json.JSONDecodeError):
         cli_module.run_loop(config, max_cycles=1)
+    with SupervisorLock(config.coordination_root / "supervisor.lock"):
+        pass
+
+
+def test_run_loop_keeps_mobile_progressing_after_backend_lease_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import threading
+    from dataclasses import asdict
+
+    from scripts.dev_orchestrator.cli import run_loop
+    from scripts.dev_orchestrator.storage import AtomicJsonStore
+    from scripts.dev_orchestrator.supervisor import Supervisor
+    from scripts.dev_orchestrator.types import AgentResult, TaskItem, WorkerState, WorkerStatus
+
+    config = _scheduler_runtime(tmp_path, monkeypatch)
+    progressed = threading.Event()
+    stop = threading.Event()
+    failures = []
+    mobile_calls_after_failure = 0
+
+    class Invoker:
+        def implement(self, role, *_args):
+            nonlocal mobile_calls_after_failure
+            assert role == "mobile", "invalid backend lease reached a model invocation"
+            if supervisor.load_state("backend").status is WorkerStatus.BLOCKED_SYSTEM:
+                mobile_calls_after_failure += 1
+                if mobile_calls_after_failure >= 3:
+                    progressed.set()
+            return AgentResult("continue", "bounded mobile work", "continue")
+
+        def lead(self, *_args, **_kwargs):
+            raise AssertionError("test tasks are already assigned")
+
+    invoker = Invoker()
+    supervisor = Supervisor(config, invoker)
+    task = TaskItem("backend-work", "recover the existing checkpoint")
+    supervisor.save_state(WorkerState(role="backend", status=WorkerStatus.IMPLEMENTING, task=task))
+    supervisor.enqueue("mobile", TaskItem("mobile-work", "bounded test task"))
+    lease_path = config.coordination_root / "handoff" / "backend.json"
+    lease_store = AtomicJsonStore(lease_path)
+    lease = lease_store.read()
+    invocation_id = "unconsumed-before-lease-failure"
+    lease["pending_result"] = {
+        "invocation_id": invocation_id,
+        "role": "backend",
+        "phase": "implement",
+        "task_id": task.task_id,
+        "result": asdict(
+            AgentResult(
+                "continue",
+                "durable checkpoint",
+                "continue",
+                role="backend",
+                task_id=task.task_id,
+                invocation_id=invocation_id,
+            )
+        ),
+    }
+    lease_store.write(lease)
+    lease_bytes = lease_path.read_bytes()
+    assert config.backend_root is not None
+    (config.backend_root / "unexpected-writer.txt").write_text("unpublished external work")
+
+    def run():
+        try:
+            run_loop(config, invoker=invoker, max_cycles=400, sleep_fn=lambda _: stop.wait(0.02))
+        except BaseException as exc:
+            failures.append(exc)
+
+    controller = threading.Thread(target=run)
+    controller.start()
+    try:
+        assert progressed.wait(10), "a backend lease failure stopped healthy mobile progress"
+        state = supervisor.load_state("backend")
+        assert state.status is WorkerStatus.BLOCKED_SYSTEM
+        assert "worktree changed after handoff" in state.blocked_reason
+        assert state.resume_status is WorkerStatus.IMPLEMENTING
+        assert state.task == task
+        assert state.last_result_invocation_id == ""
+        assert lease_path.read_bytes() == lease_bytes
+    finally:
+        set_observe_only(config.coordination_root, True)
+        stop.set()
+        controller.join(10)
+    assert not controller.is_alive()
+    assert not failures
+    assert mobile_calls_after_failure >= 3
+
+
+@pytest.mark.parametrize(
+    "status,resume_status,blocker_kind",
+    [
+        ("blocked_user", "reviewing", "acceptance"),
+        ("blocked_system", None, "coordination_evidence"),
+        ("blocked_system", None, "provider_policy"),
+    ],
+)
+def test_role_start_failure_preserves_existing_parked_gate(
+    tmp_path: Path, monkeypatch, status: str, resume_status: str | None, blocker_kind: str
+) -> None:
+    from scripts.dev_orchestrator import cli as cli_module
+    from scripts.dev_orchestrator.supervisor import Supervisor
+    from scripts.dev_orchestrator.types import TaskItem, WorkerState, WorkerStatus
+
+    config = _scheduler_runtime(tmp_path, monkeypatch)
+    supervisor = Supervisor(config, object())
+    original = WorkerState(
+        role="backend",
+        status=WorkerStatus(status),
+        task=TaskItem("backend-work", "existing task"),
+        blocker_kind=blocker_kind,
+        blocked_reason="existing gate requires separate resolution",
+        resume_status=WorkerStatus(resume_status) if resume_status else None,
+    )
+    supervisor.save_state(original)
+    lease_path = config.coordination_root / "handoff" / "backend.json"
+    lease_bytes = lease_path.read_bytes()
+
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError("backend lease is unavailable")
+
+    monkeypatch.setattr(cli_module, "validate_handoff", unavailable)
+    for _ in range(2):
+        cli_module._run_role_cycle(config.coordination_root, "backend", invoker=object())
+
+    assert supervisor.load_state("backend") == original
+    assert lease_path.read_bytes() == lease_bytes
+    alerts = list((config.coordination_root / "alerts").glob("workstream_failure-backend-*.json"))
+    assert len(alerts) == 1
+    assert "backend lease is unavailable" in json.loads(alerts[0].read_text())["message"]
 
 
 def test_role_failure_preserves_unconsumed_durable_result(tmp_path: Path, monkeypatch) -> None:

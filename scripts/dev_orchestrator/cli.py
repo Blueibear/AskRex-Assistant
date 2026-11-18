@@ -623,9 +623,15 @@ def _run_role_cycle(root: Path, role: str, *, invoker=None) -> None:
     current = load_config(root)
     if current.observe_only:
         return
-    validate_handoff(current, role)
-    active_invoker = invoker or _build_active_invoker(current)
-    Supervisor(current, active_invoker).run_role(role)
+    # Shared config and transaction corruption must still stop the controller.
+    supervisor = Supervisor(current, _ObserveOnlyInvoker())
+    try:
+        validate_handoff(current, role)
+        supervisor.invoker = invoker or _build_active_invoker(current)
+    except Exception as exc:
+        supervisor.record_role_failure(role, exc)
+        return
+    supervisor.run_role(role)
 
 
 def run_loop(

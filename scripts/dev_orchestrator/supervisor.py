@@ -331,6 +331,32 @@ class Supervisor:
         payload = f"{head}\0{context}".encode()
         return hashlib.sha256(payload).hexdigest()
 
+    def record_role_failure(self, role: str, error: Exception) -> None:
+        """Park one role without consuming its durable result or replacing an existing gate."""
+        if role not in {"backend", "mobile"}:
+            raise ValueError(f"unsupported workstream: {role}")
+        message = f"supervisor workstream failure: {error}"
+        with ControlPlaneLock(self.root / "control-plane.lock"):
+            state = self.load_state(role)
+            if state.status is WorkerStatus.BLOCKED_USER or (
+                state.status is WorkerStatus.BLOCKED_SYSTEM and state.resume_status is None
+            ):
+                self._save_state_preserving_pending_result(state)
+                self.alerts.emit(role=role, kind="workstream_failure", message=message)
+                return
+            resume_status = (
+                state.resume_status if state.status is WorkerStatus.BLOCKED_SYSTEM else state.status
+            )
+            self._save_state_preserving_pending_result(
+                replace(
+                    state,
+                    status=WorkerStatus.BLOCKED_SYSTEM,
+                    blocked_reason=message,
+                    blocker_kind="system",
+                    resume_status=resume_status,
+                )
+            )
+
     def run_role(self, role: str) -> None:
         """Advance one role through the same failure boundary as a manual cycle."""
         if role not in {"backend", "mobile"}:
@@ -340,16 +366,7 @@ class Supervisor:
         try:
             self._run_role(role)
         except Exception as exc:
-            state = self.load_state(role)
-            self._save_state_preserving_pending_result(
-                replace(
-                    state,
-                    status=WorkerStatus.BLOCKED_SYSTEM,
-                    blocked_reason=f"supervisor workstream failure: {exc}",
-                    blocker_kind="system",
-                    resume_status=state.status,
-                )
-            )
+            self.record_role_failure(role, exc)
 
     def run_cycle(self) -> None:
         if self.config.observe_only:
