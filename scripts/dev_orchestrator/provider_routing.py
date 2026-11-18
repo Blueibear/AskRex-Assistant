@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .openai_budget import CONSERVATIVE_PRICE_PER_MILLION, OpenAIBudgetLedger
+from .provider_policy import ProviderPolicyError, require_configured_provider, subscription_only
 from .routing import METERED_OPENAI_API_ALLOWED_ROLES, SOL_MODEL
 from .runner import AgentInvocationError
 from .storage import AtomicJsonStore
@@ -34,6 +35,8 @@ def temporary_fable_policy_active(
     config: OrchestratorConfig, role: str, *, now: datetime | None = None
 ) -> bool:
     """Whether the temporary delegation suspends ChatGPT review for this role."""
+    if subscription_only():
+        return False
     policy = config.metadata.get("temporary_fable_review", {})
     if not isinstance(policy, dict) or policy.get("enabled") is not True:
         return False
@@ -106,7 +109,9 @@ def temporary_fable_review_active(
 def temporary_claude_planning_active(
     config: OrchestratorConfig, role: str, *, now: datetime | None = None
 ) -> bool:
-    """Owner-authorized, expiring subscription-only planning route."""
+    """Owner-authorized, expiring planning route outside the pinned campaign."""
+    if subscription_only():
+        return False
     policy = config.metadata.get("temporary_claude_planning", {})
     if not isinstance(policy, dict) or policy.get("enabled") is not True:
         return False
@@ -153,8 +158,12 @@ class ProviderRoutingInvoker:
             config.coordination_root,
             monthly_cap_usd=config.openai_monthly_budget_usd,
         )
-        if config.openai_worker_enabled and openai_worker is None:
+        if self._api_enabled and openai_worker is None:
             raise ValueError("enabled OpenAI routing requires an OpenAI worker")
+
+    @property
+    def _api_enabled(self) -> bool:
+        return not subscription_only() and self.config.openai_worker_enabled
 
     def _last_provider(self, role: str) -> str:
         record = AtomicJsonStore(self.config.coordination_root / "handoff" / f"{role}.json").read(
@@ -181,6 +190,10 @@ class ProviderRoutingInvoker:
 
     def review(self, role, state, task, context, model) -> AgentResult:
         if model == FABLE_REVIEW_MODEL:
+            try:
+                require_configured_provider("Fable invocation")
+            except ProviderPolicyError as exc:
+                raise AgentInvocationError("claude", "policy", str(exc)) from exc
             if not temporary_fable_review_active(
                 self.config, role, task, self._last_provider(role)
             ):
@@ -198,7 +211,7 @@ class ProviderRoutingInvoker:
         except AgentInvocationError as exc:
             if (
                 role not in METERED_OPENAI_API_ALLOWED_ROLES
-                or not self.config.openai_worker_enabled
+                or not self._api_enabled
                 or exc.kind not in _SUBSCRIPTION_API_FALLBACK_KINDS
             ):
                 raise
@@ -216,7 +229,7 @@ class ProviderRoutingInvoker:
         except AgentInvocationError as exc:
             if (
                 role not in METERED_OPENAI_API_ALLOWED_ROLES
-                or not self.config.openai_worker_enabled
+                or not self._api_enabled
                 or exc.kind not in _SUBSCRIPTION_API_FALLBACK_KINDS
             ):
                 raise
@@ -224,10 +237,7 @@ class ProviderRoutingInvoker:
         else:
             if task is None or subscription_result.outcome != "failed":
                 return subscription_result
-            if (
-                not self.config.openai_worker_enabled
-                or role not in METERED_OPENAI_API_ALLOWED_ROLES
-            ):
+            if not self._api_enabled or role not in METERED_OPENAI_API_ALLOWED_ROLES:
                 return subscription_result
 
         phase = "adjudicate" if task is not None else "plan"
@@ -259,7 +269,7 @@ class ProviderRoutingInvoker:
         failures = max(state.implementation_failures, state.review_failures)
         return bool(
             role in METERED_OPENAI_API_ALLOWED_ROLES
-            and self.config.openai_worker_enabled
+            and self._api_enabled
             and self.config.openai_astra_enabled
             and failures >= self.config.astra_adjudication_after
             and self.config.openai_astra_model in CONSERVATIVE_PRICE_PER_MILLION

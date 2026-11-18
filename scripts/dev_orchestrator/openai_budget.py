@@ -9,6 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from .lifecycle import ControlPlaneLock
+from .provider_policy import require_configured_provider
 from .storage import AtomicJsonStore
 
 CONSERVATIVE_PRICE_PER_MILLION = {
@@ -185,6 +186,7 @@ class OpenAIBudgetLedger:
         purpose: str = "",
         episode_key: str = "",
     ) -> BudgetReservation:
+        require_configured_provider("OpenAI API reservation")
         if purpose not in {"", "astra_adjudication"}:
             raise OpenAIBudgetPolicyError("unsupported OpenAI budget reservation purpose")
         if purpose == "astra_adjudication":

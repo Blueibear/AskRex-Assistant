@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from .provider_policy import subscription_only
 from .types import OrchestratorConfig, WorkerState
 
 TERRA_MODEL = "gpt-5.6-terra"
@@ -16,6 +17,7 @@ OPENAI_HARD_MONTHLY_CAP_USD = Decimal("30.00")
 
 
 def validate_openai_policy(config: OrchestratorConfig) -> None:
+    api_enabled = not subscription_only() and config.openai_worker_enabled
     models = (
         config.openai_review_model,
         config.openai_escalation_model,
@@ -38,7 +40,7 @@ def validate_openai_policy(config: OrchestratorConfig) -> None:
         raise ValueError("OpenAI request ceilings must be positive")
     if config.openai_max_astra_calls_per_escalation != 1:
         raise ValueError("Astra is limited to exactly one call per escalation episode")
-    if config.openai_worker_enabled and (
+    if api_enabled and (
         not config.openai_project_id.strip() or not config.openai_project_hard_limit_confirmed
     ):
         raise ValueError("OpenAI worker requires a confirmed dedicated project hard limit")

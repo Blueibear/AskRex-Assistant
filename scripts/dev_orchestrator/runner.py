@@ -36,6 +36,12 @@ from .handoff import (
 )
 from .lifecycle import ControlPlaneLock
 from .paths import validate_runtime_paths
+from .provider_policy import (
+    ProviderPolicyError,
+    require_configured_provider,
+    require_model_allowed,
+    subscription_only,
+)
 from .schema import allowed_outcomes_for_phase, validate_agent_result
 from .types import AgentResult, TaskItem
 
@@ -69,6 +75,7 @@ def _schema_json() -> str:
 def build_claude_command(
     repo: Path, prompt: str, model: str, *, read_only: bool = False
 ) -> list[str]:
+    _require_model_policy(model)
     return [
         "claude",
         "-p",
@@ -97,6 +104,7 @@ def build_claude_sandbox_command(
     use_oauth_token_env: bool = False,
     read_only: bool = False,
 ) -> list[str]:
+    _require_model_policy(model)
     credentials = Path.home() / ".claude" / ".credentials.json"
     if not use_oauth_token_env and not credentials.is_file():
         raise RuntimeError("Claude sandbox credentials are unavailable")
@@ -217,6 +225,7 @@ def _write_bound_codex_schema(
 
 
 def build_codex_command(kind: str, repo: Path, prompt: str, model: str) -> list[str]:
+    _require_model_policy(model)
     if kind not in {"implement", "review", "lead"}:
         raise ValueError(f"unsupported Codex role: {kind}")
     sandbox = "workspace-write" if kind == "implement" else "read-only"
@@ -595,6 +604,14 @@ class AgentInvocationError(RuntimeError):
         self.provider = provider
         self.kind = kind
         self.detail = detail
+
+
+def _require_model_policy(model: str) -> None:
+    try:
+        require_model_allowed(model)
+    except ProviderPolicyError as exc:
+        provider = "claude" if model.strip().casefold() == "fable" else "codex"
+        raise AgentInvocationError(provider, "policy", str(exc)) from exc
 
 
 def _append_extra_dir(command: list[str], directory: Path) -> list[str]:
@@ -1055,6 +1072,14 @@ class CliAgentInvoker:
         phase: str = "",
         task_id: str = "",
     ) -> ProcessResult:
+        if provider == "claude" and phase in {"plan", "review"}:
+            require_configured_provider("Claude planning or review delegation")
+        # Recheck at invocation for callers supplying a prebuilt command.
+        for index, argument in enumerate(command):
+            if argument in {"--model", "-m"} and index + 1 < len(command):
+                _require_model_policy(command[index + 1])
+            elif argument.startswith("--model="):
+                _require_model_policy(argument.partition("=")[2])
         with ControlPlaneLock(role_lease_lock_path(self.config, role)):
             validate_handoff(self.config, role)
             scratch_parent = None
@@ -1398,7 +1423,7 @@ class CliAgentInvoker:
         expired = datetime.now(UTC) - launched_at > timeout
 
         if session.task_id != task.task_id:
-            if expired:
+            if expired and not subscription_only():
                 clear_cloud_session(self.config, role)
                 return None
             raise AgentInvocationError(
@@ -1407,7 +1432,10 @@ class CliAgentInvoker:
                 f"{role} cloud session {session.session_id} belongs to {session.task_id}, not {task.task_id}",
             )
 
-        if session.status in {"awaiting_context", "context_delivery_failed"}:
+        if (
+            session.status in {"awaiting_context", "context_delivery_failed"}
+            and not subscription_only()
+        ):
             if expired:
                 raise AgentInvocationError(
                     "claude_cloud",
@@ -1448,6 +1476,7 @@ class CliAgentInvoker:
     def _dispatch_cloud_implementation(
         self, role: str, task: TaskItem, context: str
     ) -> AgentResult:
+        require_configured_provider("new Claude cloud dispatch")
         invocation_id = str(uuid.uuid4())
         try:
             session = launch_cloud_session(
@@ -1553,6 +1582,7 @@ class CliAgentInvoker:
         )
 
     def review(self, role, state, task, context, model) -> AgentResult:
+        _require_model_policy(model)
         repo = self._repo(role)
         invocation_id = str(uuid.uuid4())
         if not state.task_base_head:
@@ -1596,6 +1626,7 @@ class CliAgentInvoker:
     def claude_plan(self, role, state, context) -> AgentResult:
         from .routing import CLAUDE_ROUTINE_MODEL
 
+        require_configured_provider("temporary Claude planning")
         repo = self._repo(role)
         invocation_id = str(uuid.uuid4())
         command = build_claude_command(

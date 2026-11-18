@@ -22,6 +22,7 @@ from .openai_budget import (
     OpenAIBudgetPolicyError,
 )
 from .openai_transport import OpenAIResponsesTransport, OpenAITransportError
+from .provider_policy import ProviderPolicyError, require_configured_provider
 from .routing import METERED_OPENAI_API_ALLOWED_ROLES
 from .runner import AgentInvocationError
 from .schema import validate_agent_result, validate_phase_outcome
@@ -40,6 +41,7 @@ class OpenAIModelWorker:
         budget: Any | None = None,
         invocation_id_factory: Callable[[], str] | None = None,
     ) -> None:
+        self._require_deployment_api_permission()
         if not config.openai_worker_enabled:
             raise ValueError("OpenAI worker is disabled")
         if not config.openai_project_hard_limit_confirmed:
@@ -58,7 +60,15 @@ class OpenAIModelWorker:
         self._invocation_id_factory = invocation_id_factory or (lambda: str(uuid4()))
 
     @staticmethod
+    def _require_deployment_api_permission() -> None:
+        try:
+            require_configured_provider("OpenAI API use")
+        except ProviderPolicyError as exc:
+            raise AgentInvocationError("openai", "policy", str(exc)) from exc
+
+    @staticmethod
     def _require_metered_api_permission(role: str) -> None:
+        OpenAIModelWorker._require_deployment_api_permission()
         if role not in METERED_OPENAI_API_ALLOWED_ROLES:
             raise AgentInvocationError(
                 "openai", "policy", f"metered OpenAI API is not authorized for {role}"
@@ -108,6 +118,7 @@ class OpenAIModelWorker:
         instructions: str,
         input_text: str,
     ):
+        self._require_deployment_api_permission()
         if len(input_text) > self.config.openai_max_input_chars:
             raise AgentInvocationError("openai", "invalid_output", "evidence exceeds input bound")
         return self.transport.prepare(
@@ -126,6 +137,7 @@ class OpenAIModelWorker:
         budget_purpose: str = "",
         episode_key: str = "",
     ):
+        self._require_deployment_api_permission()
         try:
             reservation = self.budget.reserve(
                 model=model,
@@ -137,6 +149,7 @@ class OpenAIModelWorker:
         except (OpenAIBudgetExceeded, OpenAIBudgetPolicyError) as exc:
             raise AgentInvocationError("openai", "budget", str(exc)) from exc
         try:
+            self._require_deployment_api_permission()
             response = self.transport.send(prepared)
         except OpenAITransportError as exc:
             self.budget.mark_uncertain(reservation.reservation_id)

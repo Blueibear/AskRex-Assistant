@@ -14,6 +14,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .handoff import advance_handoff, validate_handoff
+from .provider_policy import require_configured_provider
 from .storage import AtomicJsonStore
 from .types import AgentResult, OrchestratorConfig, TaskItem
 
@@ -102,6 +103,7 @@ def _launch_cloud_interactive(
     prompt: str,
     timeout: int = 120,
 ) -> tuple[str, str]:
+    require_configured_provider("new Claude cloud work")
     del coordination_root
     if os.name != "nt":
         raise ClaudeCloudError("automatic Claude cloud launch currently requires Windows ConPTY")
@@ -274,6 +276,7 @@ def deliver_cloud_context(
     *,
     execute: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> ClaudeCloudSession:
+    require_configured_provider("Claude cloud context delivery")
     session = read_cloud_session(config, role)
     if session is None:
         raise ClaudeCloudError(f"{role} has no active Claude cloud session")
@@ -329,6 +332,7 @@ def launch_cloud_session(
     context: str = "",
     execute: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> ClaudeCloudSession:
+    require_configured_provider("new Claude cloud dispatch")
     existing = read_cloud_session(config, role)
     if existing is not None:
         raise ClaudeCloudError(

@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 from rex.credentials import CredentialManager
 
 from .openai_budget import OpenAIUsage
+from .provider_policy import require_configured_provider
 from .schema import agent_result_schema_payload
 
 RESPONSES_URL = "https://api.openai.com/v1/responses"
@@ -178,6 +179,7 @@ class OpenAIResponsesTransport:
         return token.strip()
 
     def send(self, prepared: PreparedOpenAIRequest) -> OpenAITransportResponse:
+        require_configured_provider("OpenAI API send")
         token = self._credential()
         request = Request(
             RESPONSES_URL,

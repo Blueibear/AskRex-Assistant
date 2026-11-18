@@ -24,6 +24,7 @@ from .openai_budget import OpenAIBudgetLedger
 from .openai_transport import OpenAIResponsesTransport
 from .openai_worker import OpenAIModelWorker
 from .paths import validate_runtime_paths
+from .provider_policy import require_configured_provider, subscription_only
 from .provider_routing import ProviderRoutingInvoker
 from .routing import validate_openai_policy
 from .runner import CliAgentInvoker
@@ -278,6 +279,8 @@ def set_openai_worker_enabled(
     *,
     credential_manager=None,
 ) -> OrchestratorConfig:
+    if enabled:
+        require_configured_provider("OpenAI API activation")
     with ControlPlaneLock(root / "control-plane.lock"):
         config = load_config(root)
         if enabled:
@@ -299,11 +302,12 @@ def set_openai_worker_enabled(
 
 
 def _build_active_invoker(config: OrchestratorConfig, *, credential_manager=None):
+    restricted = subscription_only()
     claude_resolver = (
         (lambda: _vault_claude_oauth_token(config)) if config.claude_oauth_credential_ref else None
     )
     cli_invoker = CliAgentInvoker(config, claude_oauth_resolver=claude_resolver)
-    if not config.openai_worker_enabled:
+    if restricted or not config.openai_worker_enabled:
         return cli_invoker
     validate_openai_policy(config)
     manager = credential_manager or CredentialManager()

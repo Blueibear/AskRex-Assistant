@@ -5,6 +5,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from .provider_policy import subscription_only
 from .storage import AtomicJsonStore
 from .types import AgentResult, OrchestratorConfig, WorkerState
 from .validation import _receipt_path, load_validation_receipt
@@ -15,6 +16,8 @@ _ALLOWED_OUTCOMES = {"pass", "changes_required"}
 
 
 def fallback_active(config: OrchestratorConfig, *, now: datetime | None = None) -> bool:
+    if subscription_only():
+        return False
     policy = config.metadata.get("review_fallback", {})
     if not isinstance(policy, dict) or policy.get("enabled") is not True:
         return False

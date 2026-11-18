@@ -60,6 +60,12 @@ Review packets include task-matching supervisor messages separately so mailbox b
 
 A live pause is checked before every new model phase. An already recorded result may finish its durable state transition, but no subsequent model phase starts while the current configuration is paused or malformed.
 
+### Deployment subscription-only policy
+
+A pinned Windows deployment may set `ASKREX_PROVIDER_POLICY=subscription_only` before starting the supervisor. This process environment policy overrides stale saved provider flags without editing them. It forbids OpenAI API activation, budget reservation, and sends; Fable selection and invocation; and fresh Claude cloud dispatch or context-delivery messages. The active-invoker factory does not load unused API credentials or require unused project confirmation in this mode. Codex-first planning and independent review remain required; stale temporary Claude planning and hourly review-fallback flags are ineffective, and direct hourly-receipt consumption returns no result. Ordinary Codex work and the existing Claude subscription implementation fallback after a Codex usage/authentication limit continue. Existing cloud sessions may still be polled and adopted through the existing ownership, provenance, validation, and independent-review gates, but receive no new cloud instructions; unresolved mismatched ownership is retained and blocks new work.
+
+Only an unset or empty environment value retains the configured provider behavior for other authorized deployments. Any other nonempty value fails closed as invalid. Policy checks exist at routing and direct effect boundaries, so an enabled configuration flag or an already-created worker cannot authorize a prohibited reservation, send, or delegation. Both active and rollback deployment wrappers must set the same policy.
+
 ## Human gates and banked resets
 
 Physical device tests, credentials/login, account or billing changes, security-authority changes, and banked Work/Codex reset consumption are human gates. OpenAI API billing/budget/rate-limit state is separate from ChatGPT/Codex reset accounting and never consumes or recommends a banked reset.
