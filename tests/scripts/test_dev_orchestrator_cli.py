@@ -1251,7 +1251,9 @@ def test_active_invoker_wires_vault_claude_oauth_resolver(tmp_path: Path, monkey
     assert invoker._claude_oauth_resolver() == "vault-token"
 
 
-def _scheduler_runtime(tmp_path: Path):
+def _scheduler_runtime(tmp_path: Path, monkeypatch):
+    # Scheduler fixtures use fake workers and do not execute Windows host checks.
+    monkeypatch.setattr("scripts.dev_orchestrator.supervisor.begin_checks", lambda *a, **kw: None)
     root = tmp_path / "coordination"
     backend = tmp_path / "backend"
     mobile = tmp_path / "mobile"
@@ -1265,14 +1267,14 @@ def _scheduler_runtime(tmp_path: Path):
     return set_observe_only(root, False)
 
 
-def test_run_loop_continues_mobile_while_backend_is_busy(tmp_path: Path) -> None:
+def test_run_loop_continues_mobile_while_backend_is_busy(tmp_path: Path, monkeypatch) -> None:
     import threading
 
     from scripts.dev_orchestrator.cli import run_loop
     from scripts.dev_orchestrator.supervisor import Supervisor
     from scripts.dev_orchestrator.types import AgentResult, TaskItem
 
-    config = _scheduler_runtime(tmp_path)
+    config = _scheduler_runtime(tmp_path, monkeypatch)
     backend_started = threading.Event()
     mobile_started = threading.Event()
     mobile_repeated = threading.Event()
@@ -1337,14 +1339,14 @@ def test_run_loop_continues_mobile_while_backend_is_busy(tmp_path: Path) -> None
     assert not failures
 
 
-def test_run_loop_pause_prevents_new_role_dispatches(tmp_path: Path) -> None:
+def test_run_loop_pause_prevents_new_role_dispatches(tmp_path: Path, monkeypatch) -> None:
     import threading
 
     from scripts.dev_orchestrator.cli import run_loop
     from scripts.dev_orchestrator.supervisor import Supervisor
     from scripts.dev_orchestrator.types import AgentResult, TaskItem
 
-    config = _scheduler_runtime(tmp_path)
+    config = _scheduler_runtime(tmp_path, monkeypatch)
     started = {role: threading.Event() for role in ("backend", "mobile")}
     release = threading.Event()
     calls = []
@@ -1393,7 +1395,7 @@ def test_run_loop_drains_workers_before_releasing_supervisor_lock(
     from scripts.dev_orchestrator.supervisor import Supervisor
     from scripts.dev_orchestrator.types import AgentResult, TaskItem
 
-    config = _scheduler_runtime(tmp_path)
+    config = _scheduler_runtime(tmp_path, monkeypatch)
     started = threading.Event()
     release = threading.Event()
     stopping = threading.Event()
@@ -1457,7 +1459,7 @@ def test_run_loop_drains_workers_before_releasing_supervisor_lock(
 def test_run_loop_propagates_role_start_failure_on_final_poll(tmp_path: Path, monkeypatch) -> None:
     from scripts.dev_orchestrator import cli as cli_module
 
-    config = _scheduler_runtime(tmp_path)
+    config = _scheduler_runtime(tmp_path, monkeypatch)
 
     def unavailable_role(*_args, **_kwargs):
         raise RuntimeError("role launch could not validate its lease")
@@ -1471,7 +1473,7 @@ def test_role_failure_preserves_unconsumed_durable_result(tmp_path: Path, monkey
     from scripts.dev_orchestrator.storage import AtomicJsonStore
     from scripts.dev_orchestrator.supervisor import Supervisor
 
-    config = _scheduler_runtime(tmp_path)
+    config = _scheduler_runtime(tmp_path, monkeypatch)
     supervisor = Supervisor(config, object())
     store = AtomicJsonStore(config.coordination_root / "handoff" / "backend.json")
     record = store.read()
