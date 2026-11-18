@@ -235,11 +235,18 @@ def test_hourly_review_findings_require_action(tmp_path: Path) -> None:
 def test_hourly_fallback_preserves_explicit_codex_gates(
     tmp_path: Path, provider: str, task_id: str, prompt: str
 ) -> None:
+    from scripts.dev_orchestrator.handoff import repo_snapshot
     from scripts.dev_orchestrator.types import AgentResult
+    from tests.scripts.test_dev_orchestrator_routing import _safe_config
 
-    config, state, _review, _now = _setup(tmp_path)
-    state = replace(state, task=TaskItem(task_id, prompt))
-    AtomicJsonStore(tmp_path / "handoff" / "backend.json").write({"last_provider": provider})
+    runtime, backend, _mobile = _safe_config(tmp_path)
+    config, state, _review, _now = _setup(runtime.coordination_root)
+    config = replace(runtime, observe_only=False, metadata=config.metadata)
+    save_config(config)
+    head, _dirty = repo_snapshot(backend)
+    state = replace(state, task=TaskItem(task_id, prompt), task_base_head=head)
+    handoff = AtomicJsonStore(config.coordination_root / "handoff" / "backend.json")
+    handoff.write({**handoff.read(), "last_provider": provider})
     calls = []
 
     class ReviewInvoker:
