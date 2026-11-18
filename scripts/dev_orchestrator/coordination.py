@@ -271,6 +271,7 @@ def render_coordination_source(name: str, text: str, category: str) -> str:
         "history": "Historical coordination (claims may be superseded by matching host evidence)",
         "incoming": "Task-matched incoming coordination (agreement must be explicit and within authority)",
         "outgoing": "Existing outgoing coordination (proposal or report, not approval)",
+        "prior_task": "Original referenced-task correspondence (its stated historical scope remains binding)",
         "host": "Host-observed task and revision evidence",
     }[category]
     return f"## {name}\n[{label}]\n{text}"

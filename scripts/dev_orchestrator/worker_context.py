@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
 from .completed_tasks import CompletedTaskLedger
-from .coordination import coordination_sources, render_coordination_source
+from .coordination import (
+    _bounded_read,
+    _complete_task_message,
+    _header_field,
+    coordination_sources,
+    render_coordination_source,
+)
 from .coordination_checks import CoordinationCheckError, read_check_summary
 from .storage import AtomicJsonStore
 from .types import OrchestratorConfig, TaskItem, WorkerState
@@ -264,6 +272,111 @@ def _host_status(
     return "\n".join(lines), external
 
 
+def _referenced_task_sources(
+    config: OrchestratorConfig, role: str, state: WorkerState
+) -> list[tuple[str, str, str]]:
+    """Supply exact prior correspondence without turning own output into a wake."""
+    from .model_blockers import read_supplied_input
+
+    if state.task is None:
+        return []
+    task_text = (state.task.prompt + "\n" + state.task.feedback).casefold()
+    records: dict[str, list[dict]] = {}
+    for record in CompletedTaskLedger(config.coordination_root).records(role):
+        task_id = record.get("task_id")
+        if (
+            not isinstance(task_id, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,199}", task_id)
+            or task_id.casefold() == state.task.task_id.casefold()
+            or record.get("source") not in {"independent_review", "coordination_adjudication"}
+            or not re.search(
+                r"(?<![a-z0-9_.-])"
+                + re.escape(task_id.casefold())
+                + r"(?![a-z0-9_-]|\.[a-z0-9_.-])",
+                task_text,
+            )
+        ):
+            continue
+        records.setdefault(task_id.casefold(), []).append(record)
+    if len(records) > 12:
+        raise ValueError("too many explicitly referenced completed tasks for bounded context")
+    if any(len(values) != 1 for values in records.values()):
+        raise ValueError("explicitly referenced completed task has ambiguous ledger history")
+    if not records:
+        return []
+    root = config.coordination_root
+    selected: list[tuple[str, str, str]] = []
+    for recipient in ("backend", "mobile", "testing", "supervisor"):
+        for path in sorted((root / "mailbox" / recipient).glob("*.md")):
+            preview = _bounded_read(path, 6000)
+            if _header_field(preview, "From").casefold() != role:
+                continue
+            related = _header_field(preview, "Related").casefold()
+            named = [
+                task_id
+                for task_id in records
+                if re.search(
+                    r"(?<![a-z0-9_.-])" + re.escape(task_id) + r"(?![a-z0-9_-]|\.[a-z0-9_.-])",
+                    related,
+                )
+            ]
+            if not named:
+                continue
+            text = _complete_task_message(root, path)
+            identity = _header_field(text, "Invocation")
+            if not identity:
+                continue  # Unproven legacy text cannot acquire an external wake identity.
+            digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+            # Related is model-authored and can contain an injected header. Only
+            # the host filename binds this message to its real invocation/role.
+            if not re.fullmatch(rf"MSG-{digest[:20]}-\d{{2,}}-{role}\.md", path.name):
+                continue
+            if str(uuid.UUID(identity)) != identity:
+                raise ValueError("referenced task message has an invalid invocation identity")
+            manifest_path = root / "model-inputs" / f"{role}-{digest}" / "manifest.json"
+            if not manifest_path.exists():
+                continue
+            manifest = json.loads(_complete_task_message(root, manifest_path))
+            original_task = str(manifest.get("task_id", "")).casefold()
+            # A current task may name an old task in Related. Its own immutable
+            # admission still identifies it as current output, never external input.
+            if original_task not in named or original_task == state.task.task_id.casefold():
+                continue
+            record = records[original_task][0]
+            admission = manifest.get("admission")
+            if not isinstance(admission, dict) or manifest.get("phase") not in {
+                "implement",
+                "review",
+                "adjudicate",
+            }:
+                raise ValueError("referenced task message has invalid original input provenance")
+            validated, _ = read_supplied_input(
+                config,
+                role,
+                manifest["phase"],
+                manifest["task_id"],
+                identity,
+                {**admission, "supplied_input": manifest.get("supplied_input")},
+            )
+            if _stamp(validated["captured_at"]) > _stamp(record["completed_at"]):
+                continue  # A later reopened attempt is not this accepted task's history.
+            provenance = (
+                "Original correspondence from an explicitly referenced completed task.\n"
+                "Preserve the message's stated scope. No broader agreement or permission is inferred.\n"
+                "Accepted task record: " + json.dumps(record, sort_keys=True) + "\n"
+                "Original input manifest: " + manifest_path.relative_to(root).as_posix() + "\n"
+                "Original input manifest SHA256: "
+                + hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+                + "\n\n"
+            )
+            selected.append((path.relative_to(root).as_posix(), provenance + text, "prior_task"))
+            if len(selected) > 24:
+                raise ValueError(
+                    "referenced task correspondence exceeds bounded selection capacity"
+                )
+    return selected
+
+
 def build_worker_context(
     config: OrchestratorConfig, role: str, state: WorkerState, head: str
 ) -> WorkerContext:
@@ -277,11 +390,15 @@ def build_worker_context(
         deferred_task_prefixes=config.deferred_task_prefixes,
         task_text=task_text,
     )
+    prior = _referenced_task_sources(config, role, state)
+    prior_names = {name for name, _body, _category in prior}
+    sources = [item for item in sources if item[0] not in prior_names] + prior
     host_text, host_inputs = _host_status(config, role, state, head)
     sources.insert(0, ("Current host evidence", host_text, "host"))
     required = [source for source in sources if source[2] in {"host", "required"}]
     required += [source for source in sources if source[2] == "incoming"]
     required += [source for source in sources if source[2] == "outgoing"]
+    required += [source for source in sources if source[2] == "prior_task"]
     optional = [source for source in sources if source[2] == "history"]
     limit = min(_CONTEXT_LIMIT, config.openai_max_input_chars)
     rendered: list[str] = []
@@ -292,7 +409,7 @@ def build_worker_context(
         text = render_coordination_source(name, body, category)
         needed = len(text) + (2 if rendered else 0)
         if used + needed > limit:
-            if category in {"host", "required", "incoming", "outgoing"}:
+            if category in {"host", "required", "incoming", "outgoing", "prior_task"}:
                 raise ValueError(
                     "required worker evidence exceeds bounded context capacity: " + name
                 )
@@ -301,7 +418,9 @@ def build_worker_context(
         used += needed
         if category != "history":
             critical.append(text)
-        if category in {"required", "incoming"} or (category == "history" and state.task is None):
+        if category in {"required", "incoming", "prior_task"} or (
+            category == "history" and state.task is None
+        ):
             external.append((name, body))
     return WorkerContext(
         SuppliedContext("\n\n".join(rendered), "\n\n".join(critical)), tuple(external)
