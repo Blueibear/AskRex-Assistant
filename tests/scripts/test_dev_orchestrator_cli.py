@@ -1560,9 +1560,18 @@ def test_run_loop_keeps_mobile_progressing_after_backend_lease_failure(
     assert config.backend_root is not None
     (config.backend_root / "unexpected-writer.txt").write_text("unpublished external work")
 
+    class StopLoop(Exception):
+        pass
+
+    def poll(_seconds):
+        if stop.wait(0.02):
+            raise StopLoop
+
     def run():
         try:
-            run_loop(config, invoker=invoker, max_cycles=400, sleep_fn=lambda _: stop.wait(0.02))
+            run_loop(config, invoker=invoker, max_cycles=400, sleep_fn=poll)
+        except StopLoop:
+            pass
         except BaseException as exc:
             failures.append(exc)
 
