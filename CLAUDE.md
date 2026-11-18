@@ -708,6 +708,8 @@ Add a short rule here that would have prevented the mistake.
 
 ### Learned rules
 
+- Completion preflight must separate local remediation, trusted host publication, and human acceptance. Missing CI must become a stable reviewed source task even when physical acceptance is outstanding; include the exact required CI names and local gate contract. Only the trusted host may publish the reviewed leased branch or create a draft PR. Preserve acceptance records, validate consumed plan/final-review lineage when reclassifying an old taskless hold, and never repeat an already reviewed obligation from unchanged or descendant evidence.
+
 - Classify a durable final-verification checkpoint before reading generic worker context; malformed proof must reach its preserving evidence gate before any provider dispatch.
 
 - Implementation context must include explicitly referenced shared requirements even when their issue status is not open. Label mailbox history separately from exact-task/revision host receipts and accepted review records; an older or different-task pass never clears a newer matching failure or grants broader issue, permission, or contract approval. Retain model-reported blockers with their original result and actual delivered-input provenance, and retry only after relevant external inputs change. Generated invocation metadata, blocker feedback, refreshed own captures, and outgoing proposals are not peer responses or wake events.

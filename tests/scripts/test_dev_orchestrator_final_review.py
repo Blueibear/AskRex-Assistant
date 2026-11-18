@@ -662,7 +662,14 @@ def test_explicit_new_final_claim_preserves_prior_proof_and_runs_new_validation(
     _claim(checkpoint)
     first = checkpoint.supervisor.load_state("backend")
     assert first.status is WorkerStatus.IMPLEMENTING
-    assert first.task.task_id == "FINAL-backend"
+    if previous == "review_rejection":
+        assert first.task.task_id == "FINAL-backend"
+    else:
+        assert first.task.task_id.startswith("FINAL-backend-local-validation-")
+        identity = first.task.task_id.rsplit("-", 1)[1]
+        assert len(identity) == 64 and all(
+            character in "0123456789abcdef" for character in identity
+        )
     receipt_path, manifest_path = _preparation_artifacts(checkpoint)
     old_proof = [path.read_bytes() for path in (receipt_path, manifest_path) if path.exists()]
     old_manifest = json.loads(manifest_path.read_bytes())

@@ -488,10 +488,10 @@ def validate_consumed_completion_result(
     require_planning_hold_lineage(config, role, state, head, expected_pending=pending)
 
 
-def read_consumed_plan_fingerprint(
+def read_consumed_completion_input(
     config: OrchestratorConfig, role: str, state: WorkerState, head: str
-) -> str:
-    """Recover only the input baseline of a legacy taskless completion hold."""
+) -> dict | None:
+    """Validate the consumed plan/final-review input behind a taskless completion hold."""
     import stat
 
     if (
@@ -504,12 +504,12 @@ def read_consumed_plan_fingerprint(
         raise ValueError("legacy planning baseline requires a taskless acceptance hold")
     invocation_id = state.last_result_invocation_id
     if not invocation_id:
-        return ""
+        return None
     digest = hashlib.sha256(invocation_id.encode("utf-8")).hexdigest()
     root = config.coordination_root.resolve()
     path = root / "model-inputs" / f"{role}-{digest}" / "manifest.json"
     if not path.exists():
-        return ""  # An older unproven hold does not acquire automatic resume authority.
+        return None  # Unproven holds do not acquire automatic resume authority.
     metadata = path.lstat()
     if (
         path.resolve() != path
@@ -523,14 +523,18 @@ def read_consumed_plan_fingerprint(
         raise ValueError("legacy planning input manifest is malformed")
     admission = record["admission"]
     provenance = {**admission, "supplied_input": record.get("supplied_input")}
-    read_supplied_input(config, role, "plan", "", invocation_id, provenance)
+    phase = admission.get("phase")
+    task_id = admission.get("task_id")
+    if (phase, task_id) not in {("plan", ""), ("review", f"FINAL-VERIFY-{role}")}:
+        raise ValueError("consumed completion input is not a plan or final review")
+    read_supplied_input(config, role, phase, task_id, invocation_id, provenance)
     if (
         any(
             admission.get(key) != expected
             for key, expected in (
                 ("role", role),
-                ("phase", "plan"),
-                ("task_id", ""),
+                ("phase", phase),
+                ("task_id", task_id),
                 ("head", head),
             )
         )
@@ -542,6 +546,18 @@ def read_consumed_plan_fingerprint(
     ):
         raise ValueError("legacy planning input digest is malformed")
     require_planning_hold_lineage(config, role, state, head)
+    return admission
+
+
+def read_consumed_plan_fingerprint(
+    config: OrchestratorConfig, role: str, state: WorkerState, head: str
+) -> str:
+    """Recover only the input baseline of a legacy taskless completion hold."""
+    admission = read_consumed_completion_input(config, role, state, head)
+    if admission is None:
+        return ""
+    if admission["phase"] != "plan" or admission["task_id"] != "":
+        raise ValueError("legacy planning input does not match its held checkpoint")
     return admission["fingerprint"]
 
 

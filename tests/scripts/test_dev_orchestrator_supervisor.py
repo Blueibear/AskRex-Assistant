@@ -1032,7 +1032,13 @@ def test_final_sol_pass_revalidates_completion_before_done(tmp_path: Path, monke
     gates = iter(
         [
             CompletionGate(True),
-            CompletionGate(False, ("required CI changed during final review",), False),
+            CompletionGate(
+                False,
+                ("required CI changed during final review",),
+                False,
+                local_remediation=("ci_checks",),
+                remediation_fingerprint="1" * 64,
+            ),
         ]
     )
     monkeypatch.setattr(
@@ -1055,7 +1061,7 @@ def test_final_sol_pass_revalidates_completion_before_done(tmp_path: Path, monke
     state = supervisor.load_state("backend")
     assert state.status is WorkerStatus.IMPLEMENTING
     assert state.task is not None
-    assert state.task.task_id == "FINAL-backend"
+    assert state.task.task_id == "FINAL-backend-ci-checks-" + "1" * 64
     assert "CI changed" in state.task.prompt
 
 
@@ -1316,7 +1322,10 @@ def test_done_claim_does_not_promote_owner_deferred_issue(tmp_path: Path, monkey
         supervisor_module,
         "prepare_final_review",
         lambda *_args, **_kwargs: CompletionGate(
-            False, ("release campaign remains active",), False
+            False,
+            ("release campaign remains active; CI workflow is missing",),
+            False,
+            local_remediation=("missing_ci_workflow",),
         ),
     )
 
@@ -1326,7 +1335,7 @@ def test_done_claim_does_not_promote_owner_deferred_issue(tmp_path: Path, monkey
     state = supervisor.load_state("backend")
     assert state.status is WorkerStatus.IMPLEMENTING
     assert state.task is not None
-    assert state.task.task_id == "FINAL-backend"
+    assert state.task.task_id == "FINAL-backend-ci-workflow"
 
 
 def test_final_done_transition_holds_role_lease_lock(tmp_path: Path, monkeypatch) -> None:

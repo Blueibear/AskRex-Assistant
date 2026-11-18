@@ -13,7 +13,14 @@ from typing import Protocol
 
 from .alerts import AlertSink
 from .completed_tasks import CompletedTaskLedger
-from .completion import CompletionGate, prepare_final_review, recheck_final_completion
+from .completion import (
+    COMPLETION_MANIFESTS,
+    CompletionGate,
+    completion_observation_fingerprint,
+    completion_preflight,
+    prepare_final_review,
+    recheck_final_completion,
+)
 from .coordination import (
     _issue_status,
     active_owned_issues,
@@ -41,7 +48,7 @@ from .model_blockers import (
     blocker_feedback,
     context_sha256,
     plan_input_fingerprint,
-    read_consumed_plan_fingerprint,
+    read_consumed_completion_input,
     record_dependency_check,
     require_planning_hold_lineage,
     validate_consumed_blocker,
@@ -92,6 +99,9 @@ class AgentInvoker(Protocol):
 def _state_from_dict(role: str, data: dict | None) -> WorkerState:
     if not data:
         return WorkerState(role=role)
+    host_action = data.get("completion_host_action", "")
+    if host_action not in {"", "observe", "publication"}:
+        raise ValueError("unknown completion host action")
     task_data = data.get("task")
     task = TaskItem(**task_data) if task_data else None
     return WorkerState(
@@ -110,6 +120,8 @@ def _state_from_dict(role: str, data: dict | None) -> WorkerState:
         last_result_invocation_id=str(data.get("last_result_invocation_id", "")),
         idle_context_fingerprint=str(data.get("idle_context_fingerprint", "")),
         planning_input_fingerprint=str(data.get("planning_input_fingerprint", "")),
+        completion_preflight_fingerprint=str(data.get("completion_preflight_fingerprint", "")),
+        completion_host_action=host_action,
         result_contract_phase=str(data.get("result_contract_phase", "")),
         result_contract_feedback=str(data.get("result_contract_feedback", "")),
         result_contract_failures=int(data.get("result_contract_failures", 0)),
@@ -334,6 +346,8 @@ class Supervisor:
             resume_status=None,
             idle_context_fingerprint="",
             planning_input_fingerprint="",
+            completion_preflight_fingerprint="",
+            completion_host_action="",
             result_contract_phase="",
             result_contract_feedback="",
             result_contract_failures=0,
@@ -690,6 +704,40 @@ class Supervisor:
                 clear_pending_result(
                     self.config, role, invocation_id=state.last_result_invocation_id
                 )
+        if (
+            state.status is WorkerStatus.BLOCKED_SYSTEM
+            and state.blocker_kind == "completion_remediation"
+            and state.task is None
+        ):
+            # A reviewed obligation is not repeated automatically. Exact consumed
+            # completion lineage may admit an explicitly queued new regression.
+            self._settle_completion_result(role, state)
+            self._claim_completion_queue(role, state)
+            return
+        if state.completion_host_action and (
+            state.task is None or state.task.task_id != f"FINAL-VERIFY-{role}"
+        ):
+            raise ValueError("host publication intent lost its reserved completion task")
+        if (
+            (
+                state.completion_host_action
+                or state.blocker_kind
+                in {
+                    "host_publication",
+                    "host_publication_system",
+                    "completion_ci_wait",
+                    "completion_observation_wait",
+                }
+            )
+            and state.task is not None
+            and state.task.task_id == f"FINAL-VERIFY-{role}"
+        ):
+            if state.status is WorkerStatus.BLOCKED_USER:
+                # Existing resume-human is the only release for a definitive
+                # authorization hold. Mailbox changes never authorize another write.
+                return
+            self._reconcile_completion_host(role, state)
+            return
         if state.status is WorkerStatus.BLOCKED_SYSTEM and state.blocker_kind == "model_dependency":
             queued = state.task is None and any(
                 not self._task_is_deferred(str(item.get("task_id", "")))
@@ -850,22 +898,22 @@ class Supervisor:
             elif state.resume_status is WorkerStatus.PLANNING:
                 # This is a final-release hold, not a task-specific user approval.
                 # New work may be planned without confirming any acceptance gate.
-                baseline = state.planning_input_fingerprint or read_consumed_plan_fingerprint(
-                    self.config, role, state, self._capture_task_base_head(role)
-                )
+                head = self._capture_task_base_head(role)
+                admitted = read_consumed_completion_input(self.config, role, state, head)
+                if admitted is None:
+                    return
+                baseline = state.planning_input_fingerprint
+                if not baseline and admitted["phase"] == "plan":
+                    baseline = admitted["fingerprint"]
+                require_planning_hold_lineage(self.config, role, state, head)
                 if baseline:
-                    require_planning_hold_lineage(
-                        self.config, role, state, self._capture_task_base_head(role)
-                    )
                     if len(baseline) != 64 or any(c not in "0123456789abcdef" for c in baseline):
                         raise ValueError("taskless planning input fingerprint is malformed")
                     context = self._worker_context(role, state)
                     current = self._input_fingerprint(role, state, "plan", context)
                     unchanged = current == baseline
                     if not state.planning_input_fingerprint and not unchanged:
-                        # fe458 taskless plans used either an empty base after review
-                        # or the admitted HEAD after final preparation. Compare the
-                        # original digest in both exact scopes, never rebase it.
+                        # Compare old taskless scopes without replacing the admitted baseline.
                         unchanged = baseline == self._input_fingerprint(
                             role, state, "plan", context, legacy_taskless_base=True
                         )
@@ -879,6 +927,14 @@ class Supervisor:
                             idle_context_fingerprint="",
                         )
                         self.save_state(state)
+                if state.status is WorkerStatus.BLOCKED_USER:
+                    observed = completion_observation_fingerprint(self.config, role, head)
+                    if state.completion_preflight_fingerprint != observed:
+                        # A legacy mixed hold gets one classified observation. Only
+                        # changed material local inputs permit another observation.
+                        gate = completion_preflight(self.config, role)
+                        self._block_final_gate(state, gate)
+                    return
         if state.status is WorkerStatus.BLOCKED_USER and state.blocker_kind == "retest":
             if state.task is not None:
                 if state.task.task_id.lower() in {
@@ -1126,6 +1182,8 @@ class Supervisor:
                         status=WorkerStatus.BLOCKED_USER,
                         task=TaskItem(issue.stem, "Await canonical testing verification"),
                         planning_input_fingerprint="",
+                        completion_preflight_fingerprint="",
+                        completion_host_action="",
                         task_base_head=self._capture_task_base_head(role),
                         blocked_reason=f"{issue.stem} requires testing/retest before completion",
                         blocker_kind="retest",
@@ -1140,6 +1198,8 @@ class Supervisor:
                     status=WorkerStatus.IMPLEMENTING,
                     task=candidate,
                     planning_input_fingerprint="",
+                    completion_preflight_fingerprint="",
+                    completion_host_action="",
                     task_base_head=self._capture_task_base_head(role),
                     blocked_reason="",
                 )
@@ -1180,19 +1240,333 @@ class Supervisor:
         # its own preparation checkpoint, never retire it as a fresh claim.
         self._final_verify(role, state, context)
 
+    def _completion_host_task(self, state: WorkerState, *, head: str = "") -> WorkerState:
+        return replace(
+            state,
+            task=TaskItem(
+                f"FINAL-VERIFY-{state.role}",
+                "Independently verify final workstream readiness, tests, CI, docs, and safety gates.",
+            ),
+            task_base_head=head or state.task_base_head or self._capture_task_base_head(state.role),
+        )
+
+    def _completion_host_active(self) -> bool:
+        with ControlPlaneLock(self.root / "control-plane.lock", timeout_seconds=2):
+            current = AtomicJsonStore(self.root / "orchestrator-config.json").read()
+            if not isinstance(current, dict) or not isinstance(current.get("observe_only"), bool):
+                raise ValueError("completion host action has no valid current control policy")
+            return not self.config.observe_only and current["observe_only"] is False
+
+    def _publish_completion(
+        self, role: str, acceptance: tuple[str, ...], *, resume_denied: bool = False
+    ):
+        from .github_publication import publish_reviewed_draft
+
+        return publish_reviewed_draft(
+            self.config, role, unresolved_acceptance=acceptance, resume_denied=resume_denied
+        )
+
+    def _continue_host_publication(self, state: WorkerState, gate: CompletionGate) -> None:
+        # Commit the accepted model result before a host action; remote operations
+        # never run with an unresolved result journal or a global controller lock.
+        state = self._completion_host_task(state, head=gate.head)
+        resume_denied = (
+            state.completion_host_action == "publication"
+            and state.status is WorkerStatus.IMPLEMENTING
+            and not state.blocker_kind
+            and state.resume_status is None
+        )
+        # Consume an explicit resume durably before retrying a definitive denial.
+        # A crash after another denial must never replay the same permission.
+        self.save_state(
+            replace(
+                state,
+                status=WorkerStatus.BLOCKED_SYSTEM,
+                blocked_reason="Host draft publication is pending; final acceptance remains required.",
+                blocker_kind="host_publication",
+                resume_status=None,
+                completion_host_action="publication",
+            )
+        )
+        state = self.load_state(state.role)
+        self._settle_completion_result(state.role, state)
+        if not self._completion_host_active():
+            return
+        result = self._publish_completion(
+            state.role, gate.acceptance_reasons, resume_denied=resume_denied
+        )
+        if result.status in {"published", "already_published"}:
+            refreshed = completion_preflight(self.config, state.role)
+            if refreshed.publication_reasons and not refreshed.system_error:
+                self.save_state(
+                    replace(
+                        state,
+                        blocked_reason="Host publication completed but current PR observation is pending.",
+                    )
+                )
+                return
+            self._block_final_gate(replace(state, completion_host_action=""), refreshed)
+            return
+        kinds = {
+            "waiting": ("host_publication", WorkerStatus.BLOCKED_SYSTEM),
+            "auth_required": ("github_auth", WorkerStatus.BLOCKED_USER),
+            "system_error": ("host_publication_system", WorkerStatus.BLOCKED_SYSTEM),
+        }
+        kind, status = kinds.get(
+            result.status, ("host_publication_system", WorkerStatus.BLOCKED_SYSTEM)
+        )
+        self.save_state(
+            replace(
+                state,
+                status=status,
+                blocker_kind=kind,
+                blocked_reason=result.reason or f"Host publication status: {result.status}",
+                resume_status=(
+                    WorkerStatus.IMPLEMENTING if status is WorkerStatus.BLOCKED_USER else None
+                ),
+            )
+        )
+
+    def _settle_completion_result(self, role: str, state: WorkerState) -> None:
+        # Reuse consumed-completion validation without granting a new model phase.
+        held = replace(
+            state,
+            status=WorkerStatus.BLOCKED_USER,
+            blocker_kind="acceptance",
+            task=None,
+            resume_status=WorkerStatus.PLANNING,
+        )
+        head = self._capture_task_base_head(role)
+        pending = read_pending_result(self.config, role)
+        if pending and pending.get("invocation_id") == state.last_result_invocation_id:
+            validate_consumed_completion_result(self.config, role, held, pending, head)
+            self._recover_result(role, held, phase=pending["phase"], task_id=pending["task_id"])
+        if read_pending_result(self.config, role) is not None:
+            raise ValueError("host completion wait has an unresolved result")
+        if read_consumed_completion_input(self.config, role, held, head) is None:
+            raise ValueError("host completion wait has no consumed input provenance")
+
+    def _claim_completion_queue(self, role: str, state: WorkerState) -> bool:
+        with ControlPlaneLock(self.root / "control-plane.lock", timeout_seconds=2):
+            queue = self._queue_store(role).read(default=[])
+            if not any(not self._task_is_deferred(str(item.get("task_id", ""))) for item in queue):
+                return False
+            if not self._completion_host_active():
+                return False
+            if self.load_state(role) != state:
+                raise ValueError("completion wait changed before queued work selection")
+            # Publication journals remain untouched and must reconcile before a
+            # later host publication. They do not freeze authorized local work.
+            self.save_state(
+                replace(
+                    state,
+                    status=WorkerStatus.IDLE,
+                    task=None,
+                    task_base_head="",
+                    blocked_reason="",
+                    blocker_kind="",
+                    resume_status=None,
+                    completion_host_action="",
+                    completion_preflight_fingerprint="",
+                    planning_input_fingerprint="",
+                    idle_context_fingerprint="",
+                )
+            )
+            return self._dequeue(role) is not None
+
+    def _reconcile_completion_host(self, role: str, state: WorkerState) -> None:
+        self._settle_completion_result(role, state)
+        if not self._completion_host_active():
+            return
+        if self._claim_completion_queue(role, state):
+            return
+        gate = completion_preflight(self.config, role)
+        if state.completion_host_action == "publication" and not gate.system_error:
+            # Reconcile the publisher's own journal even if the PR is now visible.
+            self._continue_host_publication(state, gate)
+        else:
+            self._block_final_gate(state, gate)
+
     def _block_final_gate(self, state: WorkerState, gate: CompletionGate) -> None:
         reason = gate.system_error or "; ".join(gate.reasons)
         if gate.system_error or gate.blocker_kind == "incomplete_evidence":
+            if gate.observation_retryable and gate.blocker_kind != "incomplete_evidence":
+                observed = self._completion_host_task(state, head=gate.head)
+                self.save_state(
+                    replace(
+                        observed,
+                        status=WorkerStatus.BLOCKED_SYSTEM,
+                        blocked_reason=reason,
+                        resume_status=None,
+                        blocker_kind=(
+                            "host_publication_system"
+                            if state.completion_host_action == "publication"
+                            else "completion_observation_wait"
+                        ),
+                        completion_host_action=state.completion_host_action or "observe",
+                    )
+                )
+                self._settle_completion_result(state.role, self.load_state(state.role))
+                return
+            host_wait = gate.blocker_kind != "incomplete_evidence" and (
+                state.completion_host_action == "publication"
+                or state.blocker_kind in {"host_publication", "host_publication_system"}
+            )
             self._save_state_preserving_pending_result(
                 replace(
                     state,
                     status=WorkerStatus.BLOCKED_SYSTEM,
                     blocked_reason=reason,
-                    blocker_kind="incomplete_evidence" if not gate.system_error else "validation",
+                    blocker_kind=(
+                        "host_publication_system"
+                        if host_wait
+                        else "incomplete_evidence" if not gate.system_error else "validation"
+                    ),
+                    resume_status=None,
+                    completion_host_action="publication" if host_wait else "",
+                )
+            )
+            return
+        observed = gate.observation_fingerprint or completion_observation_fingerprint(
+            self.config, state.role, gate.head or self._capture_task_base_head(state.role)
+        )
+        state = replace(state, completion_preflight_fingerprint=observed)
+        if gate.blocker_kind and gate.blocker_kind not in {"acceptance"}:
+            if gate.blocker_kind == "github_auth":
+                state = self._completion_host_task(state, head=gate.head)
+                state = replace(
+                    state, completion_host_action=state.completion_host_action or "observe"
+                )
+            self.save_state(
+                replace(
+                    state,
+                    status=(
+                        WorkerStatus.BLOCKED_USER
+                        if gate.needs_user
+                        else WorkerStatus.BLOCKED_SYSTEM
+                    ),
+                    task=state.task if state.completion_host_action else None,
+                    blocked_reason=reason,
+                    blocker_kind=gate.blocker_kind,
+                    resume_status=(
+                        (
+                            WorkerStatus.IMPLEMENTING
+                            if state.completion_host_action
+                            else WorkerStatus.PLANNING
+                        )
+                        if gate.needs_user
+                        else None
+                    ),
+                )
+            )
+            return
+        if gate.local_remediation:
+            names = {
+                "missing_ci_workflow": ("ci-workflow", "Establish the role-owned CI workflow."),
+                "ci_checks": ("ci-checks", "Repair the observed required CI check failures."),
+                "ci_blocking_checks": (
+                    "ci-blocking-checks",
+                    "Diagnose the actual additional completion-blocking CI failures below. "
+                    "These are distinct from the manifest's required named checks. "
+                    "Determine a scoped source remedy or report the genuine external/user blocker. "
+                    "Do not waive or disable a check merely to obtain a pass.",
+                ),
+                "local_validation": (
+                    "local-validation",
+                    "Repair the actual canonical release-gate failure.",
+                ),
+            }
+            key = gate.local_remediation[0]
+            if key not in names:
+                raise ValueError("unknown local completion remediation obligation")
+            suffix, instruction = names[key]
+            if key != "missing_ci_workflow":
+                identity = gate.remediation_fingerprint
+                if len(identity) != 64 or any(c not in "0123456789abcdef" for c in identity):
+                    raise ValueError("completion failure has no bound material obligation identity")
+                suffix += "-" + identity
+            manifest = COMPLETION_MANIFESTS[state.role]
+            commands = "\n".join(
+                f"- {item.name}: {list(item.command)} (cwd={item.cwd})"
+                for item in manifest.local_gates
+            )
+            candidate = TaskItem(
+                f"FINAL-{state.role}-{suffix}",
+                instruction
+                + "\nImplement only source/configuration/tests within this leased role repository. "
+                "Follow the repository instructions, including any additional required CI verification. "
+                "Do not push, open a pull request, alter credentials, or confirm physical, documentation "
+                "or cross-repository acceptance. The trusted host owns draft publication and canonical "
+                "validation; all final human requirements remain unsatisfied until separately confirmed."
+                + "\nRequired CI check names: "
+                + ", ".join(manifest.required_checks)
+                + "\nCanonical local gate contract:\n"
+                + commands
+                + "\nObserved completion requirements (human requirements are context, not this task):\n"
+                + "\n".join("- " + item for item in gate.reasons),
+            )
+            if self._completed_assignment(state.role, candidate) is not None:
+                self.save_state(
+                    replace(
+                        state,
+                        status=WorkerStatus.BLOCKED_SYSTEM,
+                        task=None,
+                        blocked_reason=(
+                            "Reviewed completion obligation remains unsatisfied: "
+                            + candidate.task_id
+                            + ". Preserve its accepted history; require a new explicit regression task. "
+                            + reason
+                        ),
+                        blocker_kind="completion_remediation",
+                        resume_status=None,
+                        completion_host_action="",
+                    )
+                )
+                return
+            self.save_state(
+                replace(
+                    state,
+                    status=WorkerStatus.IMPLEMENTING,
+                    task=candidate,
+                    task_base_head=gate.head or self._capture_task_base_head(state.role),
+                    blocked_reason="",
+                    blocker_kind="",
+                    resume_status=None,
+                    planning_input_fingerprint="",
+                    completion_preflight_fingerprint="",
+                    completion_host_action="",
+                )
+            )
+            return
+        if gate.publication_reasons:
+            self._continue_host_publication(state, gate)
+            return
+        if gate.waiting_for_ci:
+            state = self._completion_host_task(state, head=gate.head)
+            self.save_state(
+                replace(
+                    state,
+                    status=WorkerStatus.BLOCKED_SYSTEM,
+                    blocked_reason=reason,
+                    blocker_kind="completion_ci_wait",
+                    resume_status=None,
+                    completion_host_action="observe",
+                )
+            )
+            return
+        if gate.ready:
+            self.save_state(
+                replace(
+                    self._completion_host_task(state, head=gate.head),
+                    completion_host_action="",
+                    status=WorkerStatus.IMPLEMENTING,
+                    blocked_reason="",
+                    blocker_kind="",
                     resume_status=None,
                 )
             )
-        elif gate.needs_user:
+            return
+        if gate.needs_user:
             self.save_state(
                 replace(
                     state,
@@ -1201,23 +1575,19 @@ class Supervisor:
                     blocked_reason=reason,
                     blocker_kind=gate.blocker_kind or "human",
                     resume_status=WorkerStatus.PLANNING,
+                    completion_host_action="",
                 )
             )
-        else:
-            self.save_state(
-                replace(
-                    state,
-                    status=WorkerStatus.IMPLEMENTING,
-                    task=TaskItem(
-                        f"FINAL-{state.role}",
-                        "Satisfy deterministic final completion gates: " + reason,
-                    ),
-                    task_base_head=self._capture_task_base_head(state.role),
-                    blocked_reason="",
-                    blocker_kind="",
-                    resume_status=None,
-                )
+            return
+        self._save_state_preserving_pending_result(
+            replace(
+                state,
+                status=WorkerStatus.BLOCKED_SYSTEM,
+                blocked_reason=reason,
+                blocker_kind="completion_observation",
+                resume_status=None,
             )
+        )
 
     def _require_final_evidence(self, role: str, state: WorkerState, context: str) -> None:
         assert state.task is not None
@@ -1436,6 +1806,8 @@ class Supervisor:
                     blocked_reason="",
                     idle_context_fingerprint="",
                     planning_input_fingerprint="",
+                    completion_preflight_fingerprint="",
+                    completion_host_action="",
                 )
             )
             return

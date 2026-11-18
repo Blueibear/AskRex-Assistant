@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
+import stat
 import subprocess
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -39,6 +41,16 @@ class CompletionGate:
     head: str = ""
     evidence: dict | None = None
     system_error: str = ""
+    local_remediation: tuple[str, ...] = ()
+    publication_reasons: tuple[str, ...] = ()
+    acceptance_reasons: tuple[str, ...] = ()
+    observation_fingerprint: str = ""
+    waiting_for_ci: bool = False
+    remediation_fingerprint: str = ""
+    observation_retryable: bool = False
+
+
+_HARD_CI_FAILURES = {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "ERROR"}
 
 
 _BACKEND_CHECKS = (
@@ -259,12 +271,127 @@ def _check_conclusion(check: dict) -> str:
     return str(check.get("conclusion") or check.get("state") or "").upper()
 
 
+def completion_observation_fingerprint(config: OrchestratorConfig, role: str, head: str) -> str:
+    """Hash material local completion inputs, never invocation/timestamp churn."""
+    root = config.coordination_root
+    repo = _repo(config, role).resolve()
+    peer = "mobile" if role == "backend" else "backend"
+
+    def lease_identity(name: str) -> dict:
+        value = AtomicJsonStore(root / "handoff" / f"{name}.json").read(default={})
+        return {
+            key: value.get(key)
+            for key in ("role", "owner", "worktree", "branch", "head", "lease_id")
+        }
+
+    def digest(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "absent"
+
+    workflows = repo / ".github" / "workflows"
+    files: list[tuple[str, str]] = []
+    for directory in (repo / ".github", workflows):
+        if directory.exists():
+            metadata = directory.lstat()
+            if directory.is_symlink() or (
+                getattr(metadata, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            ):
+                raise ValueError("completion workflow directory must not be a reparse point")
+    for path in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")]):
+        metadata = path.lstat()
+        if (
+            not path.is_file()
+            or path.is_symlink()
+            or getattr(metadata, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            or path.resolve().parent != workflows.resolve()
+            or metadata.st_size > 2_000_000
+        ):
+            raise ValueError("completion workflow source is outside its trusted bound")
+        files.append((path.name, digest(path)))
+    policy = config.metadata.get("host_publication", {})
+    manifest = COMPLETION_MANIFESTS[role]
+    payload = {
+        "schema_version": 1,
+        "role": role,
+        "head": head,
+        "lease": lease_identity(role),
+        "peer_lease": lease_identity(peer),
+        "workflows": files,
+        "completion_contract": {
+            "base_branch": manifest.base_branch,
+            "required_checks": list(manifest.required_checks),
+            "local_gates": [
+                {"name": gate.name, "command": list(gate.command), "cwd": gate.cwd}
+                for gate in manifest.local_gates
+            ],
+            "physical_label": manifest.physical_label,
+        },
+        "acceptance": digest(root / "completion" / f"{role}-acceptance.json"),
+        "protocol": _protocol_digest(root),
+        "host_publication_enabled": isinstance(policy, dict) and policy.get("enabled") is True,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _remediation_fingerprint(repo: Path, kind: str, facts: object) -> str:
+    # Bind recurring failures to source content and stable observed gate facts,
+    # never commit time, invocation IDs, raw duration tails or new artifact paths.
+    tree = _run(repo, "git", "rev-parse", "HEAD^{tree}")
+    tree_id = tree.stdout.strip()
+    if (
+        tree.returncode != 0
+        or len(tree_id) != 40
+        or any(character not in "0123456789abcdef" for character in tree_id)
+    ):
+        raise ValueError("completion remediation cannot resolve its source tree")
+    payload = {"kind": kind, "tree": tree_id, "facts": facts}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _github_auth_required(detail: str) -> bool:
+    return any(
+        marker in detail.lower()
+        for marker in ("requires authentication", "gh auth login", "not authenticated", "http 401")
+    )
+
+
+def completion_preflight(config: OrchestratorConfig, role: str) -> CompletionGate:
+    """Observe completion requirements without running release tests or a provider."""
+    return _completion_preflight(config, role)
+
+
 def _completion_preflight(config: OrchestratorConfig, role: str) -> CompletionGate:
     if role not in COMPLETION_MANIFESTS:
         raise ValueError(f"unsupported completion role: {role}")
     repo = _repo(config, role)
     manifest = COMPLETION_MANIFESTS[role]
     reasons: list[str] = []
+    local: list[str] = []
+    publication: list[str] = []
+    acceptance: tuple[str, ...] = ()
+    head = ""
+    fingerprint = ""
+    remediation_fingerprint = ""
+
+    def result(**changes) -> CompletionGate:
+        values = {
+            "ready": False,
+            "reasons": tuple(reasons),
+            "needs_user": bool(acceptance),
+            "blocker_kind": "acceptance" if acceptance else "",
+            "head": head,
+            "local_remediation": tuple(local),
+            "publication_reasons": tuple(publication),
+            "acceptance_reasons": acceptance,
+            "observation_fingerprint": fingerprint,
+            "remediation_fingerprint": remediation_fingerprint,
+        }
+        values.update(changes)
+        return CompletionGate(**values)
+
+    def host_error(message: str, *, retryable: bool = False) -> CompletionGate:
+        reasons.append(message)
+        return result(system_error=message, observation_retryable=retryable)
+
     issues = active_owned_issues(
         config.coordination_root, role, deferred_issue_ids=config.deferred_issue_ids
     )
@@ -272,39 +399,33 @@ def _completion_preflight(config: OrchestratorConfig, role: str) -> CompletionGa
         reasons.append(
             "owned live-test/retest issues remain: " + ", ".join(path.stem for path in issues)
         )
-
     git_dir = _run(repo, "git", "rev-parse", "--git-dir")
     if git_dir.returncode != 0:
-        reasons.append("cannot inspect repository Git metadata")
-        return CompletionGate(False, tuple(reasons))
+        return host_error("cannot inspect repository Git metadata")
     try:
         validate_handoff(config, role)
     except HandoffRequired as exc:
-        reasons.append(f"supervisor lease is invalid: {exc}")
-        return CompletionGate(False, tuple(reasons))
+        return host_error(f"supervisor lease is invalid: {exc}")
     lease = _lease_record(config.coordination_root, role)
-
     status = _run(repo, "git", "status", "--porcelain=v1", "--untracked-files=all")
     if status.returncode != 0 or status.stdout.strip():
-        reasons.append("repository is not clean")
+        return host_error("repository is not clean")
     head_result = _run(repo, "git", "rev-parse", "HEAD")
     if head_result.returncode != 0:
-        reasons.append("cannot resolve current Git HEAD")
-        return CompletionGate(False, tuple(reasons))
+        return host_error("cannot resolve current Git HEAD")
     head = head_result.stdout.strip()
+    fingerprint = completion_observation_fingerprint(config, role, head)
     acceptance_payload = AtomicJsonStore(
         config.coordination_root / "completion" / f"{role}-acceptance.json"
     ).read(default={})
     acceptance = _acceptance_reasons(config, role, head, payload=acceptance_payload)
     reasons.extend(acceptance)
-    needs_user = bool(acceptance)
-    blocker_kind = "acceptance" if acceptance else ""
 
     if not _ci_workflow_present(repo):
         reasons.append("repository has no CI workflow; CI must be established before completion")
+        local.append("missing_ci_workflow")
     if shutil.which("gh") is None:
-        reasons.append("GitHub CLI is unavailable for deterministic CI verification")
-        return CompletionGate(False, tuple(reasons), needs_user, blocker_kind)
+        return host_error("GitHub CLI is unavailable for deterministic CI verification")
 
     pr = _run(
         repo,
@@ -315,29 +436,137 @@ def _completion_preflight(config: OrchestratorConfig, role: str) -> CompletionGa
         "state,headRefOid,headRefName,baseRefName,statusCheckRollup",
     )
     if pr.returncode != 0:
-        detail = "\n".join(part for part in (pr.stderr, pr.stdout) if part).lower()
-        auth_markers = (
-            "requires authentication",
-            "gh auth login",
-            "not authenticated",
-            "http 401",
-        )
-        if any(marker in detail for marker in auth_markers):
+        detail = "\n".join(part for part in (pr.stderr, pr.stdout) if part)
+        if _github_auth_required(detail):
             reasons.append(
                 "GitHub CLI authentication is required for deterministic CI verification"
             )
-            return CompletionGate(False, tuple(reasons), True, "github_auth")
-        reasons.append("no GitHub pull request is available for the current branch")
-        return CompletionGate(False, tuple(reasons), needs_user, blocker_kind)
+            return result(needs_user=True, blocker_kind="github_auth")
+        # A failing view command is not absence evidence. Independently establish
+        # exact-branch absence before requesting any host publication action.
+        listed = _run(
+            repo,
+            "gh",
+            "pr",
+            "list",
+            "--state",
+            "all",
+            "--head",
+            str(lease["branch"]),
+            "--json",
+            "state,headRefOid,headRefName,baseRefName,statusCheckRollup",
+        )
+        if listed.returncode != 0:
+            listed_detail = "\n".join(part for part in (listed.stderr, listed.stdout) if part)
+            if _github_auth_required(listed_detail):
+                reasons.append("GitHub CLI authentication is required: " + listed_detail)
+                return result(needs_user=True, blocker_kind="github_auth")
+            return host_error(
+                "GitHub pull-request observation failed: "
+                + "\n".join(part for part in (detail, listed.stderr, listed.stdout) if part),
+                retryable=True,
+            )
+        try:
+            candidates = json.loads(listed.stdout)
+        except json.JSONDecodeError:
+            return host_error("GitHub pull-request list was not valid JSON: " + listed.stdout)
+        if not isinstance(candidates, list):
+            return host_error("GitHub pull-request list was not an array")
+        if candidates:
+            return host_error(
+                "GitHub pull-request view failed despite existing branch records: " + detail
+            )
+        reason = "no GitHub pull request is available for the current branch"
+        reasons.append(reason)
+        publication.append(reason)
+        return result()
     try:
         payload = json.loads(pr.stdout)
     except json.JSONDecodeError:
-        reasons.append("GitHub pull-request status was not valid JSON")
-        return CompletionGate(False, tuple(reasons), needs_user, blocker_kind)
-
+        return host_error("GitHub pull-request status was not valid JSON: " + pr.stdout)
     if not isinstance(payload, dict):
-        return CompletionGate(False, ("GitHub pull-request status was not an object",))
-    reasons.extend(_pull_request_reasons(payload, manifest, head, lease))
+        return host_error("GitHub pull-request status was not an object")
+    checks = payload.get("statusCheckRollup") or []
+    if not isinstance(checks, list) or any(not isinstance(item, dict) for item in checks):
+        return host_error("GitHub pull-request checks were not an object array")
+    pr_reasons = _pull_request_reasons(payload, manifest, head, lease)
+    reasons.extend(pr_reasons)
+    same_branch = (
+        str(payload.get("state", "")).upper() == "OPEN"
+        and payload.get("baseRefName") == manifest.base_branch
+        and payload.get("headRefName") == lease.get("branch")
+    )
+    if not same_branch:
+        return result(
+            system_error="pull request ownership/base/state does not match the leased branch"
+        )
+    if payload.get("headRefOid") != head:
+        publication.append("pull request is not at the current Git HEAD")
+    else:
+        by_name = {
+            name: sorted(_check_conclusion(item) for item in checks if _check_name(item) == name)
+            for name in manifest.required_checks
+        }
+        conclusions = [value for values in by_name.values() for value in values]
+        pending_values = {"", "PENDING", "QUEUED", "IN_PROGRESS", "EXPECTED"}
+        missing = any(not values for values in by_name.values())
+        pending = (
+            not checks
+            or any(value in pending_values for value in conclusions)
+            or (missing and any(_check_conclusion(item) in pending_values for item in checks))
+        )
+        failing = any(
+            value
+            in {
+                "FAILURE",
+                "CANCELLED",
+                "TIMED_OUT",
+                "ACTION_REQUIRED",
+                "ERROR",
+                "SKIPPED",
+                "NEUTRAL",
+            }
+            for value in conclusions
+        )
+        incomplete = any(
+            not values or any(value != "SUCCESS" for value in values) for values in by_name.values()
+        )
+        if failing or (incomplete and not pending):
+            local.append("ci_checks")
+            remediation_fingerprint = _remediation_fingerprint(repo, "ci_checks", by_name)
+            reasons.append(
+                "Observed required CI check states: "
+                + "; ".join(
+                    f"{name}={','.join(values) if values else 'MISSING'}"
+                    for name, values in sorted(by_name.items())
+                    if not values or any(value != "SUCCESS" for value in values)
+                )
+            )
+        elif incomplete and pending:
+            return result(waiting_for_ci=True)
+        else:
+            # The existing completion policy also rejects hard failures on
+            # additional checks. Diagnose them under their actual identity,
+            # without calling them required names or hiding them behind acceptance.
+            blocking: dict[str, list[str]] = {}
+            for check in checks:
+                name, conclusion = _check_name(check), _check_conclusion(check)
+                if name not in manifest.required_checks and conclusion in _HARD_CI_FAILURES:
+                    if not name:
+                        return host_error("completion-blocking CI check has no observed name")
+                    blocking.setdefault(name, []).append(conclusion)
+            if blocking:
+                facts = {name: sorted(values) for name, values in blocking.items()}
+                local.append("ci_blocking_checks")
+                remediation_fingerprint = _remediation_fingerprint(
+                    repo, "ci_blocking_checks", facts
+                )
+                reasons.append(
+                    "Observed additional completion-blocking CI states: "
+                    + "; ".join(
+                        f"{name}={','.join(values)}" for name, values in sorted(facts.items())
+                    )
+                )
     evidence = {
         "schema_version": 1,
         "role": role,
@@ -347,9 +576,7 @@ def _completion_preflight(config: OrchestratorConfig, role: str) -> CompletionGa
         "pull_request": payload,
         "acceptance": acceptance_payload,
     }
-    return CompletionGate(
-        not reasons, tuple(reasons), needs_user, blocker_kind, head=head, evidence=evidence
-    )
+    return result(ready=not reasons, evidence=evidence)
 
 
 def _pull_request_reasons(
@@ -380,10 +607,7 @@ def _pull_request_reasons(
     hard_failures = [
         name
         for name, conclusions in by_name.items()
-        if any(
-            value in {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "ERROR"}
-            for value in conclusions
-        )
+        if any(value in _HARD_CI_FAILURES for value in conclusions)
     ]
     if hard_failures:
         reasons.append("CI contains failing checks: " + ", ".join(hard_failures))
@@ -397,7 +621,17 @@ def evaluate_completion(config: OrchestratorConfig, role: str) -> CompletionGate
     if not gate.ready:
         return gate
     failures = _run_local_gates(_repo(config, role), COMPLETION_MANIFESTS[role])
-    return replace(gate, ready=not failures, reasons=failures)
+    return replace(
+        gate,
+        ready=not failures,
+        reasons=failures,
+        local_remediation=("local_validation",) if failures else (),
+        remediation_fingerprint=(
+            _remediation_fingerprint(_repo(config, role), "local_validation", failures)
+            if failures
+            else ""
+        ),
+    )
 
 
 def prepare_final_review(config: OrchestratorConfig, role: str, *, head: str) -> CompletionGate:
@@ -440,9 +674,26 @@ def prepare_final_review(config: OrchestratorConfig, role: str, *, head: str) ->
         completion_evidence=gate.evidence,
     )
     if not report.passed or report.receipt is None:
+        identity = ""
+        if not report.passed and not report.system_error:
+            # These are host-generated diagnostic headers, not model assertions.
+            # Full diagnostics remain feedback; only stable gate/command/exit facts
+            # participate in obligation identity.
+            header = report.feedback.split("STDOUT excerpt:", 1)[0].splitlines()
+            facts = [
+                line for line in header if line.startswith(("Gate: ", "Command: ", "Exit code: "))
+            ]
+            if len(facts) != 3:
+                return CompletionGate(
+                    False, system_error="final failure has no stable gate identity"
+                )
+            identity = _remediation_fingerprint(_repo(config, role), "local_validation", facts)
         return CompletionGate(
             False,
             (report.feedback,) if report.feedback else (),
+            local_remediation=("local_validation",) if identity else (),
+            remediation_fingerprint=identity,
+            observation_fingerprint=gate.observation_fingerprint,
             system_error=report.system_error
             or ("final validation produced no receipt" if report.passed else ""),
         )
