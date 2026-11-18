@@ -13,7 +13,7 @@ from scripts.dev_orchestrator.worker_context import SuppliedContext
 from tests.scripts.test_dev_orchestrator_evidence import _commit, _config, _git_repo
 
 TASK_ID = "backend-evidence-capacity"
-SECRET = "sk-capacity-fixture-only"
+SECRET = "sk-capacity-fixture-only"  # pragma: allowlist secret
 
 
 def _case(tmp_path, monkeypatch, *, diff_chars=70_003, protected=True):
