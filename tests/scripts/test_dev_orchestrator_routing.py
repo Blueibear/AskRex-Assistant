@@ -460,86 +460,61 @@ def test_cli_invoker_raises_typed_usage_failure(tmp_path: Path) -> None:
     assert exc.value.kind == "usage_limit"
 
 
-def test_preferred_cloud_mode_dispatches_before_local_claude(
+def test_codex_primary_precedes_new_cloud_dispatch_even_in_preferred_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from dataclasses import replace
-    from types import SimpleNamespace
-
-    from scripts.dev_orchestrator import runner
-    from scripts.dev_orchestrator.runner import CliAgentInvoker
-
-    config, _backend, _mobile = _safe_config(tmp_path)
-    config = replace(config, claude_cloud_mode="preferred")
-    launch_context: list[str] = []
-
-    def fake_launch(*_args, **kwargs):
-        launch_context.append(kwargs["context"])
-        return SimpleNamespace(
-            session_id="session_cloud_pref",
-            url="https://claude.ai/code/session_cloud_pref",
-        )
-
-    monkeypatch.setattr(runner, "launch_cloud_session", fake_launch)
-    calls = 0
-
-    def execute(*_args, **_kwargs):
-        nonlocal calls
-        calls += 1
-        raise AssertionError("preferred cloud dispatch must precede local model execution")
-
-    result = CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
-        "backend",
-        WorkerState("backend"),
-        TaskItem("B-CLOUD", "Implement in cloud"),
-        "ctx",
-        "sonnet",
-    )
-
-    assert result.outcome == "continue"
-    assert "session_cloud_pref" in result.summary
-    assert launch_context == ["ctx"]
-    assert calls == 0
-
-
-def test_fallback_cloud_mode_runs_after_local_claude_usage_limit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dataclasses import replace
-    from types import SimpleNamespace
 
     from scripts.dev_orchestrator import runner
     from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
 
     config, _backend, _mobile = _safe_config(tmp_path)
-    config = replace(config, claude_cloud_mode="fallback")
-    monkeypatch.setattr(
-        runner,
-        "launch_cloud_session",
-        lambda *args, **kwargs: SimpleNamespace(
-            session_id="session_cloud_fallback",
-            url="https://claude.ai/code/session_cloud_fallback",
-        ),
-    )
-    calls = 0
+    config = replace(config, claude_cloud_mode="preferred")
+    launches = []
+    monkeypatch.setattr(runner, "launch_cloud_session", lambda *args, **kwargs: launches.append(kwargs))
+    calls = []
 
-    def execute(*_args, **_kwargs):
-        nonlocal calls
-        calls += 1
-        return ProcessResult(1, "", "You've hit your session limit")
+    def execute(command, *_args, **_kwargs):
+        calls.append(Path(command[0]).stem)
+        return ProcessResult(0, json.dumps({
+            "outcome": "continue", "summary": "Codex implementation",
+            "next_action": "continue", "needs_user": False, "blocker_reason": "",
+        }), "")
 
     result = CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
-        "backend",
-        WorkerState("backend"),
-        TaskItem("B-CLOUD-FALLBACK", "Implement in cloud"),
-        "ctx",
-        "sonnet",
+        "backend", WorkerState("backend"), TaskItem("B-CLOUD", "Implement bounded work"), "ctx", "sonnet"
     )
-
     assert result.outcome == "continue"
-    assert "session_cloud_fallback" in result.summary
-    assert calls == 1
+    assert calls == ["codex"]
+    assert launches == []
 
+def test_both_local_subscription_limits_do_not_dispatch_a_new_cloud_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.runner import AgentInvocationError, CliAgentInvoker, ProcessResult
+
+    config, _backend, _mobile = _safe_config(tmp_path)
+    config = replace(config, claude_cloud_mode="fallback")
+    launches = []
+    monkeypatch.setattr(runner, "launch_cloud_session", lambda *args, **kwargs: launches.append(kwargs))
+    calls = []
+
+    def execute(command, *_args, **_kwargs):
+        calls.append(Path(command[0]).stem)
+        return ProcessResult(1, "", "You've hit your session limit")
+
+    with pytest.raises(AgentInvocationError) as caught:
+        CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
+            "backend", WorkerState("backend"), TaskItem("B-CLOUD-FALLBACK", "Implement bounded work"),
+            "ctx", "sonnet",
+        )
+    assert caught.value.provider == "claude"
+    assert caught.value.kind == "usage_limit"
+    assert calls == ["codex", "claude"]
+    assert launches == []
 
 def test_existing_cloud_session_is_polled_without_local_model_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -640,64 +615,44 @@ def test_context_delivery_failed_session_retries_over_stdin_before_poll(
     assert "still running" in result.summary
 
 
-def test_expired_mismatched_cloud_session_is_cleared_before_redispatch(
+def test_expired_mismatched_cloud_session_is_cleared_before_codex_dispatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from dataclasses import replace
     from types import SimpleNamespace
 
     from scripts.dev_orchestrator import runner
-    from scripts.dev_orchestrator.runner import CliAgentInvoker
+    from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
 
     config, _backend, _mobile = _safe_config(tmp_path)
     config = replace(config, claude_cloud_mode="preferred", claude_cloud_timeout_minutes=1)
     stale = SimpleNamespace(
-        task_id="OLD-CLOUD-TASK",
-        session_id="session_stale",
-        url="https://claude.ai/code/session_stale",
-        status="running",
-        launched_at="2000-01-01T00:00:00+00:00",
+        task_id="OLD-CLOUD-TASK", session_id="session_stale", url="https://claude.ai/code/session_stale",
+        status="running", launched_at="2000-01-01T00:00:00+00:00",
     )
-    cleared: list[str] = []
-    launches: list[tuple[str, str]] = []
-
+    cleared = []
+    launches = []
+    calls = []
     monkeypatch.setattr(runner, "read_cloud_session", lambda *_args: stale)
-    monkeypatch.setattr(
-        runner,
-        "clear_cloud_session",
-        lambda _config, role: cleared.append(role),
+    monkeypatch.setattr(runner, "clear_cloud_session", lambda _config, role: cleared.append(role))
+    monkeypatch.setattr(runner, "launch_cloud_session", lambda *args, **kwargs: launches.append(kwargs))
+
+    def execute(command, *_args, **_kwargs):
+        assert cleared == ["backend"]
+        calls.append(Path(command[0]).stem)
+        return ProcessResult(0, json.dumps({
+            "outcome": "continue", "summary": "Codex resumed current work",
+            "next_action": "continue", "needs_user": False, "blocker_reason": "",
+        }), "")
+
+    result = CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
+        "backend", WorkerState("backend"), TaskItem("CURRENT-TASK", "Continue current work"),
+        "current bounded context", "sonnet",
     )
-
-    def fake_launch(*_args, **kwargs):
-        launches.append((kwargs["task"].task_id, kwargs["context"]))
-        return SimpleNamespace(
-            session_id="session_current",
-            url="https://claude.ai/code/session_current",
-        )
-
-    monkeypatch.setattr(runner, "launch_cloud_session", fake_launch)
-
-    result = CliAgentInvoker(
-        config,
-        execute=lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError(
-                "expired mismatched cloud state should redispatch before local execution"
-            )
-        ),
-        allow_test_executor=True,
-    ).implement(
-        "backend",
-        WorkerState("backend"),
-        TaskItem("CURRENT-TASK", "Continue current work"),
-        "current bounded context",
-        "sonnet",
-    )
-
     assert result.outcome == "continue"
     assert cleared == ["backend"]
-    assert launches == [("CURRENT-TASK", "current bounded context")]
-    assert "session_current" in result.summary
-
+    assert launches == []
+    assert calls == ["codex"]
 
 def test_live_mismatched_cloud_session_still_blocks_new_task(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -786,63 +741,30 @@ def test_implementation_falls_back_to_claude_when_codex_is_usage_limited(tmp_pat
     assert "workspace-local" in calls[0][-1]
 
 
-def test_implementation_falls_back_to_claude_on_codex_zero_exit_monthly_spend_limit(
-    tmp_path: Path,
-) -> None:
-    import json
-
-    from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
-    from scripts.dev_orchestrator.types import TaskItem, WorkerState
+def test_claude_fallback_zero_exit_monthly_spend_limit_is_classified(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.runner import AgentInvocationError, CliAgentInvoker, ProcessResult
 
     config, _backend, _mobile = _safe_config(tmp_path)
-    calls: list[list[str]] = []
+    calls = []
 
-    def execute(command, cwd, timeout_seconds=1800):
-        calls.append(command)
+    def execute(command, *_args, **_kwargs):
+        calls.append(Path(command[0]).stem)
         if len(calls) == 1:
-            return ProcessResult(
-                0,
-                json.dumps(
-                    {
-                        "is_error": True,
-                        "terminal_reason": "api_error",
-                        "api_error_status": 429,
-                        "result": (
-                            "You've hit your monthly spend limit; "
-                            "raise it at claude.ai/settings/usage"
-                        ),
-                        "type": "result",
-                    }
-                ),
-                "",
-            )
-        return ProcessResult(
-            0,
-            json.dumps(
-                {
-                    "outcome": "continue",
-                    "summary": "codex continued implementation",
-                    "next_action": "continue",
-                    "needs_user": False,
-                    "blocker_reason": "",
-                }
-            ),
-            "",
+            return ProcessResult(1, "", "You've hit your usage limit")
+        return ProcessResult(0, json.dumps({
+            "is_error": True, "terminal_reason": "api_error", "api_error_status": 429,
+            "result": "You've hit your monthly spend limit; raise it at claude.ai/settings/usage",
+            "type": "result",
+        }), "")
+
+    with pytest.raises(AgentInvocationError) as caught:
+        CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
+            "backend", WorkerState("backend"), TaskItem("B-SPEND-LIMIT", "Continue backend"),
+            "ctx", "sonnet",
         )
-
-    result = CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
-        "backend",
-        WorkerState("backend"),
-        TaskItem("B-SPEND-LIMIT", "Continue backend"),
-        "ctx",
-        "sonnet",
-    )
-
-    assert result.outcome == "continue"
-    assert len(calls) == 2
-    assert calls[0][0].lower().startswith("codex")
-    assert calls[1][0].lower().startswith("claude")
-
+    assert caught.value.provider == "claude"
+    assert caught.value.kind == "usage_limit"
+    assert calls == ["codex", "claude"]
 
 def test_implementation_falls_back_to_claude_when_codex_auth_is_revoked(tmp_path: Path) -> None:
     import json
@@ -1163,7 +1085,7 @@ def test_production_claude_applies_only_scratch_patch(tmp_path: Path, monkeypatc
     assert sp.check_output(["git", "status", "--porcelain"], cwd=backend, text=True).strip() == ""
 
 
-def test_production_codex_fallback_publishes_only_scratch_patch(
+def test_production_codex_primary_publishes_only_scratch_patch(
     tmp_path: Path, monkeypatch
 ) -> None:
     import json
@@ -1189,8 +1111,6 @@ def test_production_codex_fallback_publishes_only_scratch_patch(
     def fake_run(command, cwd, timeout_seconds=1800, **kwargs):
         nonlocal calls
         calls += 1
-        if calls == 1:
-            return runner.ProcessResult(1, "", "You've hit your session limit")
         assert cwd.resolve() != backend.resolve()
         assert cwd.name == "repo"
         assert cwd.parent.parent.resolve() == (coord.parent / ".askrex-agent-scratch").resolve()
@@ -1237,7 +1157,7 @@ def test_production_codex_fallback_publishes_only_scratch_patch(
     )
 
     assert result.outcome == "continue"
-    assert calls == 2
+    assert calls == 1
     assert (backend / "codex-only.txt").read_text(encoding="utf-8") == "from codex scratch\n"
     body = sp.check_output(["git", "show", "-s", "--format=%B", "HEAD"], cwd=backend, text=True)
     assert "AskRex-Orchestrator-Invocation:" in body
@@ -1683,6 +1603,8 @@ def test_production_claude_requires_exact_result_binding_before_publish(
         activity_metadata=None,
         stdin_text=None,
     ):
+        if command[0].lower().startswith("codex"):
+            return runner.ProcessResult(1, "", "You've hit your usage limit")
         mount = next(
             part
             for part in command
@@ -1977,10 +1899,20 @@ def test_production_claude_keeps_activity_marker_until_handoff_is_durable(
         return [sys.executable, "-c", code]
 
     monkeypatch.setattr(runner, "build_claude_sandbox_command", fake_sandbox)
+    real_run = runner.run_command
+
+    def run_local_fixture(command, cwd, timeout_seconds=1800, **kwargs):
+        if command[0].lower().startswith("codex"):
+            return runner.ProcessResult(1, "", "You've hit your usage limit")
+        assert command[0] == sys.executable
+        return real_run(command, cwd, timeout_seconds=timeout_seconds, **kwargs)
+
+    monkeypatch.setattr(runner, "run_command", run_local_fixture)
     real_advance = runner.advance_handoff
 
     def observing_advance(*args, **kwargs):
-        observed.update(json.loads(marker.read_text(encoding="utf-8")))
+        if kwargs["provider"] == "claude":
+            observed.update(json.loads(marker.read_text(encoding="utf-8")))
         return real_advance(*args, **kwargs)
 
     monkeypatch.setattr(runner, "advance_handoff", observing_advance)
@@ -2032,6 +1964,15 @@ def test_production_claude_preserves_scratch_and_marker_when_publication_fails(
         return [sys.executable, "-c", code]
 
     monkeypatch.setattr(runner, "build_claude_sandbox_command", fake_sandbox)
+    real_run = runner.run_command
+
+    def run_local_fixture(command, cwd, timeout_seconds=1800, **kwargs):
+        if command[0].lower().startswith("codex"):
+            return runner.ProcessResult(1, "", "You've hit your usage limit")
+        assert command[0] == sys.executable
+        return real_run(command, cwd, timeout_seconds=timeout_seconds, **kwargs)
+
+    monkeypatch.setattr(runner, "run_command", run_local_fixture)
 
     def fail_publish(*_args, **_kwargs):
         raise HandoffRequired("simulated publication failure")
@@ -2200,7 +2141,7 @@ def test_read_only_evidence_closeout_never_dispatches_to_cloud(
             json.dumps(
                 {
                     "outcome": "continue",
-                    "summary": "Codex handled read-only closeout",
+                    "summary": "Claude fallback handled read-only closeout",
                     "next_action": "continue",
                     "needs_user": False,
                     "blocker_reason": "",
@@ -2222,7 +2163,8 @@ def test_read_only_evidence_closeout_never_dispatches_to_cloud(
 
     assert result.outcome == "continue"
     assert len(calls) == 2
-    assert calls[1][0].lower().startswith("codex")
+    assert calls[0][0].lower().startswith("codex")
+    assert calls[1][0].lower().startswith("claude")
 
 
 def test_read_only_closeout_with_existing_cloud_session_fails_closed(
@@ -2337,7 +2279,7 @@ def test_claude_planner_returns_task_id_without_repo_mutation(
     assert "bounded context" in command[-1]
 
 
-def test_temporary_claude_implementation_does_not_retry_codex(
+def test_temporary_claude_planning_does_not_override_codex_first_implementation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import sys
@@ -2391,7 +2333,7 @@ def test_temporary_claude_implementation_does_not_retry_codex(
         )
     assert caught.value.provider == "claude"
     assert caught.value.kind == "usage_limit"
-    assert calls == ["claude"]
+    assert calls == ["codex", "claude"]
 
 
 def test_fable_review_uses_read_only_claude_scratch_and_schema(
