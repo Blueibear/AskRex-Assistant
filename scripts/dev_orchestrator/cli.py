@@ -765,6 +765,10 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--role", choices=("backend", "mobile"), required=True)
     resume.add_argument("--blocker-kind", choices=("github_auth", "auth", "human"), required=True)
 
+    review_evidence = sub.add_parser("revalidate-review-evidence")
+    review_evidence.add_argument("--coordination-root", type=Path, required=True)
+    review_evidence.add_argument("--role", choices=("backend", "mobile"), required=True)
+
     cloud_dispatch = sub.add_parser("cloud-dispatch")
     cloud_dispatch.add_argument("--coordination-root", type=Path, required=True)
     cloud_dispatch.add_argument("--role", choices=("backend", "mobile"), required=True)
@@ -880,6 +884,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "resume-human":
         path = resume_confirmed_human_blocker(root, args.role, args.blocker_kind)
         print(str(path))
+        return 0
+    if args.command == "revalidate-review-evidence":
+        proof = Supervisor.revalidate_review_evidence(load_config(root), args.role)
+        print(json.dumps(proof, indent=2, sort_keys=True))
         return 0
     if args.command == "cloud-dispatch":
         config = load_config(root)

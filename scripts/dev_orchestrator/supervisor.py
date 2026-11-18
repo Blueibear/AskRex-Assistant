@@ -297,6 +297,13 @@ class Supervisor:
     def load_state(self, role: str) -> WorkerState:
         return _state_from_dict(role, self._state_store(role).read())
 
+    @staticmethod
+    def revalidate_review_evidence(config: OrchestratorConfig, role: str) -> dict:
+        """Paused operator recovery without initializing an invoker or transactions."""
+        from .review_recovery import revalidate_review_evidence
+
+        return revalidate_review_evidence(config, role)
+
     def save_state(self, state: WorkerState) -> None:
         if getattr(self._result_context, "accepted_role", "") == state.role:
             state = replace(
