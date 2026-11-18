@@ -20,6 +20,7 @@ from scripts.dev_orchestrator.handoff import (
     advance_handoff,
     read_pending_result,
 )
+from scripts.dev_orchestrator.model_blockers import capture_supplied_input
 from scripts.dev_orchestrator.routing import SOL_MODEL
 from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
 from scripts.dev_orchestrator.supervisor import Supervisor
@@ -113,6 +114,18 @@ def final_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         }
         assert isinstance(kwargs["input_context"], str)
         observed.prompts.append(arguments[-1])
+        provenance = capture_supplied_input(
+            config,
+            role,
+            "review",
+            kwargs["task_id"],
+            invocation_id,
+            observed.head,
+            kwargs["input_context"],
+            arguments[-1],
+            input_kind="cli_prompt_utf8",
+        )
+        assert provenance is not None
         result = AgentResult(
             observed.outcome,
             "Final review fixture",
@@ -120,6 +133,11 @@ def final_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             role=role,
             task_id=kwargs["task_id"],
             invocation_id=invocation_id,
+            blocker_reason=(
+                "Await the required independent evidence."
+                if observed.outcome == "blocked_system"
+                else ""
+            ),
         )
         pending = {
             "phase": "review",
@@ -129,6 +147,7 @@ def final_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "pre_head": observed.head,
             "post_head": observed.head,
             "result": asdict(result),
+            "input_provenance": provenance,
         }
         advance_handoff(
             config,
@@ -818,3 +837,67 @@ def test_new_final_claim_never_deletes_proof_when_retirement_is_unproven(
     assert len(checkpoint.prompts) == 1
     if failure == "archive_collision":
         assert archive.read_bytes() == b"unexpected archive content"
+
+
+def test_reviewing_final_receipt_corruption_reaches_its_preserving_gate(
+    final_checkpoint, monkeypatch
+):
+    checkpoint = final_checkpoint
+    _interrupt_preparation(checkpoint, monkeypatch, "closing")
+    state = checkpoint.supervisor.load_state("backend")
+    checkpoint.supervisor.save_state(replace(state, status=WorkerStatus.REVIEWING))
+    receipt_path, manifest_path = _preparation_artifacts(checkpoint)
+    receipt_path.write_text("[]", encoding="utf-8")
+    receipt_before = receipt_path.read_bytes()
+    manifest_before = manifest_path.read_bytes()
+
+    resumed = Supervisor(checkpoint.config, checkpoint.invoker)
+    resumed._run_role("backend")
+
+    parked = resumed.load_state("backend")
+    assert parked.status is WorkerStatus.BLOCKED_SYSTEM
+    assert parked.blocker_kind == "incomplete_evidence"
+    assert parked.resume_status is None
+    assert receipt_path.read_bytes() == receipt_before
+    assert manifest_path.read_bytes() == manifest_before
+    assert checkpoint.local_runs == 1
+    assert checkpoint.host_checks == 2
+    assert not checkpoint.prompts
+
+
+def test_parked_final_dependency_waits_unchanged_then_rejects_corrupt_proof(
+    final_checkpoint, monkeypatch
+):
+    checkpoint = final_checkpoint
+    _interrupt_preparation(checkpoint, monkeypatch, "closing")
+    checkpoint.outcome = "blocked_system"
+    resumed = Supervisor(checkpoint.config, checkpoint.invoker)
+    resumed._run_role("backend")
+    waiting = resumed.load_state("backend")
+    assert waiting.blocker_kind == "model_dependency"
+    assert waiting.resume_status is WorkerStatus.REVIEWING
+    assert waiting.model_blocker_fingerprint
+    assert read_pending_result(checkpoint.config, "backend") is None
+    assert len(checkpoint.prompts) == 1
+
+    Supervisor(checkpoint.config, checkpoint.invoker)._run_role("backend")
+    assert len(checkpoint.prompts) == 1
+    assert resumed.load_state("backend") == waiting
+
+    receipt_path, manifest_path = _preparation_artifacts(checkpoint)
+    receipt_path.write_text("[]", encoding="utf-8")
+    receipt_before = receipt_path.read_bytes()
+    manifest_before = manifest_path.read_bytes()
+    Supervisor(checkpoint.config, checkpoint.invoker)._run_role("backend")
+
+    parked = resumed.load_state("backend")
+    assert parked.status is WorkerStatus.BLOCKED_SYSTEM
+    assert parked.blocker_kind == "incomplete_evidence"
+    assert parked.resume_status is None
+    assert parked.last_result_invocation_id == waiting.last_result_invocation_id
+    assert parked.review_failures == waiting.review_failures
+    assert receipt_path.read_bytes() == receipt_before
+    assert manifest_path.read_bytes() == manifest_before
+    assert checkpoint.local_runs == 1
+    assert checkpoint.host_checks == 2
+    assert len(checkpoint.prompts) == 1

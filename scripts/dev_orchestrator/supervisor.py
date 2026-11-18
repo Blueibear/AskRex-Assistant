@@ -690,6 +690,18 @@ class Supervisor:
                 )
                 self.save_state(state)
             else:
+                if state.task is not None and state.task.task_id == f"FINAL-VERIFY-{role}":
+                    try:
+                        self._require_final_evidence(role, state, "")
+                    except EvidenceError as exc:
+                        self._handle_invocation_error(
+                            role,
+                            state,
+                            "review",
+                            AgentInvocationError("supervisor", "incomplete_evidence", str(exc)),
+                            "",
+                        )
+                        return
                 context = self._worker_context(role, state)
                 fingerprint = self._input_fingerprint(
                     role, state, state.model_blocker_phase, context
@@ -841,6 +853,11 @@ class Supervisor:
         if state.status in {WorkerStatus.BLOCKED_USER, WorkerStatus.DONE}:
             return
         if self.config.observe_only:
+            return
+        if state.task is not None and state.task.task_id == f"FINAL-VERIFY-{role}":
+            # The reserved phase owns malformed/partial checkpoint classification.
+            # Do not let generic context reads preempt its preserving failure gate.
+            self._final_verify(role, state, None)
             return
 
         context = self._worker_context(role, state)
@@ -1140,7 +1157,7 @@ class Supervisor:
                 "review-critical evidence truncated: " + ", ".join(bundle.truncation_reasons)
             )
 
-    def _final_verify(self, role: str, state: WorkerState, context: str) -> None:
+    def _final_verify(self, role: str, state: WorkerState, context: str | None) -> None:
         assert state.task is not None and state.task.task_id == f"FINAL-VERIFY-{role}"
         if state.status is WorkerStatus.IMPLEMENTING:
             try:
@@ -1187,13 +1204,16 @@ class Supervisor:
                     state,
                     "review",
                     AgentInvocationError("supervisor", "incomplete_evidence", str(exc)),
-                    context,
+                    context or "",
                 )
                 return
         try:
             # Recovery must verify the same complete evidence before applying a
             # durable reviewer result, even when no fresh model call is needed.
-            self._require_final_evidence(role, state, context)
+            self._require_final_evidence(role, state, context or "")
+            if context is None:
+                context = self._worker_context(role, state)
+                self._require_final_evidence(role, state, context)
             result = self._invoke_or_recover(
                 role,
                 state,
@@ -1208,11 +1228,11 @@ class Supervisor:
                 state,
                 "review",
                 AgentInvocationError("supervisor", "incomplete_evidence", str(exc)),
-                context,
+                context or "",
             )
             return
         except AgentInvocationError as exc:
-            self._handle_invocation_error(role, state, "review", exc, context)
+            self._handle_invocation_error(role, state, "review", exc, context or "")
             return
         if not self._accept_result(role, state, result, phase="review", allow_issue_updates=False):
             return

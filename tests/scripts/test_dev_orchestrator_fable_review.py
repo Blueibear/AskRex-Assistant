@@ -16,7 +16,6 @@ from scripts.dev_orchestrator.storage import AtomicJsonStore
 from scripts.dev_orchestrator.supervisor import Supervisor
 from scripts.dev_orchestrator.types import (
     AgentResult,
-    OrchestratorConfig,
     TaskItem,
     WorkerState,
     WorkerStatus,
@@ -25,11 +24,11 @@ from scripts.dev_orchestrator.types import (
 
 def config(tmp_path):
     from scripts.dev_orchestrator.cli import save_config
+    from tests.scripts.test_dev_orchestrator_routing import _safe_config
 
-    root = tmp_path / "coordination"
-    root.mkdir()
+    runtime, _backend, _mobile = _safe_config(tmp_path)
     config = replace(
-        OrchestratorConfig.default(root),
+        runtime,
         observe_only=False,
         metadata={
             "temporary_fable_review": {
