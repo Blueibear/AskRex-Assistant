@@ -21,7 +21,13 @@ from .coordination import (
     build_coordination_context,
     recover_coordination_transactions,
 )
-from .coordination_checks import CoordinationCheckError, begin_checks, finish_checks
+from .coordination_checks import (
+    CoordinationCheckError,
+    begin_checks,
+    final_preparation_checkpoint,
+    finish_checks,
+    retire_final_preparation,
+)
 from .evidence import EvidenceError, build_review_evidence
 from .handoff import (
     clear_pending_result,
@@ -701,18 +707,35 @@ class Supervisor:
             f"FINAL-VERIFY-{role}",
             "Independently verify final workstream readiness, tests, CI, docs, and safety gates.",
         )
-        state = replace(
-            state,
-            status=WorkerStatus.IMPLEMENTING,
-            task=final_task,
-            task_base_head=self._capture_task_base_head(role),
-            blocked_reason="",
-            blocker_kind="",
-            resume_status=None,
-        )
-        # This reserved task prepares deterministic final evidence, never model
-        # implementation. Persist it before preparation so restart preserves phase.
-        self.save_state(state)
+        try:
+            with ControlPlaneLock(role_lease_lock_path(self.config, role)):
+                head = self._capture_task_base_head(role)
+                # Only a new planner claim retires old proof. Keep its durable
+                # result until this real transition commits, so an interrupted
+                # retirement resumes without another planner or new local gates.
+                retire_final_preparation(self.config, role, final_task, head)
+                state = replace(
+                    state,
+                    status=WorkerStatus.IMPLEMENTING,
+                    task=final_task,
+                    task_base_head=head,
+                    blocked_reason="",
+                    blocker_kind="",
+                    resume_status=None,
+                )
+                self.save_state(state)
+                state = self.load_state(role)
+        except CoordinationCheckError as exc:
+            self._handle_invocation_error(
+                role,
+                state,
+                "review",
+                AgentInvocationError("supervisor", "incomplete_evidence", str(exc)),
+                context,
+            )
+            return
+        # Once this reserved task is saved, recovery may only validate or finish
+        # its own preparation checkpoint, never retire it as a fresh claim.
         self._final_verify(role, state, context)
 
     def _block_final_gate(self, state: WorkerState, gate: CompletionGate) -> None:
@@ -768,21 +791,43 @@ class Supervisor:
         assert state.task is not None and state.task.task_id == f"FINAL-VERIFY-{role}"
         if state.status is WorkerStatus.IMPLEMENTING:
             try:
-                begin_checks(
-                    self.config,
-                    role,
-                    state.task,
-                    state.task_base_head,
-                    self._capture_task_base_head(role),
-                    recovered=True,
-                )
-                gate = prepare_final_review(self.config, role, head=state.task_base_head)
-                if not gate.ready:
-                    self._block_final_gate(state, gate)
-                    return
-                finish_checks(
-                    self.config, role, state.task, state.task_base_head, state.task_base_head
-                )
+                with ControlPlaneLock(role_lease_lock_path(self.config, role)):
+                    checkpoint = final_preparation_checkpoint(
+                        self.config, role, state.task, state.task_base_head
+                    )
+                    if checkpoint == "new":
+                        begin_checks(
+                            self.config,
+                            role,
+                            state.task,
+                            state.task_base_head,
+                            state.task_base_head,
+                            recovered=True,
+                        )
+                        checkpoint = "open"
+                    if checkpoint == "open":
+                        gate = prepare_final_review(self.config, role, head=state.task_base_head)
+                        if not gate.ready:
+                            self._block_final_gate(state, gate)
+                            return
+                        checkpoint = final_preparation_checkpoint(
+                            self.config, role, state.task, state.task_base_head
+                        )
+                    if checkpoint == "validated":
+                        finish_checks(
+                            self.config,
+                            role,
+                            state.task,
+                            state.task_base_head,
+                            state.task_base_head,
+                        )
+                        checkpoint = final_preparation_checkpoint(
+                            self.config, role, state.task, state.task_base_head
+                        )
+                    if checkpoint != "complete":
+                        raise CoordinationCheckError("final preparation has no complete checkpoint")
+                    state = replace(state, status=WorkerStatus.REVIEWING)
+                    self.save_state(state)
             except CoordinationCheckError as exc:
                 self._handle_invocation_error(
                     role,
@@ -792,8 +837,6 @@ class Supervisor:
                     context,
                 )
                 return
-            state = replace(state, status=WorkerStatus.REVIEWING)
-            self.save_state(state)
         try:
             # Recovery must verify the same complete evidence before applying a
             # durable reviewer result, even when no fresh model call is needed.
@@ -937,8 +980,7 @@ class Supervisor:
             )
             return
         if result.outcome == "done":
-            self.save_state(state)
-            self._done_claim(role, self.load_state(role), context)
+            self._done_claim(role, state, context)
             return
         self._save_block_or_failure(state, result)
 

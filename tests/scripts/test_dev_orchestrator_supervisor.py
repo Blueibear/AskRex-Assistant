@@ -1042,6 +1042,11 @@ def test_final_sol_pass_revalidates_completion_before_done(tmp_path: Path, monke
     # This policy-only test isolates the post-review gate; final_review tests
     # exercise the real receipt, host capture, and CLI evidence boundary.
     monkeypatch.setattr(supervisor, "_require_final_evidence", lambda *_args: None)
+    # Keep this policy-only fixture synthetic; final_review exercises real recovery.
+    checkpoints = iter(("new", "validated", "complete"))
+    monkeypatch.setattr(
+        supervisor_module, "final_preparation_checkpoint", lambda *_args: next(checkpoints)
+    )
 
     supervisor._done_claim("backend", WorkerState(role="backend"), "context")
 
@@ -1340,6 +1345,11 @@ def test_final_done_transition_holds_role_lease_lock(tmp_path: Path, monkeypatch
         lambda *_args, **_kwargs: CompletionGate(True),
     )
     monkeypatch.setattr(supervisor, "_require_final_evidence", lambda *_args: None)
+    # Keep this policy-only fixture synthetic; final_review exercises real recovery.
+    checkpoints = iter(("new", "validated", "complete"))
+    monkeypatch.setattr(
+        supervisor_module, "final_preparation_checkpoint", lambda *_args: next(checkpoints)
+    )
     observed = {"locked": False}
 
     def verify_locked(_config, role):

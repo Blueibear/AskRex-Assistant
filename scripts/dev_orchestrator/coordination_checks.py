@@ -12,7 +12,9 @@ import subprocess
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
+from .completion import load_final_validation_receipt
 from .handoff import HandoffRequired, role_lease_lock_path, validate_handoff
 from .lifecycle import ControlPlaneLock
 from .storage import AtomicJsonStore, atomic_write_text
@@ -76,12 +78,8 @@ def _writer_state(config: OrchestratorConfig, role: str, head: str) -> dict:
     }
 
 
-def _snapshot(config: OrchestratorConfig, role: str, phase: str, head: str) -> dict:
-    if not _SHA.fullmatch(head):
-        raise CoordinationCheckError("coordination check requires exact commit SHA")
+def _check_command(config: OrchestratorConfig, role: str) -> list[str]:
     script = _check_script(config)
-    if not script.is_file():
-        raise CoordinationCheckError("mandatory coordination check script is missing")
     invocation = (
         "$ErrorActionPreference='Stop'; & '"
         + str(script).replace("'", "''")
@@ -89,7 +87,16 @@ def _snapshot(config: OrchestratorConfig, role: str, phase: str, head: str) -> d
         + role
         + "'"
     )
-    command = ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", invocation]
+    return ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", invocation]
+
+
+def _snapshot(config: OrchestratorConfig, role: str, phase: str, head: str) -> dict:
+    if not _SHA.fullmatch(head):
+        raise CoordinationCheckError("coordination check requires exact commit SHA")
+    script = _check_script(config)
+    if not script.is_file():
+        raise CoordinationCheckError("mandatory coordination check script is missing")
+    command = _check_command(config, role)
     try:
         with ControlPlaneLock(role_lease_lock_path(config, role)):
             before = _writer_state(config, role, head)
@@ -326,3 +333,135 @@ def read_check_summary(
         "Unregistered external writers are outside this observation. This is evidence, not independent approval."
     )
     return "\n".join(lines)
+
+
+def retire_final_preparation(
+    config: OrchestratorConfig,
+    role: str,
+    task: TaskItem,
+    head: str,
+) -> None:
+    """Preserve old proof only for an explicit new claim, before its state save.
+
+    Each raw UTF-8 artifact is copied durably to a content-addressed history path
+    and verified before removal. Replaying an interrupted planner result retires
+    only remaining old files. A saved FINAL-VERIFY task never calls this helper.
+    """
+    if task.task_id != f"FINAL-VERIFY-{role}":
+        raise CoordinationCheckError("final retirement requires the reserved final task")
+    manifest = _manifest_path(config, role, task)
+    receipt = config.coordination_root / "validation" / f"{role}-{task.task_id}.json"
+    history = config.coordination_root / "evidence/final-preparation-history" / role
+    try:
+        with ControlPlaneLock(role_lease_lock_path(config, role)):
+            sources = [
+                (kind, path)
+                for kind, path in (("validation", receipt), ("checks", manifest))
+                if path.exists() or path.is_symlink()
+            ]
+            if not sources:
+                return
+            _writer_state(config, role, head)
+            for kind, path in sources:
+                data = path.read_bytes()
+                digest = hashlib.sha256(data).hexdigest()
+                archived = history / f"{kind}-{digest}.json"
+                if not archived.exists():
+                    atomic_write_text(archived, data.decode("utf-8"))
+                if archived.read_bytes() != data:
+                    raise CoordinationCheckError("final preparation archive integrity mismatch")
+                if path.read_bytes() != data:
+                    raise CoordinationCheckError("final preparation changed during retirement")
+                path.unlink()
+    except CoordinationCheckError:
+        raise
+    except (HandoffRequired, OSError, ValueError) as exc:
+        raise CoordinationCheckError(f"cannot preserve prior final preparation: {exc}") from exc
+
+
+def final_preparation_checkpoint(
+    config: OrchestratorConfig,
+    role: str,
+    task: TaskItem,
+    head: str,
+) -> Literal["new", "open", "validated", "complete"]:
+    """Read final preparation progress without replacing any saved proof.
+
+    A successful receipt belongs to this opening only if its exact final gates,
+    revision, lease and time binding still match. An existing closing capture
+    also binds the receipt bytes. Invalid present artifacts are never absence.
+    The supervisor retains the same role lock across any missing step and save.
+    """
+    if task.task_id != f"FINAL-VERIFY-{role}":
+        raise CoordinationCheckError("final preparation requires the reserved final task")
+    path = _manifest_path(config, role, task)
+    receipt_path = config.coordination_root / "validation" / f"{role}-{task.task_id}.json"
+    try:
+        with ControlPlaneLock(role_lease_lock_path(config, role)):
+            manifest_present = path.exists() or path.is_symlink()
+            receipt_present = receipt_path.exists() or receipt_path.is_symlink()
+            if not manifest_present:
+                if receipt_present:
+                    raise CoordinationCheckError(
+                        "final receipt has no opening coordination evidence"
+                    )
+                return "new"
+            manifest = _read(path)
+            if (
+                not manifest
+                or not isinstance(manifest.get("initial"), dict)
+                or "final" not in manifest
+                or (manifest["final"] is not None and not isinstance(manifest["final"], dict))
+                or manifest.get("scope") != "recovered-checkpoint-validation"
+            ):
+                raise CoordinationCheckError("malformed final preparation checkpoint")
+            complete = isinstance(manifest["final"], dict)
+            if complete and not receipt_present:
+                raise CoordinationCheckError("completed final checkpoint has no validation receipt")
+            # This verifies identity, capture timestamps, stream paths/hashes and,
+            # when complete, the exact successful receipt digest.
+            read_check_summary(config, role, task, head, head, strict=complete)
+            current = _writer_state(config, role, head)
+            script_hash = hashlib.sha256(_check_script(config).read_bytes()).hexdigest()
+            command = _check_command(config, role)
+            for phase in ("initial", "final") if complete else ("initial",):
+                record = manifest[phase]
+                if (
+                    record["head"] != head
+                    or record["lease"] != current
+                    or record.get("script_sha256") != script_hash
+                    or record.get("command") != command
+                ):
+                    raise CoordinationCheckError(
+                        f"{phase} final checkpoint differs from current revision, lease or script"
+                    )
+            initial_at = datetime.fromisoformat(manifest["initial"]["observed_at"])
+            now = datetime.now(UTC)
+            if initial_at > now:
+                raise CoordinationCheckError("final opening observation is in the future")
+            if not receipt_present:
+                return "open"
+            receipt = load_final_validation_receipt(config, role, head=head)
+            passed_at = datetime.fromisoformat(receipt.passed_at)
+            if passed_at < initial_at or passed_at > now:
+                raise CoordinationCheckError(
+                    "final receipt does not belong to this opening observation"
+                )
+            if complete:
+                final_at = datetime.fromisoformat(manifest["final"]["observed_at"])
+                if passed_at > final_at or final_at > now:
+                    raise CoordinationCheckError("final receipt is outside its closing observation")
+                return "complete"
+            return "validated"
+    except CoordinationCheckError:
+        raise
+    except (
+        HandoffRequired,
+        OSError,
+        RuntimeError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+    ) as exc:
+        raise CoordinationCheckError(f"final preparation checkpoint is invalid: {exc}") from exc

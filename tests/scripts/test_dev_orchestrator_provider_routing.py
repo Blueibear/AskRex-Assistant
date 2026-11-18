@@ -478,6 +478,11 @@ def test_done_claim_final_verification_bypasses_openai_even_when_enabled(
     # Full final-proof construction is covered through the real CLI boundary
     # in test_dev_orchestrator_final_review.py; this test isolates routing.
     monkeypatch.setattr(supervisor, "_require_final_evidence", lambda *_args: None)
+    # Keep this policy-only fixture synthetic; final_review exercises real recovery.
+    checkpoints = iter(("new", "validated", "complete"))
+    monkeypatch.setattr(
+        supervisor_module, "final_preparation_checkpoint", lambda *_args: next(checkpoints)
+    )
     monkeypatch.setattr(supervisor_module, "validate_handoff", lambda *_args: None)
 
     supervisor._done_claim("backend", WorkerState("backend"), "ctx")

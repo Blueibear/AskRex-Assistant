@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
 from dataclasses import asdict, replace
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from scripts.dev_orchestrator import completion
+from scripts.dev_orchestrator import completion, coordination_checks
 from scripts.dev_orchestrator import supervisor as supervisor_module
 from scripts.dev_orchestrator.cli import save_config, set_observe_only
 from scripts.dev_orchestrator.completion import LocalGate
@@ -43,7 +45,13 @@ def final_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     branch = subprocess.check_output(
         ["git", "branch", "--show-current"], cwd=config.backend_root, text=True
     ).strip()
-    command = (sys.executable, "-c", "print('FINAL-GATE-PASSED')")
+    failure_flag = tmp_path / "fail-final-gate"
+    command = (
+        sys.executable,
+        "-c",
+        "from pathlib import Path; print('FINAL-GATE-PASSED'); "
+        f"raise SystemExit(1 if Path({str(failure_flag)!r}).exists() else 0)",
+    )
     manifest = replace(
         completion.COMPLETION_MANIFESTS["backend"],
         local_gates=(LocalGate("fixture final gate", command),),
@@ -74,6 +82,8 @@ def final_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         head=head,
         pr=pr,
         local_runs=0,
+        host_checks=0,
+        failure_flag=failure_flag,
         prompts=[],
         outcome="pass",
         callback=None,
@@ -83,6 +93,7 @@ def final_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     def run(arguments, **kwargs):
         if arguments[0] == "powershell.exe":
+            observed.host_checks += 1
             return subprocess.CompletedProcess(arguments, 0, b"FINAL-HOST-CHECK\n", b"")
         if tuple(arguments) == command:
             observed.local_runs += 1
@@ -110,15 +121,15 @@ def final_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "role": role,
             "task_id": result.task_id,
             "invocation_id": invocation_id,
-            "pre_head": head,
-            "post_head": head,
+            "pre_head": observed.head,
+            "post_head": observed.head,
             "result": asdict(result),
         }
         advance_handoff(
             config,
             role,
-            pre_head=head,
-            post_head=head,
+            pre_head=observed.head,
+            post_head=observed.head,
             invocation_id=invocation_id,
             provider="codex",
             pending_result=pending,
@@ -354,3 +365,451 @@ def test_final_review_cannot_complete_a_different_newly_accepted_head(final_chec
     assert state.status is WorkerStatus.BLOCKED_SYSTEM
     assert state.blocker_kind == "incomplete_evidence"
     assert "revision changed" in state.blocked_reason
+
+
+def _preparation_artifacts(checkpoint):
+    root = checkpoint.config.coordination_root
+    return (
+        root / "validation/backend-FINAL-VERIFY-backend.json",
+        root / "evidence/supervisor-checks/backend-FINAL-VERIFY-backend.json",
+    )
+
+
+def _interrupt_preparation(checkpoint, monkeypatch, boundary):
+    target = {
+        "opening": "begin_checks",
+        "receipt": "prepare_final_review",
+        "closing": "finish_checks",
+    }[boundary]
+    original = getattr(supervisor_module, target)
+
+    def interrupt(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if boundary == "receipt":
+            assert result.ready
+        raise RuntimeError(f"interrupted after {boundary}")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(supervisor_module, target, interrupt)
+        with pytest.raises(RuntimeError, match=f"interrupted after {boundary}"):
+            _claim(checkpoint)
+    state = checkpoint.supervisor.load_state("backend")
+    assert state.status is WorkerStatus.IMPLEMENTING
+    assert state.task.task_id == "FINAL-VERIFY-backend"
+    assert checkpoint.prompts == []
+
+
+@pytest.mark.parametrize("boundary", ["receipt", "closing"])
+def test_final_preparation_recovers_durable_success_without_repeating_gates(
+    final_checkpoint, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    checkpoint = final_checkpoint
+    _interrupt_preparation(checkpoint, monkeypatch, boundary)
+    receipt_path, manifest_path = _preparation_artifacts(checkpoint)
+    original_receipt = receipt_path.read_bytes()
+    original_manifest = manifest_path.read_bytes()
+    manifest = json.loads(original_manifest)
+    original_initial = manifest["initial"]
+    captures = {
+        stream: (
+            checkpoint.config.coordination_root / original_initial[f"{stream}_path"]
+        ).read_bytes()
+        for stream in ("stdout", "stderr")
+    }
+    assert checkpoint.local_runs == 1
+    assert checkpoint.host_checks == (1 if boundary == "receipt" else 2)
+
+    resumed = Supervisor(checkpoint.config, checkpoint.invoker)
+    resumed._run_role("backend")
+
+    assert resumed.load_state("backend").status is WorkerStatus.DONE
+    assert checkpoint.local_runs == 1
+    assert checkpoint.host_checks == 2
+    assert len(checkpoint.prompts) == 1
+    assert receipt_path.read_bytes() == original_receipt
+    recovered = json.loads(manifest_path.read_bytes())
+    assert recovered["attempt_id"] == manifest["attempt_id"]
+    assert recovered["initial"] == original_initial
+    for stream, data in captures.items():
+        assert (
+            checkpoint.config.coordination_root / original_initial[f"{stream}_path"]
+        ).read_bytes() == data
+    if boundary == "closing":
+        assert manifest_path.read_bytes() == original_manifest
+
+
+def test_final_preparation_preserves_opening_when_no_success_was_written(
+    final_checkpoint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint = final_checkpoint
+    _interrupt_preparation(checkpoint, monkeypatch, "opening")
+    receipt_path, manifest_path = _preparation_artifacts(checkpoint)
+    original = json.loads(manifest_path.read_bytes())
+    assert not receipt_path.exists()
+    assert checkpoint.local_runs == 0
+
+    resumed = Supervisor(checkpoint.config, checkpoint.invoker)
+    resumed._run_role("backend")
+
+    assert resumed.load_state("backend").status is WorkerStatus.DONE
+    recovered = json.loads(manifest_path.read_bytes())
+    assert recovered["initial"] == original["initial"]
+    assert recovered["attempt_id"] == original["attempt_id"]
+    assert checkpoint.local_runs == 1
+    assert checkpoint.host_checks == 2
+    assert len(checkpoint.prompts) == 1
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "receipt_null",
+        "receipt_list",
+        "manifest_null",
+        "missing_manifest",
+        "missing_initial",
+        "initial_head",
+        "current_head",
+        "initial_output",
+        "script",
+        "command",
+        "lease",
+        "writer",
+        "cloud",
+        "completion_manifest",
+        "stale_receipt",
+        "new_opening",
+        "malformed_final",
+    ],
+)
+def test_final_preparation_rejects_invalid_partial_checkpoint_without_overwriting(
+    final_checkpoint, monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    checkpoint = final_checkpoint
+    _interrupt_preparation(checkpoint, monkeypatch, "receipt")
+    receipt_path, manifest_path = _preparation_artifacts(checkpoint)
+    manifest = json.loads(manifest_path.read_bytes())
+    root = checkpoint.config.coordination_root
+    if damage.startswith("receipt_"):
+        receipt_path.write_text("null" if damage == "receipt_null" else "[]", encoding="utf-8")
+    elif damage == "manifest_null":
+        manifest_path.write_text("null", encoding="utf-8")
+    elif damage == "missing_manifest":
+        manifest_path.unlink()
+    elif damage in {"missing_initial", "initial_head", "command", "malformed_final"}:
+        if damage == "missing_initial":
+            del manifest["initial"]
+        elif damage == "initial_head":
+            manifest["initial"]["head"] = "1" * 40
+            manifest["initial"]["lease"]["head"] = "1" * 40
+        elif damage == "command":
+            manifest["initial"]["command"] = ["unrelated-check"]
+        else:
+            manifest["final"] = []
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    elif damage == "initial_output":
+        (root / manifest["initial"]["stdout_path"]).write_text("changed output", encoding="utf-8")
+    elif damage == "script":
+        (root / "scripts/check-coordination.ps1").write_text("changed script", encoding="utf-8")
+    elif damage == "current_head":
+        _advance_final_head(checkpoint)
+    elif damage == "lease":
+        acknowledge_handoff(checkpoint.config, "backend", source="test")
+    elif damage == "new_opening":
+        state = checkpoint.supervisor.load_state("backend")
+        coordination_checks.begin_checks(
+            checkpoint.config,
+            "backend",
+            state.task,
+            checkpoint.head,
+            checkpoint.head,
+            recovered=True,
+        )
+    elif damage in {"writer", "cloud"}:
+        directory = root / ("active-agents" if damage == "writer" else "cloud-sessions")
+        directory.mkdir(exist_ok=True)
+        (directory / "backend.json").write_text("{}", encoding="utf-8")
+    elif damage == "completion_manifest":
+        current = completion.COMPLETION_MANIFESTS["backend"]
+        monkeypatch.setitem(
+            completion.COMPLETION_MANIFESTS,
+            "backend",
+            replace(
+                current, local_gates=(LocalGate("changed", (sys.executable, "-c", "print('NEW')")),)
+            ),
+        )
+    else:
+        receipt = json.loads(receipt_path.read_bytes())
+        receipt["passed_at"] = (
+            datetime.fromisoformat(manifest["initial"]["observed_at"]) - timedelta(seconds=1)
+        ).isoformat()
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    original_receipt = receipt_path.read_bytes()
+    original_manifest = manifest_path.read_bytes() if manifest_path.exists() else None
+    original_host_checks = checkpoint.host_checks
+    existing_captures = {
+        path: path.read_bytes() for path in (root / "evidence/supervisor-checks").glob("*.txt")
+    }
+
+    resumed = Supervisor(checkpoint.config, checkpoint.invoker)
+    resumed._run_role("backend")
+
+    state = resumed.load_state("backend")
+    assert state.status is WorkerStatus.BLOCKED_SYSTEM
+    assert state.blocker_kind == "incomplete_evidence"
+    assert state.resume_status is None
+    assert checkpoint.prompts == []
+    assert checkpoint.local_runs == 1
+    assert checkpoint.host_checks == original_host_checks
+    assert receipt_path.read_bytes() == original_receipt
+    assert (manifest_path.read_bytes() if manifest_path.exists() else None) == original_manifest
+    assert {
+        path: path.read_bytes() for path in (root / "evidence/supervisor-checks").glob("*.txt")
+    } == existing_captures
+
+
+@pytest.mark.parametrize(
+    "damage", ["receipt_output", "receipt_after_closing", "missing_receipt", "script"]
+)
+def test_final_preparation_rejects_invalid_complete_checkpoint_without_overwriting(
+    final_checkpoint, monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    checkpoint = final_checkpoint
+    _interrupt_preparation(checkpoint, monkeypatch, "closing")
+    receipt_path, manifest_path = _preparation_artifacts(checkpoint)
+    manifest = json.loads(manifest_path.read_bytes())
+    receipt = json.loads(receipt_path.read_bytes())
+    if damage == "missing_receipt":
+        receipt_path.unlink()
+    elif damage == "script":
+        (checkpoint.config.coordination_root / "scripts/check-coordination.ps1").write_text(
+            "changed script", encoding="utf-8"
+        )
+    else:
+        if damage == "receipt_output":
+            receipt["gates"][0]["stdout"] = "tampered but valid receipt"
+        else:
+            receipt["passed_at"] = (
+                datetime.fromisoformat(manifest["final"]["observed_at"]) + timedelta(seconds=1)
+            ).isoformat()
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+        if damage == "receipt_after_closing":
+            # Keep the byte binding valid so this checks the independent time bound.
+            manifest["validation_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    original_receipt = receipt_path.read_bytes() if receipt_path.exists() else None
+    original_manifest = manifest_path.read_bytes()
+
+    resumed = Supervisor(checkpoint.config, checkpoint.invoker)
+    resumed._run_role("backend")
+
+    state = resumed.load_state("backend")
+    assert state.status is WorkerStatus.BLOCKED_SYSTEM
+    assert state.blocker_kind == "incomplete_evidence"
+    assert checkpoint.prompts == []
+    assert checkpoint.local_runs == 1
+    assert checkpoint.host_checks == 2
+    assert (receipt_path.read_bytes() if receipt_path.exists() else None) == original_receipt
+    assert manifest_path.read_bytes() == original_manifest
+
+
+def _advance_final_head(checkpoint):
+    repo = checkpoint.config.backend_root
+    (repo / "README.md").write_text("reviewed final repair\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "repair final finding"], cwd=repo, check=True)
+    checkpoint.head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=repo, text=True
+    ).strip()
+    acknowledge_handoff(checkpoint.config, "backend", source="test")
+    _accept(checkpoint.config, "backend")
+    checkpoint.pr["headRefOid"] = checkpoint.head
+
+
+@pytest.mark.parametrize("previous", ["review_rejection", "local_gate_failure"])
+def test_explicit_new_final_claim_preserves_prior_proof_and_runs_new_validation(
+    final_checkpoint, previous: str
+) -> None:
+    checkpoint = final_checkpoint
+    if previous == "review_rejection":
+        checkpoint.outcome = "changes_required"
+    else:
+        checkpoint.failure_flag.write_text("fail this attempt", encoding="utf-8")
+    _claim(checkpoint)
+    first = checkpoint.supervisor.load_state("backend")
+    assert first.status is WorkerStatus.IMPLEMENTING
+    assert first.task.task_id == "FINAL-backend"
+    receipt_path, manifest_path = _preparation_artifacts(checkpoint)
+    old_proof = [path.read_bytes() for path in (receipt_path, manifest_path) if path.exists()]
+    old_manifest = json.loads(manifest_path.read_bytes())
+    root = checkpoint.config.coordination_root
+    captures = {
+        path: path.read_bytes() for path in (root / "evidence/supervisor-checks").glob("*.txt")
+    }
+    if previous == "review_rejection":
+        _advance_final_head(checkpoint)
+        checkpoint.outcome = "pass"
+    else:
+        checkpoint.failure_flag.unlink()
+    checkpoint.supervisor.save_state(WorkerState("backend", status=WorkerStatus.PLANNING))
+
+    _claim(checkpoint)
+
+    state = checkpoint.supervisor.load_state("backend")
+    assert state.status is WorkerStatus.DONE
+    assert state.task_base_head == checkpoint.head
+    assert checkpoint.local_runs == 2
+    assert len(checkpoint.prompts) == (2 if previous == "review_rejection" else 1)
+    assert json.loads(manifest_path.read_bytes())["attempt_id"] != old_manifest["attempt_id"]
+    archived = [
+        path.read_bytes()
+        for path in (root / "evidence/final-preparation-history/backend").glob("*.json")
+    ]
+    assert sorted(archived) == sorted(old_proof)
+    for path, data in captures.items():
+        assert path.read_bytes() == data
+
+
+@pytest.mark.parametrize(
+    "boundary", ["archive_copy", "receipt_retired", "manifest_retired", "task_saved"]
+)
+def test_new_final_claim_retirement_recovers_durable_planner_result(
+    final_checkpoint, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    checkpoint = final_checkpoint
+    checkpoint.outcome = "changes_required"
+    _claim(checkpoint)
+    checkpoint.outcome = "pass"
+    receipt_path, manifest_path = _preparation_artifacts(checkpoint)
+    old_proof = [receipt_path.read_bytes(), manifest_path.read_bytes()]
+    checkpoint.supervisor.save_state(WorkerState("backend", status=WorkerStatus.PLANNING))
+    planner_calls = []
+
+    def plan(role, state, context):
+        planner_calls.append(role)
+        assert len(planner_calls) == 1
+        result = AgentResult(
+            "done",
+            "Ready for new final verification",
+            "Review independently",
+            role=role,
+            invocation_id="durable-new-final-claim",
+        )
+        advance_handoff(
+            checkpoint.config,
+            role,
+            pre_head=checkpoint.head,
+            post_head=checkpoint.head,
+            invocation_id=result.invocation_id,
+            provider="codex",
+            pending_result={
+                "phase": "plan",
+                "role": role,
+                "task_id": "",
+                "invocation_id": result.invocation_id,
+                "pre_head": checkpoint.head,
+                "post_head": checkpoint.head,
+                "result": asdict(result),
+            },
+        )
+        return result
+
+    monkeypatch.setattr(checkpoint.invoker, "lead", plan)
+    real_write = coordination_checks.atomic_write_text
+    real_unlink = Path.unlink
+    real_save = checkpoint.supervisor.save_state
+
+    def write_then_interrupt(path, text):
+        real_write(path, text)
+        if "final-preparation-history" in path.parts:
+            raise RuntimeError("interrupted final retirement")
+
+    def unlink_then_interrupt(path, *args, **kwargs):
+        real_unlink(path, *args, **kwargs)
+        target = receipt_path if boundary == "receipt_retired" else manifest_path
+        if path == target:
+            raise RuntimeError("interrupted final retirement")
+
+    def save_then_interrupt(state):
+        real_save(state)
+        if state.task and state.task.task_id == "FINAL-VERIFY-backend":
+            raise RuntimeError("interrupted final retirement")
+
+    with monkeypatch.context() as patch:
+        if boundary == "archive_copy":
+            patch.setattr(coordination_checks, "atomic_write_text", write_then_interrupt)
+        elif boundary == "task_saved":
+            patch.setattr(checkpoint.supervisor, "save_state", save_then_interrupt)
+        else:
+            patch.setattr(Path, "unlink", unlink_then_interrupt)
+        with pytest.raises(RuntimeError, match="interrupted final retirement"):
+            checkpoint.supervisor._run_role("backend")
+
+    parked = checkpoint.supervisor.load_state("backend")
+    if boundary == "task_saved":
+        assert parked.status is WorkerStatus.IMPLEMENTING
+        assert parked.task.task_id == "FINAL-VERIFY-backend"
+        assert read_pending_result(checkpoint.config, "backend") is None
+    else:
+        assert parked.status is WorkerStatus.PLANNING
+        pending = read_pending_result(checkpoint.config, "backend")
+        assert pending and pending["phase"] == "plan"
+    assert checkpoint.local_runs == 1
+
+    resumed = Supervisor(checkpoint.config, checkpoint.invoker)
+    resumed._run_role("backend")
+
+    assert resumed.load_state("backend").status is WorkerStatus.DONE
+    assert planner_calls == ["backend"]
+    assert checkpoint.local_runs == 2
+    assert len(checkpoint.prompts) == 2
+    archived = [
+        path.read_bytes()
+        for path in (
+            checkpoint.config.coordination_root / "evidence/final-preparation-history/backend"
+        ).glob("*.json")
+    ]
+    assert sorted(archived) == sorted(old_proof)
+    assert read_pending_result(checkpoint.config, "backend") is None
+
+
+@pytest.mark.parametrize("failure", ["copy_error", "archive_collision", "writer"])
+def test_new_final_claim_never_deletes_proof_when_retirement_is_unproven(
+    final_checkpoint, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    checkpoint = final_checkpoint
+    checkpoint.outcome = "changes_required"
+    _claim(checkpoint)
+    receipt_path, manifest_path = _preparation_artifacts(checkpoint)
+    receipt_bytes = receipt_path.read_bytes()
+    manifest_bytes = manifest_path.read_bytes()
+    history = checkpoint.config.coordination_root / "evidence/final-preparation-history/backend"
+    if failure == "copy_error":
+        original_write = coordination_checks.atomic_write_text
+
+        def fail_archive(path, text):
+            if "final-preparation-history" in path.parts:
+                raise OSError("archive storage unavailable")
+            original_write(path, text)
+
+        monkeypatch.setattr(coordination_checks, "atomic_write_text", fail_archive)
+    elif failure == "archive_collision":
+        history.mkdir(parents=True)
+        archive = history / f"validation-{hashlib.sha256(receipt_bytes).hexdigest()}.json"
+        archive.write_bytes(b"unexpected archive content")
+    else:
+        active = checkpoint.config.coordination_root / "active-agents"
+        active.mkdir(exist_ok=True)
+        (active / "backend.json").write_text("{}", encoding="utf-8")
+
+    _claim(checkpoint)
+
+    state = checkpoint.supervisor.load_state("backend")
+    assert state.status is WorkerStatus.BLOCKED_SYSTEM
+    assert state.blocker_kind == "incomplete_evidence"
+    assert receipt_path.read_bytes() == receipt_bytes
+    assert manifest_path.read_bytes() == manifest_bytes
+    assert checkpoint.local_runs == 1
+    assert len(checkpoint.prompts) == 1
+    if failure == "archive_collision":
+        assert archive.read_bytes() == b"unexpected archive content"
