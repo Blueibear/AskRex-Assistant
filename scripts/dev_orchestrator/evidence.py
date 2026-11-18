@@ -515,8 +515,12 @@ def build_review_evidence(
     )
     safe_sections = {name: _redact(raw, config) for name, raw in sections}
     protected_coordination = hasattr(coordination_context, "critical_text")
+    # Complete critical sections share the existing aggregate budget. A full
+    # task diff may use capacity left unused by the other evidence sections.
     shared_sections = (
-        ("coordination", "task_issues") if protected_coordination else ("task_issues",)
+        ("task_diff", "coordination", "task_issues")
+        if protected_coordination
+        else ("task_diff", "task_issues")
     )
     bounded_sections = {
         name: _bound(
