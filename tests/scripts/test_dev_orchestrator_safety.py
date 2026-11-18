@@ -1388,12 +1388,15 @@ def test_custom_executor_detects_live_repo_mutation_when_callback_raises(tmp_pat
         )
 
 
-def test_custom_executor_terminates_delayed_child_before_final_seal(tmp_path: Path) -> None:
+def test_custom_executor_terminates_delayed_child_before_final_seal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import json
     import subprocess as sp
     import sys
     import time
 
+    from scripts.dev_orchestrator import runner
     from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
     from scripts.dev_orchestrator.types import TaskItem, WorkerState
 
@@ -1417,27 +1420,60 @@ def test_custom_executor_terminates_delayed_child_before_final_seal(tmp_path: Pa
         }
     )
 
+    ready = tmp_path / "child-ready"
+    release = tmp_path / "release-child"
     child_code = (
-        "import subprocess,sys,time; "
-        "time.sleep(0.25); "
-        "subprocess.run(['git','update-ref','refs/heads/ambient-delayed','HEAD'], cwd=sys.argv[1], check=True)"
+        "from pathlib import Path\n"
+        "import subprocess,sys,time\n"
+        "Path(sys.argv[2]).write_text('ready')\n"
+        "while not Path(sys.argv[3]).exists():\n"
+        "    time.sleep(0.01)\n"
+        "subprocess.run(['git','update-ref','refs/heads/ambient-delayed','HEAD'], cwd=sys.argv[1], check=True)\n"
     )
+    children = []
+    checked_child_stop = False
+    original_seal = runner._custom_executor_repository_state
+
+    def verify_seal(config):
+        nonlocal checked_child_stop
+        if children:
+            assert all(child.poll() is not None for child in children)
+            checked_child_stop = True
+        return original_seal(config)
+
+    monkeypatch.setattr(runner, "_custom_executor_repository_state", verify_seal)
 
     def execute(_command, _cwd, **_kwargs):
-        sp.Popen([sys.executable, "-c", child_code, str(backend)])
+        child = sp.Popen(
+            [sys.executable, "-c", child_code, str(backend), str(ready), str(release)],
+            start_new_session=True,
+        )
+        children.append(child)
+        deadline = time.monotonic() + 5
+        while not ready.exists():
+            assert child.poll() is None
+            assert time.monotonic() < deadline, "delayed child did not reach its release barrier"
+            time.sleep(0.01)
         return ProcessResult(0, payload, "")
 
-    result = CliAgentInvoker(cfg, execute=execute, allow_test_executor=True).implement(
-        "backend", WorkerState("backend"), TaskItem("B-DELAY", "x"), "ctx", "sonnet"
-    )
-    assert result.outcome == "continue"
-    time.sleep(0.4)
-    ref = sp.run(
-        ["git", "show-ref", "--verify", "--quiet", "refs/heads/ambient-delayed"],
-        cwd=backend,
-        check=False,
-    )
-    assert ref.returncode != 0
+    try:
+        result = CliAgentInvoker(cfg, execute=execute, allow_test_executor=True).implement(
+            "backend", WorkerState("backend"), TaskItem("B-DELAY", "x"), "ctx", "sonnet"
+        )
+        assert result.outcome == "continue"
+        assert children and checked_child_stop
+        release.touch()
+        ref = sp.run(
+            ["git", "show-ref", "--verify", "--quiet", "refs/heads/ambient-delayed"],
+            cwd=backend,
+            check=False,
+        )
+        assert ref.returncode != 0
+    finally:
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=5)
 
 
 def test_tree_state_rejects_windows_directory_junction(tmp_path: Path) -> None:
