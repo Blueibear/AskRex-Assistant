@@ -15,6 +15,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+from . import coordination_checks
 from .coordination_checks import read_check_summary
 from .evidence import build_review_evidence
 from .handoff import role_lease_lock_path, validate_handoff, verify_invocation_commits
@@ -38,6 +39,8 @@ _HEAD = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _JSON_LIMIT = 2_000_000
 _BLOB_LIMIT = 16_000_000
+# Sizing only: this UUID-width value creates no invocation, admission, or result.
+_REVIEW_SIZING_ID = "00000000-0000-0000-0000-000000000000"
 
 
 def _require(condition: bool, message: str) -> None:
@@ -319,6 +322,10 @@ def _canonical_checks(config, state, lease, proof, pre_head, admitted, ended, re
         record = manifest.get(phase)
         _require(isinstance(record, dict), "missing " + phase + " coordination capture")
         _require(record.get("script_sha256") == script_digest, "coordination script changed")
+        _require(
+            record.get("command") == coordination_checks._check_command(config, role),
+            "coordination command changed",
+        )
         for stream in ("stdout", "stderr"):
             relative = record.get(stream + "_path")
             _require(
@@ -410,7 +417,7 @@ def revalidate_review_evidence(config: OrchestratorConfig, role: str) -> dict:
         _canonical_checks(config, state, lease, proof, pre_head, admitted, ended, review_at)
         context = build_worker_context(config, role, state, lease["head"])
         bundle = build_review_evidence(
-            config, role, state, state.task, context.text, "review-evidence-revalidation"
+            config, role, state, state.task, context.text, _REVIEW_SIZING_ID
         )
         _require(
             not bundle.truncated

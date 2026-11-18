@@ -8,12 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from scripts.dev_orchestrator import cli, review_recovery, runner
+from scripts.dev_orchestrator import cli, evidence, review_recovery, runner
 from scripts.dev_orchestrator.evidence import EvidenceError, ReviewEvidenceBundle
 from scripts.dev_orchestrator.handoff import repo_snapshot
 from scripts.dev_orchestrator.storage import AtomicJsonStore
 from scripts.dev_orchestrator.supervisor import Supervisor
 from scripts.dev_orchestrator.types import WorkerStatus
+from scripts.dev_orchestrator.worker_context import SuppliedContext
 from tests.scripts.test_dev_orchestrator_postprocessing import (
     postprocess_checkpoint as postprocess_checkpoint,
 )
@@ -44,12 +45,25 @@ def held_review(postprocess_checkpoint, monkeypatch, request):
     checkpoint = postprocess_checkpoint
     checkpoint.write_draft = False
     original = checkpoint.supervisor.load_state("backend")
-    if getattr(request, "param", "readonly") == "changed":
+    variant = getattr(request, "param", "readonly")
+    if variant in {"changed", "large"}:
         checkpoint.write_draft = True
         checkpoint.draft = "Verified field: value\n"
         original = replace(
             original, task=replace(original.task, prompt="Implement the bounded field contract.")
         )
+    if variant == "large":
+        local_transport = checkpoint.invoker.execute
+
+        def large_output(command, cwd, *args, **kwargs):
+            completed = local_transport(command, cwd, *args, **kwargs)
+            # Supply a large fake-worker artifact without a Windows-sized argv.
+            (Path(cwd) / "audit.md").write_text(
+                "LARGE-DIFF-BEGIN\n" + "X" * 140_000 + "\nLARGE-DIFF-END\n", encoding="utf-8"
+            )
+            return completed
+
+        monkeypatch.setattr(checkpoint.invoker, "execute", large_output)
     checkpoint.supervisor.save_state(replace(original, iteration=12, review_failures=7))
     checkpoint.supervisor.run_role("backend")
     ready = checkpoint.supervisor.load_state("backend")
@@ -386,3 +400,73 @@ def test_refused_state_write_preserves_checkpoint(held_review, monkeypatch):
     with pytest.raises(PermissionError):
         _recover(checkpoint)
     assert _authority(checkpoint.root) == before
+
+
+@pytest.mark.parametrize("phase", ["initial", "final"])
+def test_revalidation_rejects_changed_coordination_command(held_review, phase):
+    checkpoint = held_review
+    _change(
+        checkpoint.checks_path,
+        lambda value: value[phase].update(command=["unrelated-command", "--not-the-check"]),
+    )
+    before = _authority(checkpoint.root)
+    with pytest.raises(ValueError, match="coordination command changed"):
+        _recover(checkpoint)
+    assert _authority(checkpoint.root) == before
+    assert len(checkpoint.calls) == 1
+
+
+@pytest.mark.parametrize("held_review", ["large"], indirect=True)
+def test_public_recovery_uses_actual_review_identity_width(held_review, monkeypatch):
+    checkpoint = held_review
+    state = checkpoint.supervisor.load_state("backend")
+    context = review_recovery.build_worker_context(
+        checkpoint.config, "backend", state, checkpoint.head
+    )
+    identity = "00000000-0000-0000-0000-000000000000"
+    real_build = review_recovery.build_review_evidence
+
+    def bundle(supplied):
+        return real_build(checkpoint.config, "backend", state, state.task, supplied.text, identity)
+
+    baseline = bundle(context)
+    assert not baseline.truncated
+    assert "LARGE-DIFF-END" in baseline.text
+    limits = evidence._DEFAULT_SECTION_LIMITS
+    assert sum(limits.values()) == 228_000
+    bound = 228_000 + sum(len(f"## {name}\n") for name in limits) + 2 * (len(limits) - 1)
+    spare = bound - len(baseline.text)
+    assert spare > 0
+
+    def padded(extra):
+        padding = "C" * (spare + extra)
+        return replace(
+            context,
+            text=SuppliedContext(context.text + padding, context.text.critical_text + padding),
+        )
+
+    current = padded(1)
+    assert len(current.text) < 100_000
+    actual = bundle(current)
+    assert actual.truncated and actual.truncation_reasons == ("task_issues",)
+    assert len(actual.text) == bound
+    invoker = object.__new__(runner.CliAgentInvoker)
+    invoker.config = checkpoint.config
+    with pytest.raises(runner.AgentInvocationError, match="task_issues"):
+        invoker.review("backend", state, state.task, current.text, "gpt-5.6-sol")
+    monkeypatch.setattr(review_recovery, "build_worker_context", lambda *_args: current)
+    before = _authority(checkpoint.root)
+    with pytest.raises(ValueError, match="current review evidence is incomplete"):
+        _recover(checkpoint)
+    assert _authority(checkpoint.root) == before
+    assert len(checkpoint.calls) == 1
+
+    # At the exact limit, a genuine full packet is recoverable. Sizing must not
+    # create an invocation or change anything beyond the existing state fields.
+    current = padded(0)
+    complete = bundle(current)
+    assert not complete.truncated and len(complete.text) == bound
+    assert _recover(checkpoint)["status"] == "reviewing"
+    expected = {**before, "state/backend.json": checkpoint.state_path.read_bytes()}
+    assert _authority(checkpoint.root) == expected
+    assert len(checkpoint.calls) == 1
