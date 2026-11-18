@@ -9,6 +9,7 @@ from typing import Any
 
 from .storage import AtomicJsonStore
 from .types import OrchestratorConfig
+from .validation_failures import output_text, record_validation_failure
 
 _MAX_OUTPUT_CHARS = 4_000
 
@@ -175,7 +176,10 @@ _DEFAULT_GATES: dict[str, tuple[ValidationGate, ...]] = {
 def _bounded(text: str) -> str:
     if len(text) <= _MAX_OUTPUT_CHARS:
         return text
-    return "[output truncated; showing final 12000 characters]\n" + text[-_MAX_OUTPUT_CHARS:]
+    return (
+        f"[output truncated; showing final {_MAX_OUTPUT_CHARS} characters]\n"
+        + text[-_MAX_OUTPUT_CHARS:]
+    )
 
 
 def _parse_gate(raw: Any) -> ValidationGate:
@@ -408,23 +412,6 @@ def _repo_root(config: OrchestratorConfig, role: str) -> Path:
     return root.resolve()
 
 
-def _render_failure(
-    gate: ValidationGate, cwd: Path, result: subprocess.CompletedProcess[str]
-) -> str:
-    command = subprocess.list2cmdline(list(gate.command))
-    stdout = _bounded(result.stdout or "")
-    stderr = _bounded(result.stderr or "")
-    return (
-        "Deterministic validation failed before independent review.\n"
-        f"Gate: {gate.name}\n"
-        f"Command: {command}\n"
-        f"CWD: {cwd}\n"
-        f"Exit code: {result.returncode}\n"
-        f"STDOUT:\n{stdout}\n"
-        f"STDERR:\n{stderr}"
-    )
-
-
 def run_iteration_validation(
     config: OrchestratorConfig,
     role: str,
@@ -466,24 +453,56 @@ def run_iteration_validation(
             cwd = (repo / gate.cwd).resolve()
             if cwd != repo and repo not in cwd.parents:
                 raise ValueError(f"validation gate {gate.name!r} cwd escapes repository")
-            result = subprocess.run(
-                gate.command,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=gate.timeout_seconds,
-                check=False,
-            )
+            try:
+                result = subprocess.run(
+                    gate.command,
+                    cwd=cwd,
+                    capture_output=True,
+                    text=False,
+                    timeout=gate.timeout_seconds,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                return ValidationReport(
+                    False,
+                    record_validation_failure(
+                        config.coordination_root,
+                        role=role,
+                        task_id=task_id,
+                        base_head=base_head,
+                        head=head,
+                        gate=gate,
+                        cwd=cwd,
+                        exit_code=None,
+                        stdout=exc.stdout,
+                        stderr=exc.stderr,
+                        timed_out=True,
+                    ),
+                )
             if result.returncode != 0:
-                return ValidationReport(False, _render_failure(gate, cwd, result))
+                return ValidationReport(
+                    False,
+                    record_validation_failure(
+                        config.coordination_root,
+                        role=role,
+                        task_id=task_id,
+                        base_head=base_head,
+                        head=head,
+                        gate=gate,
+                        cwd=cwd,
+                        exit_code=result.returncode,
+                        stdout=result.stdout,
+                        stderr=result.stderr,
+                    ),
+                )
             evidence.append(
                 ValidationGateEvidence(
                     name=gate.name,
                     command=gate.command,
                     cwd=gate.cwd,
                     exit_code=result.returncode,
-                    stdout=_bounded(result.stdout or ""),
-                    stderr=_bounded(result.stderr or ""),
+                    stdout=_bounded(output_text(result.stdout)),
+                    stderr=_bounded(output_text(result.stderr)),
                 )
             )
         if head and _git_head(repo) != head:
@@ -499,21 +518,6 @@ def run_iteration_validation(
         )
         AtomicJsonStore(_receipt_path(config, role, task_id)).write(receipt.to_dict())
         return ValidationReport(True, receipt=receipt)
-    except subprocess.TimeoutExpired as exc:
-        # Timeout captures may be bytes even when the subprocess uses text mode.
-        output = _bounded(
-            "".join(
-                (
-                    stream.decode("utf-8", errors="replace")
-                    if isinstance(stream, bytes)
-                    else stream or ""
-                )
-                for stream in (exc.stdout, exc.stderr)
-            )
-        )
-        return ValidationReport(
-            False, f"Deterministic validation timed out before review.\n{output}"
-        )
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         gate_name = locals().get("gate")
         detail = f" for {gate_name.name}" if isinstance(gate_name, ValidationGate) else ""
