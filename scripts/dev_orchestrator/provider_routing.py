@@ -14,9 +14,19 @@ from .types import AgentResult, OrchestratorConfig, TaskItem, WorkerState
 _SUBSCRIPTION_API_FALLBACK_KINDS = frozenset({"usage_limit", "auth"})
 FABLE_REVIEW_MODEL = "fable"
 _PROTECTED_REVIEW_MARKERS = (
-    "final-verify", "security", "privacy", "auth", "credential",
-    "permission", "policy", "release", "deploy", "audit",
-    "approval", "identity", "secret",
+    "final-verify",
+    "security",
+    "privacy",
+    "auth",
+    "credential",
+    "permission",
+    "policy",
+    "release",
+    "deploy",
+    "audit",
+    "approval",
+    "identity",
+    "secret",
 )
 
 
@@ -32,8 +42,10 @@ def temporary_fable_policy_active(
     if policy.get("model") != FABLE_REVIEW_MODEL:
         raise ValueError("Fable review requires the pinned fable model")
     roles = policy.get("roles")
-    if not isinstance(roles, list) or not roles or any(
-        value not in {"backend", "mobile"} for value in roles
+    if (
+        not isinstance(roles, list)
+        or not roles
+        or any(value not in {"backend", "mobile"} for value in roles)
     ):
         raise ValueError("Fable review requires an explicit role allowlist")
     try:
@@ -101,8 +113,10 @@ def temporary_claude_planning_active(
     if policy.get("reason") != "openai_weekly_usage_limit":
         raise ValueError("Claude planning requires the explicit usage-limit reason")
     roles = policy.get("roles")
-    if not isinstance(roles, list) or not roles or any(
-        value not in {"backend", "mobile"} for value in roles
+    if (
+        not isinstance(roles, list)
+        or not roles
+        or any(value not in {"backend", "mobile"} for value in roles)
     ):
         raise ValueError("Claude planning requires an explicit role allowlist")
     try:

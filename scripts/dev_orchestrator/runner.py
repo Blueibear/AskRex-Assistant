@@ -714,10 +714,10 @@ def _hide_scratch_git_metadata(scratch: Path):
     if not git_dir.is_dir():
         raise HandoffRequired("Codex scratch clone is missing Git metadata")
     hidden_git = scratch.parent / f".git-orchestrator-{uuid.uuid4().hex}"
-    placeholder_git = scratch.parent / f".git-codex-placeholder-{uuid.uuid4().hex}"
+    sentinel_git = scratch.parent / f".git-codex-sentinel-{uuid.uuid4().hex}"
     os.replace(git_dir, hidden_git)
-    placeholder_git.mkdir()
-    marker = f"gitdir: {placeholder_git.as_posix()}\n"
+    sentinel_git.mkdir()
+    marker = f"gitdir: {sentinel_git.as_posix()}\n"
     git_dir.write_text(marker, encoding="utf-8")
     conflict = False
     try:
@@ -726,8 +726,8 @@ def _hide_scratch_git_metadata(scratch: Path):
         marker_intact = (
             git_dir.is_file() and git_dir.read_text(encoding="utf-8", errors="replace") == marker
         )
-        placeholder_intact = placeholder_git.is_dir() and not any(placeholder_git.iterdir())
-        if not marker_intact or not placeholder_intact:
+        sentinel_intact = sentinel_git.is_dir() and not any(sentinel_git.iterdir())
+        if not marker_intact or not sentinel_intact:
             conflict = True
         if git_dir.exists():
             if marker_intact:
@@ -735,12 +735,12 @@ def _hide_scratch_git_metadata(scratch: Path):
             else:
                 quarantine = scratch.parent / f".git-codex-conflict-{uuid.uuid4().hex}"
                 os.replace(git_dir, quarantine)
-        if placeholder_git.exists():
-            if placeholder_intact:
-                placeholder_git.rmdir()
+        if sentinel_git.exists():
+            if sentinel_intact:
+                sentinel_git.rmdir()
             else:
-                quarantine = scratch.parent / f".git-codex-placeholder-conflict-{uuid.uuid4().hex}"
-                os.replace(placeholder_git, quarantine)
+                quarantine = scratch.parent / f".git-codex-sentinel-conflict-{uuid.uuid4().hex}"
+                os.replace(sentinel_git, quarantine)
         if not hidden_git.exists():
             raise HandoffRequired("Codex scratch Git metadata was lost while hidden")
         os.replace(hidden_git, git_dir)
@@ -975,6 +975,15 @@ def _custom_executor_repository_state(
             continue
         repo = Path(candidate).resolve()
         roots[str(repo).casefold()] = repo
+        # An empty fixture may sit below an unrelated user-level Git repository.
+        # Seal Git metadata only for the exact configured checkout root.
+        top_level = _git_run(repo, "git", "rev-parse", "--show-toplevel")
+        if (
+            top_level.returncode != 0
+            or not top_level.stdout.strip()
+            or _resolve_git_metadata_path(repo, top_level.stdout) != repo
+        ):
+            continue
         for args in (("git", "rev-parse", "--git-dir"), ("git", "rev-parse", "--git-common-dir")):
             result = _git_run(repo, *args)
             if result.returncode == 0 and result.stdout.strip():

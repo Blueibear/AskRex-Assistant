@@ -58,10 +58,15 @@ def test_fable_review_only_for_ordinary_claude_work(tmp_path):
 
 def test_owner_authorized_codex_equivalent_reviews(tmp_path):
     cfg = config(tmp_path)
-    cfg = replace(cfg, metadata={"temporary_fable_review": {
-        **cfg.metadata["temporary_fable_review"],
-        "allow_codex_equivalent_reviews": True,
-    }})
+    cfg = replace(
+        cfg,
+        metadata={
+            "temporary_fable_review": {
+                **cfg.metadata["temporary_fable_review"],
+                "allow_codex_equivalent_reviews": True,
+            }
+        },
+    )
     for task in (
         TaskItem("backend-security", "Review authentication policy"),
         TaskItem("FINAL-VERIFY-mobile", "Review release readiness"),
@@ -90,12 +95,14 @@ def test_s10_no_change_guardrails_remain_eligible_for_fable(tmp_path):
         cfg, "mobile", replace(task, feedback="Change authentication checks"), "claude"
     )
     assert not temporary_fable_review_active(
-        cfg, "mobile",
+        cfg,
+        "mobile",
         replace(task, prompt=task.prompt + " Also revise the security policy."),
         "claude",
     )
     assert not temporary_fable_review_active(
-        cfg, "mobile",
+        cfg,
+        "mobile",
         replace(task, task_id="mobile-s10-privacy-policy-change"),
         "claude",
     )
@@ -103,14 +110,18 @@ def test_s10_no_change_guardrails_remain_eligible_for_fable(tmp_path):
 
 def test_stale_hourly_wait_reenters_fable_routing(tmp_path, monkeypatch):
     cfg = config(tmp_path)
-    cfg = replace(cfg, observe_only=False, metadata={
-        **cfg.metadata,
-        "review_fallback": {
-            "enabled": True,
-            "reason": "openai_weekly_usage_limit",
-            "expires_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+    cfg = replace(
+        cfg,
+        observe_only=False,
+        metadata={
+            **cfg.metadata,
+            "review_fallback": {
+                "enabled": True,
+                "reason": "openai_weekly_usage_limit",
+                "expires_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+            },
         },
-    })
+    )
     assert temporary_fable_policy_active(cfg, "mobile")
     AtomicJsonStore(cfg.coordination_root / "handoff" / "mobile.json").write(
         {"last_provider": "claude"}
@@ -128,7 +139,8 @@ def test_stale_hourly_wait_reenters_fable_routing(tmp_path, monkeypatch):
     supervisor.save_state(state)
     observed = []
     monkeypatch.setattr(
-        supervisor, "_review",
+        supervisor,
+        "_review",
         lambda role, resumed, context: observed.append(
             (role, resumed.status, resumed.blocker_kind)
         ),
@@ -142,14 +154,17 @@ def test_stale_hourly_wait_reenters_fable_routing(tmp_path, monkeypatch):
 
 def test_s10_review_selects_fable_ahead_of_hourly_receipt(tmp_path, monkeypatch):
     cfg = config(tmp_path)
-    cfg = replace(cfg, metadata={
-        **cfg.metadata,
-        "review_fallback": {
-            "enabled": True,
-            "reason": "openai_weekly_usage_limit",
-            "expires_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+    cfg = replace(
+        cfg,
+        metadata={
+            **cfg.metadata,
+            "review_fallback": {
+                "enabled": True,
+                "reason": "openai_weekly_usage_limit",
+                "expires_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+            },
         },
-    })
+    )
     AtomicJsonStore(cfg.coordination_root / "handoff" / "mobile.json").write(
         {"last_provider": "claude"}
     )
@@ -175,14 +190,17 @@ def test_s10_review_selects_fable_ahead_of_hourly_receipt(tmp_path, monkeypatch)
 
 def test_protected_work_keeps_codex_gate_without_chatgpt_receipt(tmp_path, monkeypatch):
     cfg = config(tmp_path)
-    cfg = replace(cfg, metadata={
-        **cfg.metadata,
-        "review_fallback": {
-            "enabled": True,
-            "reason": "openai_weekly_usage_limit",
-            "expires_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+    cfg = replace(
+        cfg,
+        metadata={
+            **cfg.metadata,
+            "review_fallback": {
+                "enabled": True,
+                "reason": "openai_weekly_usage_limit",
+                "expires_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+            },
         },
-    })
+    )
     AtomicJsonStore(cfg.coordination_root / "handoff" / "backend.json").write(
         {"last_provider": "claude"}
     )
@@ -216,11 +234,12 @@ def test_fable_review_expiry_and_fail_closed_policy(tmp_path):
         ({"expires_at": (now + timedelta(days=8)).isoformat()}, "seven days"),
         ({"expires_at": "not-a-date"}, "valid expiry"),
     ):
-        invalid = replace(cfg, metadata={
-            "temporary_fable_review": {
-                **cfg.metadata["temporary_fable_review"], **change
-            }
-        })
+        invalid = replace(
+            cfg,
+            metadata={
+                "temporary_fable_review": {**cfg.metadata["temporary_fable_review"], **change}
+            },
+        )
         with pytest.raises(ValueError, match=error):
             temporary_fable_review_active(invalid, "mobile", task, "claude", now=now)
 

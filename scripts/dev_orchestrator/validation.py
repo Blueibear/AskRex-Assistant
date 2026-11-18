@@ -220,10 +220,7 @@ def _gates_for(config: OrchestratorConfig, role: str, task_id: str) -> tuple[Val
         raise ValueError(f"unsupported validation role: {role}") from exc
 
 
-
-def _has_task_validation_override(
-    config: OrchestratorConfig, role: str, task_id: str
-) -> bool:
+def _has_task_validation_override(config: OrchestratorConfig, role: str, task_id: str) -> bool:
     settings = config.metadata.get("iteration_validation", {})
     if not isinstance(settings, dict):
         return False
@@ -282,9 +279,7 @@ def _scoped_backend_gates_from_diff(
         return ()
 
     paths = [
-        line.strip().replace("\\", "/")
-        for line in changed.stdout.splitlines()
-        if line.strip()
+        line.strip().replace("\\", "/") for line in changed.stdout.splitlines() if line.strip()
     ]
     if not paths or len(paths) > 24:
         return ()
@@ -318,15 +313,11 @@ def _scoped_backend_gates_from_diff(
                     timeout_seconds=300,
                 )
             )
-    elif all(
-        path.startswith("gui/") and Path(path).suffix in {".ts", ".tsx"}
-        for path in paths
-    ):
+    elif all(path.startswith("gui/") and Path(path).suffix in {".ts", ".tsx"} for path in paths):
         tests = [
             path.removeprefix("gui/")
             for path in paths
-            if path.startswith("gui/tests/")
-            and Path(path).name.endswith((".test.ts", ".test.tsx"))
+            if path.startswith("gui/tests/") and Path(path).name.endswith((".test.ts", ".test.tsx"))
         ]
         if not tests or len(tests) > 12:
             return ()
@@ -400,7 +391,6 @@ def _coordination_only_gates(
             timeout_seconds=120,
         ),
     )
-
 
 
 def _repo_root(config: OrchestratorConfig, role: str) -> Path:

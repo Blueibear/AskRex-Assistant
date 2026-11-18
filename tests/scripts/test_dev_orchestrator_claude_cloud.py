@@ -185,7 +185,7 @@ def test_context_delivery_failure_is_persisted_and_retryable(
         task_id="US-086",
         session_id="session_abc123",
         url="https://claude.ai/code/session_abc123",
-        branch="ralph/cloud/backend/us-086-12345678",
+        branch="ralph/cloud/backend/us-086-aaaaaaaa",
         base_head="a" * 40,
         launched_at="2026-09-25T00:00:00+00:00",
         invocation_id="inv-123",
@@ -253,7 +253,7 @@ def test_poll_classifies_remote_branch_state(
             task_id="US-086",
             session_id="session_abc",
             url="https://claude.ai/code/session_abc",
-            branch="ralph/cloud/backend/us-086-12345678",
+            branch="ralph/cloud/backend/us-086-aaaaaaaa",
             base_head="a" * 40,
             launched_at="2026-09-25T00:00:00+00:00",
         ).to_dict()
@@ -262,7 +262,7 @@ def test_poll_classifies_remote_branch_state(
     def fake_git(repo: Path, *args: str, timeout: int = 60) -> str:
         if args[:2] == ("fetch", "--quiet"):
             return ""
-        if args[0:2] == ("rev-parse", "refs/remotes/origin/ralph/cloud/backend/us-086-12345678"):
+        if args[0:2] == ("rev-parse", "refs/remotes/origin/ralph/cloud/backend/us-086-aaaaaaaa"):
             return remote_head
         if args[0:3] == (
             "show",
@@ -286,7 +286,7 @@ def test_adopt_refuses_if_local_worktree_moved(
         task_id="US-086",
         session_id="session_abc",
         url="https://claude.ai/code/session_abc",
-        branch="ralph/cloud/backend/us-086-12345678",
+        branch="ralph/cloud/backend/us-086-aaaaaaaa",
         base_head="a" * 40,
         launched_at="2026-09-25T00:00:00+00:00",
     )
@@ -321,7 +321,7 @@ def test_adopt_publishes_bound_pending_result_and_clears_session(
         task_id="US-086",
         session_id="session_abc",
         url="https://claude.ai/code/session_abc",
-        branch="ralph/cloud/backend/us-086-12345678",
+        branch="ralph/cloud/backend/us-086-aaaaaaaa",
         base_head="a" * 40,
         launched_at="2026-09-25T00:00:00+00:00",
         invocation_id="inv-cloud-123",

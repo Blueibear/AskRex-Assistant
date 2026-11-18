@@ -95,9 +95,13 @@ def load_hourly_review(
     if not isinstance(summary, str) or not 10 <= len(summary.strip()) <= 4000:
         raise ValueError("fallback review requires a bounded substantive summary")
     evidence = payload.get("evidence_references")
-    if not isinstance(evidence, list) or not evidence or any(
-        not isinstance(value, str) or not value.strip() or len(value) > 400
-        for value in evidence
+    if (
+        not isinstance(evidence, list)
+        or not evidence
+        or any(
+            not isinstance(value, str) or not value.strip() or len(value) > 400
+            for value in evidence
+        )
     ):
         raise ValueError("fallback review requires concrete evidence references")
     reviewed_at = payload.get("reviewed_at")

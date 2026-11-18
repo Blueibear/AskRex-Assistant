@@ -1178,7 +1178,8 @@ def test_configure_claude_oauth_token_persists_only_opaque_ref(tmp_path: Path) -
         credential_mapping={"claude_code_oauth": "CLAUDE_CODE_OAUTH_TOKEN"},
         vault=vault,
     )
-    secret = "synthetic-claude-oauth-value"
+    # Fixed synthetic vault fixture, never an account credential.
+    secret = "synthetic-claude-oauth-value"  # pragma: allowlist secret
 
     config = configure_claude_oauth_token(root, secret, credential_manager=manager)
 

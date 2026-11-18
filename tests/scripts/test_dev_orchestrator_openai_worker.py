@@ -250,7 +250,6 @@ def test_review_marks_reserved_spend_uncertain_after_transport_failure(
     assert read_pending_result(config, "backend") is None
 
 
-
 def test_openai_review_rejects_implementation_outcome_before_coordination_validation(
     tmp_path: Path,
 ) -> None:

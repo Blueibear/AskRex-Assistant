@@ -611,20 +611,27 @@ def test_temporary_claude_planning_is_expiring_and_fail_closed(tmp_path: Path) -
     now = datetime.now(UTC)
     assert temporary_claude_planning_active(config, "backend", now=now)
     assert not temporary_claude_planning_active(config, "backend", now=now + timedelta(days=2))
-    invalid = replace(config, metadata={
-        **config.metadata,
-        "temporary_claude_planning": {
-            **config.metadata["temporary_claude_planning"],
-            "expires_at": (now + timedelta(days=8)).isoformat(),
+    invalid = replace(
+        config,
+        metadata={
+            **config.metadata,
+            "temporary_claude_planning": {
+                **config.metadata["temporary_claude_planning"],
+                "expires_at": (now + timedelta(days=8)).isoformat(),
+            },
         },
-    })
+    )
     with pytest.raises(ValueError, match="seven days"):
         temporary_claude_planning_active(invalid, "mobile", now=now)
-    wrong = replace(config, metadata={
-        **config.metadata,
-        "temporary_claude_planning": {
-            **config.metadata["temporary_claude_planning"], "roles": ["unknown"],
+    wrong = replace(
+        config,
+        metadata={
+            **config.metadata,
+            "temporary_claude_planning": {
+                **config.metadata["temporary_claude_planning"],
+                "roles": ["unknown"],
+            },
         },
-    })
+    )
     with pytest.raises(ValueError, match="allowlist"):
         temporary_claude_planning_active(wrong, "mobile", now=now)

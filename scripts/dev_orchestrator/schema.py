@@ -29,13 +29,9 @@ _PHASE_OUTCOMES = {
     "implement": frozenset(
         {"continue", "ready_for_review", "blocked_user", "blocked_system", "failed"}
     ),
-    "review": frozenset(
-        {"pass", "changes_required", "blocked_user", "blocked_system", "failed"}
-    ),
+    "review": frozenset({"pass", "changes_required", "blocked_user", "blocked_system", "failed"}),
     "plan": frozenset({"assign", "done", "blocked_user", "blocked_system", "failed"}),
-    "adjudicate": frozenset(
-        {"assign", "done", "blocked_user", "blocked_system", "failed"}
-    ),
+    "adjudicate": frozenset({"assign", "done", "blocked_user", "blocked_system", "failed"}),
 }
 
 
@@ -54,6 +50,7 @@ def validate_phase_outcome(result: AgentResult, phase: str) -> None:
             f"agent outcome {result.outcome!r} is invalid for phase {phase!r}; "
             f"expected one of: {expected}"
         )
+
 
 _SCHEMA = json.loads(
     Path(__file__).with_name("agent-result.schema.json").read_text(encoding="utf-8")

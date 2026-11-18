@@ -54,14 +54,8 @@ def test_coordination_only_profile_never_runs_default_pytest(tmp_path: Path) -> 
         "accepted checkpoint unchanged",
         "coordination diff check",
     ]
-    assert not any(
-        len(command) >= 4 and command[2:4] == ("-m", "pytest")
-        for command in commands
-    )
-    assert any(
-        any("check-coordination.ps1" in part for part in command)
-        for command in commands
-    )
+    assert not any(len(command) >= 4 and command[2:4] == ("-m", "pytest") for command in commands)
+    assert any(any("check-coordination.ps1" in part for part in command) for command in commands)
 
 
 def test_explicit_task_validation_override_wins_for_coordination_task(tmp_path: Path) -> None:
@@ -73,11 +67,13 @@ def test_explicit_task_validation_override_wins_for_coordination_task(tmp_path: 
 
 def _git(repo: Path, *args: str) -> str:
     import subprocess
+
     return subprocess.check_output(["git", *args], cwd=repo, text=True).strip()
 
 
 def _init_git_repo(repo: Path) -> str:
     import subprocess
+
     repo.mkdir(parents=True)
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=repo, check=True)
@@ -96,6 +92,7 @@ def _init_git_repo(repo: Path) -> str:
 
 def test_scoped_backend_profile_uses_changed_python_regressions(tmp_path: Path) -> None:
     import subprocess
+
     config = _config(tmp_path)
     config.metadata["iteration_validation"]["backend"]["scoped_default_from_diff"] = True
     repo = config.backend_root
@@ -129,6 +126,7 @@ def test_scoped_backend_profile_uses_changed_python_regressions(tmp_path: Path) 
 
 def test_scoped_backend_profile_uses_changed_gui_regressions(tmp_path: Path) -> None:
     import subprocess
+
     config = _config(tmp_path)
     config.metadata["iteration_validation"]["backend"]["scoped_default_from_diff"] = True
     repo = config.backend_root
@@ -137,9 +135,7 @@ def test_scoped_backend_profile_uses_changed_gui_regressions(tmp_path: Path) -> 
     gui = repo / "gui"
     (gui / "src").mkdir(parents=True)
     (gui / "tests").mkdir()
-    (gui / "src" / "SetupWizardPage.tsx").write_text(
-        "export const value = 1;\n", encoding="utf-8"
-    )
+    (gui / "src" / "SetupWizardPage.tsx").write_text("export const value = 1;\n", encoding="utf-8")
     (gui / "tests" / "setupWakeWordWizardUX.test.ts").write_text(
         "test('wake word', () => {});\n", encoding="utf-8"
     )
@@ -167,6 +163,7 @@ def test_scoped_backend_profile_uses_changed_gui_regressions(tmp_path: Path) -> 
 
 def test_scoped_backend_profile_falls_back_for_non_python_change(tmp_path: Path) -> None:
     import subprocess
+
     config = _config(tmp_path)
     config.metadata["iteration_validation"]["backend"]["scoped_default_from_diff"] = True
     repo = config.backend_root
@@ -177,9 +174,12 @@ def test_scoped_backend_profile_falls_back_for_non_python_change(tmp_path: Path)
     subprocess.run(["git", "commit", "-qm", "packaging"], cwd=repo, check=True)
     head = _git(repo, "rev-parse", "HEAD")
 
-    assert _scoped_backend_gates_from_diff(
-        config,
-        "backend",
-        base_head=base,
-        head=head,
-    ) == ()
+    assert (
+        _scoped_backend_gates_from_diff(
+            config,
+            "backend",
+            base_head=base,
+            head=head,
+        )
+        == ()
+    )

@@ -86,9 +86,12 @@ def _write_review(config: OrchestratorConfig, review: dict) -> Path:
 
 def test_hourly_review_accepts_exact_revision_and_validation(tmp_path: Path) -> None:
     config, state, review, now = _setup(tmp_path)
-    assert load_hourly_review(
-        config, "backend", state, head=HEAD, implementation_provider="claude_cloud", now=now
-    ) is None
+    assert (
+        load_hourly_review(
+            config, "backend", state, head=HEAD, implementation_provider="claude_cloud", now=now
+        )
+        is None
+    )
     _write_review(config, review)
     result = load_hourly_review(
         config, "backend", state, head=HEAD, implementation_provider="claude_cloud", now=now
@@ -144,9 +147,14 @@ def test_hourly_review_expires_without_changing_normal_review_policy(tmp_path: P
     assert not fallback_active(config, now=now + timedelta(days=2))
     assert (
         load_hourly_review(
-            config, "backend", state, head=HEAD,
-            implementation_provider="claude_cloud", now=now + timedelta(days=2)
-        ) is None
+            config,
+            "backend",
+            state,
+            head=HEAD,
+            implementation_provider="claude_cloud",
+            now=now + timedelta(days=2),
+        )
+        is None
     )
 
 
@@ -154,9 +162,7 @@ def test_supervisor_waits_for_hourly_review_then_accepts_exact_receipt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config, state, review, _now = _setup(tmp_path)
-    AtomicJsonStore(tmp_path / "handoff" / "backend.json").write(
-        {"last_provider": "claude_cloud"}
-    )
+    AtomicJsonStore(tmp_path / "handoff" / "backend.json").write({"last_provider": "claude_cloud"})
     supervisor = Supervisor(config, object())
     monkeypatch.setattr(supervisor, "_capture_task_base_head", lambda _role: HEAD)
     supervisor.save_state(state)
@@ -183,9 +189,7 @@ def test_supervisor_does_not_accept_invalid_hourly_review(
     config, state, review, _now = _setup(tmp_path)
     review["source"] = "claude_cloud"
     _write_review(config, review)
-    AtomicJsonStore(tmp_path / "handoff" / "backend.json").write(
-        {"last_provider": "claude_cloud"}
-    )
+    AtomicJsonStore(tmp_path / "handoff" / "backend.json").write({"last_provider": "claude_cloud"})
     supervisor = Supervisor(config, object())
     monkeypatch.setattr(supervisor, "_capture_task_base_head", lambda _role: HEAD)
     supervisor.save_state(state)
@@ -233,16 +237,17 @@ def test_hourly_fallback_preserves_explicit_codex_gates(
 
     config, state, _review, _now = _setup(tmp_path)
     state = replace(state, task=TaskItem(task_id, prompt))
-    AtomicJsonStore(tmp_path / "handoff" / "backend.json").write(
-        {"last_provider": provider}
-    )
+    AtomicJsonStore(tmp_path / "handoff" / "backend.json").write({"last_provider": provider})
     calls = []
+
     class ReviewInvoker:
         def review(self, role, _state, task, _context, model):
             calls.append((role, task.task_id, model))
             return AgentResult(
-                outcome="changes_required", summary="Independent review required",
-                next_action="Wait for required Codex gate", role=role,
+                outcome="changes_required",
+                summary="Independent review required",
+                next_action="Wait for required Codex gate",
+                role=role,
                 task_id=task.task_id,
             )
 

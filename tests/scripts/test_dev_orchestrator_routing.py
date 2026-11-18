@@ -2071,7 +2071,8 @@ def test_claude_sandbox_oauth_uses_inherited_env_without_secret_in_argv(tmp_path
 
     repo = tmp_path / "backend"
     repo.mkdir()
-    secret = "synthetic-claude-oauth-value"
+    # Fixed synthetic vault fixture, never an account credential.
+    secret = "synthetic-claude-oauth-value"  # pragma: allowlist secret
     command = build_claude_sandbox_command(
         repo,
         "Do work",
