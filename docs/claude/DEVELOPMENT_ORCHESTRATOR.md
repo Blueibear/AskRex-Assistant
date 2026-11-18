@@ -219,3 +219,17 @@ Role entry and enqueue finish an interrupted claim under the control-plane lock
 before other work. Unknown or conflicting claims remain blocked and intact.
 Earlier runtimes must remain paused while a queue claim or new model-blocker
 checkpoint is unhandled; use the reviewed newer recovery code first.
+
+### Referenced prior-task replies
+
+An active task that explicitly names an accepted prior task may receive the role's complete earlier replies as historical evidence. Each selected reply must match its host-generated message filename, immutable invocation input, original task identity, and accepted-completion time bound. Preserve the reply's stated scope: a completed-task record alone does not establish broader agreement or permission. Current-task outgoing text cannot become an external wake input by naming an older task or inserting an Invocation header.
+
+## Completion work and host draft publication
+
+A taskless completion claim triggers deterministic preflight. Local CI or release-gate defects become bounded implementation tasks that still require canonical validation and independent review. Missing CI uses a stable role task ID; repeated material failures are bound to source content and stable gate facts. If an accepted obligation remains unsatisfied, preserve its history and require an explicit regression task instead of silently repeating the accepted task.
+
+Host publication is operator-controlled and enabled only when `metadata.host_publication.enabled` is the literal boolean `true`. The host requires a clean leased branch, an accepted independent review and complete canonical validation for the exact HEAD, an allowlisted repository origin, a live supervisor identity, and fresh unpaused policy. It pushes one explicit branch normally and creates new pull requests as drafts using the recorded body file. Existing pull-request readiness is preserved. Publication does not confirm documentation, cross-repository or physical acceptance and does not merge a branch.
+
+Every remote mutation has a durable admission journal. An unknown outcome permits read-only reconciliation, not another blind mutation. A definitive workflow-scope authentication denial requires the documented `resume-human --blocker-kind github_auth` after the operator resolves the external authentication issue. That resume is consumed before retry; another denial cannot reuse it.
+
+Pending CI and retryable observation failures use host-only observation waits. Actual failed or missing required checks become local remediation; additional hard-failing checks retain their distinct observed names and cannot be waived merely to obtain a pass. Eligible explicit queued work may proceed from non-human completion waits while publication journals remain intact for later reconciliation. This does not release authentication, human, live-test or retest holds. Final completion still requires current-revision acceptance and all configured local and GitHub gates.
