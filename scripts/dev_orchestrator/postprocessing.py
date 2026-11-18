@@ -25,6 +25,7 @@ from .storage import AtomicJsonStore
 from .types import AgentResult, OrchestratorConfig, TaskItem, WorkerState
 
 _MAX_FEEDBACK = 18_000
+_MAX_DIFF_CHECK_BYTES = 64 * 1024
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 
 
@@ -47,6 +48,10 @@ def repository_changes_allowed(task: TaskItem) -> bool:
     )
 
 
+class UnclassifiedPostprocessingFailure(HandoffRequired):
+    """An operational or unproven host failure must remain parked."""
+
+
 class ScratchGateFailure(HandoffRequired):
     def __init__(
         self, kind: str, command: list[str], completed: subprocess.CompletedProcess, scratch: Path
@@ -57,8 +62,10 @@ class ScratchGateFailure(HandoffRequired):
         self.stdout = completed.stdout
         self.stderr = completed.stderr
         self.scratch = scratch
-        detail = _bytes(self.stdout).decode("utf-8", errors="replace")
-        super().__init__(f"pre-publication {kind} rejected scratch work: {detail[:2000]}")
+        detail = b"\n".join((_bytes(self.stdout), _bytes(self.stderr))).decode(
+            "utf-8", errors="replace"
+        )
+        super().__init__(f"pre-publication {kind} exited {self.exit_code}: {detail[:2000]}")
 
 
 def _bytes(value: str | bytes | None) -> bytes:
@@ -341,7 +348,14 @@ def journal_prepublication_failure(
         scratch = Path(record["scratch_path"])
         if scratch.resolve() != failure.scratch.resolve():
             raise HandoffRequired("failure command ran outside the bound scratch")
-        _validate_gate(failure.kind, failure.command, failure.exit_code, record)
+        _validate_gate(
+            failure.kind,
+            failure.command,
+            failure.exit_code,
+            record,
+            stdout=failure.stdout,
+            stderr=failure.stderr,
+        )
         patch_command = ["git", "diff", "--cached", "--binary", record["pre_head"], "--"]
         patch = subprocess.run(
             patch_command,
@@ -408,13 +422,68 @@ def journal_prepublication_failure(
         return pending
 
 
-def _validate_gate(kind: str, command: list[str], exit_code: int, record: dict) -> None:
+def _content_diff_check(stdout: str | bytes | None, stderr: str | bytes | None) -> bool:
+    """Recognize complete, bounded Git content diagnostics, never arbitrary errors."""
+    output = _bytes(stdout)
+    if not output or len(output) > _MAX_DIFF_CHECK_BYTES or _bytes(stderr):
+        return False
+    try:
+        lines = output.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return False
+    whitespace = {
+        "trailing whitespace",
+        "space before tab in indent",
+        "tab in indent",
+        "indent with spaces",
+    }
+    index = 0
+    records = 0
+    while index < len(lines):
+        match = re.fullmatch(r"[^\x00-\x1f\x7f]+:[1-9][0-9]*: (.+)", lines[index])
+        if match is None:
+            return False
+        message = match.group(1)
+        index += 1
+        if message not in {"new blank line at EOF.", "leftover conflict marker"}:
+            if not message.endswith("."):
+                return False
+            errors = message[:-1].split(", ")
+            if (
+                not errors
+                or len(errors) != len(set(errors))
+                or not set(errors).issubset(whitespace)
+                or index >= len(lines)
+                or not lines[index].startswith("+")
+            ):
+                return False
+            index += 1
+        records += 1
+    return records > 0
+
+
+def _validate_gate(
+    kind: str,
+    command: list[str],
+    exit_code: int,
+    record: dict,
+    *,
+    stdout: str | bytes | None,
+    stderr: str | bytes | None,
+) -> None:
     if kind == "scratch_diff_check":
         valid = (
             command == ["git", "diff", "--cached", "--check"]
             and type(exit_code) is int
-            and exit_code != 0
+            and exit_code == 2
+            and _content_diff_check(stdout, stderr)
         )
+        if not valid:
+            raise UnclassifiedPostprocessingFailure(
+                f"unclassified git diff --check failure (exit {exit_code}); "
+                "complete supported content diagnostics are required; "
+                "original command output and activity are retained"
+            )
     elif kind == "task_scope":
         valid = (
             command == ["git", "diff", "--cached", "--name-status", record["pre_head"], "--"]
@@ -476,7 +545,14 @@ def validate_prepublication_failure(
         or pending.get("result") != record["result"]
     ):
         raise HandoffRequired("typed failure differs from the original result journal")
-    _validate_gate(manifest["failure_kind"], manifest["command"], manifest["exit_code"], record)
+    _validate_gate(
+        manifest["failure_kind"],
+        manifest["command"],
+        manifest["exit_code"],
+        record,
+        stdout=_read_blob(config, directory, manifest["stdout"]),
+        stderr=_read_blob(config, directory, manifest["stderr"]),
+    )
     scratch = Path(record["scratch_path"])
     if manifest["cwd"] != str(scratch.resolve()) or (
         scratch / ".git/index"
@@ -507,8 +583,6 @@ def validate_prepublication_failure(
     )
     if unstaged.returncode != 0 or untracked.returncode != 0 or untracked.stdout:
         raise HandoffRequired("rejected scratch worktree changed")
-    for stream in ("stdout", "stderr"):
-        _read_blob(config, directory, manifest[stream])
     return manifest, record, directory
 
 
@@ -591,13 +665,22 @@ def record_postprocessing_error(
 ) -> None:
     directory = (config.coordination_root / reference["path"]).parent
     path = directory / "first-postprocessing-error.json"
-    if not path.exists():
-        AtomicJsonStore(path).write(
-            {
-                "schema_version": 1,
-                "kind": "unclassified_postprocessing_error",
-                "recorded_at": datetime.now(UTC).isoformat(),
-                "error_type": type(exc).__name__,
-                "message": str(exc),
-            }
-        )
+    if path.exists():
+        return
+    record = {
+        "schema_version": 1,
+        "kind": "unclassified_postprocessing_error",
+        "recorded_at": datetime.now(UTC).isoformat(),
+        "error_type": type(exc).__name__,
+        "message": str(exc),
+    }
+    if isinstance(exc, ScratchGateFailure):
+        record["gate"] = {
+            "kind": exc.kind,
+            "command": exc.command,
+            "exit_code": exc.exit_code,
+            "cwd": str(exc.scratch.resolve()),
+            "stdout": _blob(config, directory, "first-gate-stdout.log", _bytes(exc.stdout)),
+            "stderr": _blob(config, directory, "first-gate-stderr.log", _bytes(exc.stderr)),
+        }
+    AtomicJsonStore(path).write(record)

@@ -36,7 +36,11 @@ from .handoff import (
     validate_handoff,
 )
 from .lifecycle import ControlPlaneLock
-from .postprocessing import failure_feedback, retire_prepublication_marker
+from .postprocessing import (
+    UnclassifiedPostprocessingFailure,
+    failure_feedback,
+    retire_prepublication_marker,
+)
 from .provider_routing import (
     FABLE_REVIEW_MODEL,
     temporary_fable_policy_active,
@@ -387,13 +391,14 @@ class Supervisor:
             resume_status = (
                 state.resume_status if state.status is WorkerStatus.BLOCKED_SYSTEM else state.status
             )
+            unclassified = isinstance(error, UnclassifiedPostprocessingFailure)
             self._save_state_preserving_pending_result(
                 replace(
                     state,
                     status=WorkerStatus.BLOCKED_SYSTEM,
                     blocked_reason=message,
-                    blocker_kind="system",
-                    resume_status=resume_status,
+                    blocker_kind="postprocessing_evidence" if unclassified else "system",
+                    resume_status=None if unclassified else resume_status,
                 )
             )
 

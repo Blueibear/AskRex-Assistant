@@ -545,7 +545,7 @@ def test_capture_without_classified_journal_preserves_evidence_but_cannot_recove
 
 def test_repeated_failure_feedback_remains_bounded_and_preserves_task_scope(postprocess_checkpoint):
     checkpoint = postprocess_checkpoint
-    checkpoint.draft = "Field: value  \n" * 1800
+    checkpoint.draft = "Field: value  \n" + "Field: value\n" * 1800
     for attempt in range(2):
         checkpoint.supervisor.run_role("backend")
         state = checkpoint.supervisor.load_state("backend")
@@ -689,3 +689,212 @@ def test_only_explicit_host_provenance_adds_legacy_retry_guidance(
     assert "cannot expand the original task authority" in state.task.feedback
     assert state.task.prompt == checkpoint.task.prompt
     assert len(state.task.feedback) <= 18000
+
+
+@pytest.mark.parametrize(
+    "failure_kind", ["git_config_128", "exit2_empty", "exit2_error", "exit2_mixed"]
+)
+def test_operational_diff_check_failure_stays_unclassified_and_parked(
+    postprocess_checkpoint, monkeypatch, failure_kind
+):
+    checkpoint = postprocess_checkpoint
+    real_run = subprocess.run
+    outcomes = []
+
+    def git_failure(command, *args, **kwargs):
+        if command != ["git", "diff", "--cached", "--check"]:
+            return real_run(command, *args, **kwargs)
+        if failure_kind == "git_config_128":
+            env = {
+                **os.environ,
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "core.whitespace",
+                "GIT_CONFIG_VALUE_0": "tab-in-indent,indent-with-non-tab",
+            }
+            result = real_run(command, *args, **{**kwargs, "env": env})
+        else:
+            out = b""
+            err = b""
+            if failure_kind == "exit2_error":
+                err = b"error: unable to read object\n"
+            elif failure_kind == "exit2_mixed":
+                out = real_run(command, *args, **kwargs).stdout + b"fatal: incomplete object read\n"
+            code = f"import sys; sys.stdout.buffer.write({out!r}); sys.stderr.buffer.write({err!r}); sys.exit(2)"
+            result = real_run([sys.executable, "-c", code], *args, **kwargs)
+        outcomes.append(result)
+        return result
+
+    monkeypatch.setattr(subprocess, "run", git_failure)
+    checkpoint.supervisor.run_role("backend")
+    state = checkpoint.supervisor.load_state("backend")
+    assert state.status is WorkerStatus.BLOCKED_SYSTEM
+    assert state.blocker_kind == "postprocessing_evidence"
+    assert state.resume_status is None
+    assert state.iteration == 0 and state.implementation_failures == 0
+    assert state.task == checkpoint.task
+    assert repo_snapshot(checkpoint.repo) == (checkpoint.head, "")
+    root = checkpoint.config.coordination_root
+    assert read_pending_result(checkpoint.config, "backend") is None
+    assert (root / "active-agents/backend.json").exists()
+    assert not list((root / "postprocessing-failures").glob("*/failure.json"))
+    (result_path,) = (root / "postprocessing-failures").glob("*/completed-result.json")
+    assert json.loads(result_path.read_bytes())["result"]["outcome"] == "ready_for_review"
+    (error_path,) = (root / "postprocessing-failures").glob("*/first-postprocessing-error.json")
+    error_bytes = error_path.read_bytes()
+    error = json.loads(error_bytes)
+    assert error["gate"]["exit_code"] == outcomes[0].returncode
+    for stream in ("stdout", "stderr"):
+        assert (root / error["gate"][stream]["path"]).read_bytes() == getattr(outcomes[0], stream)
+    assert not list((root / "mailbox/supervisor").glob("*.md"))
+    assert not list((root / "validation").glob("*.json"))
+    checkpoint.supervisor.run_role("backend")
+    assert checkpoint.supervisor.load_state("backend") == state
+    assert error_path.read_bytes() == error_bytes
+    assert len(checkpoint.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "exit_code,stdout,stderr",
+    [
+        (128, b"", b"fatal: cannot read object\n"),
+        (2, b"", b""),
+        (2, b"", b"error: cannot read object\n"),
+    ],
+)
+def test_existing_operational_failure_envelope_cannot_be_consumed(
+    postprocess_checkpoint, exit_code, stdout, stderr
+):
+    checkpoint = postprocess_checkpoint
+    pending = _journal(checkpoint)
+    root = checkpoint.config.coordination_root
+    path, manifest = _failure_manifest(checkpoint, pending)
+    manifest["exit_code"] = exit_code
+    for stream, data in (("stdout", stdout), ("stderr", stderr)):
+        target = root / manifest[stream]["path"]
+        target.write_bytes(data)
+        manifest[stream]["bytes"] = len(data)
+        manifest[stream]["sha256"] = hashlib.sha256(data).hexdigest()
+    data = (json.dumps(manifest, sort_keys=True, indent=2) + "\n").encode()
+    path.write_bytes(data)
+    pending["postprocessing_failure"]["manifest_bytes"] = len(data)
+    pending["postprocessing_failure"]["manifest_sha256"] = hashlib.sha256(data).hexdigest()
+    handoff = AtomicJsonStore(root / "handoff/backend.json")
+    lease = handoff.read()
+    lease["pending_result"] = pending
+    handoff.write(lease)
+    marker_path = root / "active-agents/backend.json"
+    marker_before = marker_path.read_bytes()
+
+    checkpoint.supervisor.run_role("backend")
+    state = checkpoint.supervisor.load_state("backend")
+    assert state.status is WorkerStatus.BLOCKED_SYSTEM
+    assert state.blocker_kind == "postprocessing_evidence" and state.resume_status is None
+    assert state.iteration == 0 and state.implementation_failures == 0
+    assert state.task == checkpoint.task
+    assert marker_path.read_bytes() == marker_before
+    assert read_pending_result(checkpoint.config, "backend") == pending
+    assert path.read_bytes() == data
+    assert len(checkpoint.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "draft,whitespace,diagnostic",
+    [
+        ("text  \n", "blank-at-eol,blank-at-eof,space-before-tab", "trailing whitespace."),
+        (" \ttext\n", "blank-at-eol,blank-at-eof,space-before-tab", "space before tab in indent."),
+        ("text\n\n", "blank-at-eol,blank-at-eof,space-before-tab", "new blank line at EOF."),
+        (
+            "<<<<<<< ours\nfirst\n=======\nsecond\n>>>>>>> theirs\n",
+            "blank-at-eol,blank-at-eof,space-before-tab",
+            "leftover conflict marker",
+        ),
+        (
+            " \ttext  \n",
+            "blank-at-eol,blank-at-eof,space-before-tab",
+            "trailing whitespace, space before tab in indent.",
+        ),
+        ("\ttext\n", "tab-in-indent", "tab in indent."),
+        ("        text\n", "indent-with-non-tab", "indent with spaces."),
+    ],
+)
+def test_supported_real_git_content_diagnostics_remain_recoverable(
+    postprocess_checkpoint, monkeypatch, draft, whitespace, diagnostic
+):
+    checkpoint = postprocess_checkpoint
+    checkpoint.draft = draft
+    real_run = subprocess.run
+
+    def configured_git(command, *args, **kwargs):
+        if command == ["git", "diff", "--cached", "--check"]:
+            env = {
+                **os.environ,
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "core.whitespace",
+                "GIT_CONFIG_VALUE_0": whitespace,
+            }
+            kwargs = {**kwargs, "env": env}
+        return real_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", configured_git)
+    pending = _journal(checkpoint)
+    _, manifest = _failure_manifest(checkpoint, pending)
+    root = checkpoint.config.coordination_root
+    assert manifest["exit_code"] == 2
+    assert (root / manifest["stderr"]["path"]).read_bytes() == b""
+    assert diagnostic in (root / manifest["stdout"]["path"]).read_text(encoding="utf-8")
+    assert checkpoint.supervisor.recover_postprocessing_failure("backend")
+    state = checkpoint.supervisor.load_state("backend")
+    assert state.status is WorkerStatus.IMPLEMENTING
+    assert state.iteration == 1 and state.implementation_failures == 1
+    assert diagnostic in state.task.feedback
+    assert repo_snapshot(checkpoint.repo) == (checkpoint.head, "")
+    assert len(checkpoint.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "exit_code,stdout,stderr",
+    [
+        (1, b"a.py:1: trailing whitespace.\n+x  \n", b""),
+        (-9, b"a.py:1: trailing whitespace.\n+x  \n", b""),
+        (128, b"a.py:1: trailing whitespace.\n+x  \n", b""),
+        (129, b"a.py:1: trailing whitespace.\n+x  \n", b""),
+        (2, b"\n", b""),
+        (2, b"fatal: bad object\n", b""),
+        (2, b"a.py:1: trailing whitespace.\n", b""),
+        (2, b"+x  \n", b""),
+        (2, b"a.py:1: unrelated failure.\n+x\n", b""),
+        (2, b"a.py:0: trailing whitespace.\n+x  \n", b""),
+        (2, b"a.py:1: trailing whitespace, trailing whitespace.\n+x  \n", b""),
+        (2, b"a.py:1: trailing whitespace.\n+x  \n", b"fatal: incomplete\n"),
+        (2, b"a.py:1: trailing whitespace.\n+x  \ntruncated", b""),
+        (2, b"a.py:1: trailing whitespace.\n+\xff  \n", b""),
+        (2, b"a.py:1: trailing whitespace.\n+" + b"x" * 65536 + b"  \n", b""),
+    ],
+    ids=[
+        "exit-one",
+        "signal",
+        "exit-128",
+        "exit-129",
+        "empty",
+        "operational-text",
+        "missing-source",
+        "orphan-source",
+        "unknown-diagnostic",
+        "zero-line",
+        "duplicate-diagnostic",
+        "stderr-error",
+        "mixed-tail",
+        "invalid-utf8",
+        "over-budget",
+    ],
+)
+def test_unproven_diff_check_shapes_fail_closed(exit_code, stdout, stderr):
+    with pytest.raises(postprocessing.UnclassifiedPostprocessingFailure):
+        postprocessing._validate_gate(
+            "scratch_diff_check",
+            ["git", "diff", "--cached", "--check"],
+            exit_code,
+            {"pre_head": "fixed", "repository_changes_allowed": True},
+            stdout=stdout,
+            stderr=stderr,
+        )
