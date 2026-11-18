@@ -40,8 +40,12 @@ from .model_blockers import (
     archive_model_blocker,
     blocker_feedback,
     context_sha256,
+    plan_input_fingerprint,
+    read_consumed_plan_fingerprint,
     record_dependency_check,
+    require_planning_hold_lineage,
     validate_consumed_blocker,
+    validate_consumed_completion_result,
 )
 from .postprocessing import (
     UnclassifiedPostprocessingFailure,
@@ -105,6 +109,7 @@ def _state_from_dict(role: str, data: dict | None) -> WorkerState:
         codex_session_id=str(data.get("codex_session_id", "")),
         last_result_invocation_id=str(data.get("last_result_invocation_id", "")),
         idle_context_fingerprint=str(data.get("idle_context_fingerprint", "")),
+        planning_input_fingerprint=str(data.get("planning_input_fingerprint", "")),
         result_contract_phase=str(data.get("result_contract_phase", "")),
         result_contract_feedback=str(data.get("result_contract_feedback", "")),
         result_contract_failures=int(data.get("result_contract_failures", 0)),
@@ -210,10 +215,22 @@ class Supervisor:
         self._result_context.worker_context = packet
         return packet.text
 
-    def _input_fingerprint(self, role: str, state: WorkerState, phase: str, context: str) -> str:
+    def _input_fingerprint(
+        self,
+        role: str,
+        state: WorkerState,
+        phase: str,
+        context: str,
+        *,
+        legacy_taskless_base: bool = False,
+    ) -> str:
         packet = getattr(self._result_context, "worker_context", None)
         if not isinstance(packet, WorkerContext):
             packet = WorkerContext(context, (("Supplied context", context),))
+        if legacy_taskless_base:
+            return packet.fingerprint(
+                role, phase, state, self._capture_task_base_head(role), legacy_taskless_base=True
+            )
         return packet.fingerprint(role, phase, state, self._capture_task_base_head(role))
 
     def _blocker_record(
@@ -316,6 +333,7 @@ class Supervisor:
             blocker_kind="",
             resume_status=None,
             idle_context_fingerprint="",
+            planning_input_fingerprint="",
             result_contract_phase="",
             result_contract_feedback="",
             result_contract_failures=0,
@@ -707,6 +725,16 @@ class Supervisor:
                     role, state, state.model_blocker_phase, context
                 )
                 if (
+                    state.task is None
+                    and state.model_blocker_phase == "plan"
+                    and fingerprint != state.model_blocker_fingerprint
+                ):
+                    legacy = self._input_fingerprint(
+                        role, state, "plan", context, legacy_taskless_base=True
+                    )
+                    if legacy == state.model_blocker_fingerprint:
+                        fingerprint = legacy
+                if (
                     state.model_blocker_fingerprint
                     and fingerprint == state.model_blocker_fingerprint
                 ):
@@ -806,9 +834,51 @@ class Supervisor:
             and state.task is None
             and not self.config.observe_only
         ):
+            pending = read_pending_result(self.config, role)
+            if pending and pending.get("invocation_id") == state.last_result_invocation_id:
+                validate_consumed_completion_result(
+                    self.config, role, state, pending, self._capture_task_base_head(role)
+                )
+                self._recover_result(
+                    role, state, phase=pending["phase"], task_id=pending["task_id"]
+                )
+            if read_pending_result(self.config, role) is not None:
+                raise ValueError("taskless acceptance hold has an unresolved result")
             queued = self._dequeue(role)
             if queued is not None:
                 state = self.load_state(role)
+            elif state.resume_status is WorkerStatus.PLANNING:
+                # This is a final-release hold, not a task-specific user approval.
+                # New work may be planned without confirming any acceptance gate.
+                baseline = state.planning_input_fingerprint or read_consumed_plan_fingerprint(
+                    self.config, role, state, self._capture_task_base_head(role)
+                )
+                if baseline:
+                    require_planning_hold_lineage(
+                        self.config, role, state, self._capture_task_base_head(role)
+                    )
+                    if len(baseline) != 64 or any(c not in "0123456789abcdef" for c in baseline):
+                        raise ValueError("taskless planning input fingerprint is malformed")
+                    context = self._worker_context(role, state)
+                    current = self._input_fingerprint(role, state, "plan", context)
+                    unchanged = current == baseline
+                    if not state.planning_input_fingerprint and not unchanged:
+                        # fe458 taskless plans used either an empty base after review
+                        # or the admitted HEAD after final preparation. Compare the
+                        # original digest in both exact scopes, never rebase it.
+                        unchanged = baseline == self._input_fingerprint(
+                            role, state, "plan", context, legacy_taskless_base=True
+                        )
+                    if not unchanged:
+                        state = replace(
+                            state,
+                            status=WorkerStatus.PLANNING,
+                            blocked_reason="",
+                            blocker_kind="",
+                            resume_status=None,
+                            idle_context_fingerprint="",
+                        )
+                        self.save_state(state)
         if state.status is WorkerStatus.BLOCKED_USER and state.blocker_kind == "retest":
             if state.task is not None:
                 if state.task.task_id.lower() in {
@@ -1055,6 +1125,7 @@ class Supervisor:
                         state,
                         status=WorkerStatus.BLOCKED_USER,
                         task=TaskItem(issue.stem, "Await canonical testing verification"),
+                        planning_input_fingerprint="",
                         task_base_head=self._capture_task_base_head(role),
                         blocked_reason=f"{issue.stem} requires testing/retest before completion",
                         blocker_kind="retest",
@@ -1068,6 +1139,7 @@ class Supervisor:
                     state,
                     status=WorkerStatus.IMPLEMENTING,
                     task=candidate,
+                    planning_input_fingerprint="",
                     task_base_head=self._capture_task_base_head(role),
                     blocked_reason="",
                 )
@@ -1306,6 +1378,13 @@ class Supervisor:
         except AgentInvocationError as exc:
             self._handle_invocation_error(role, state, "plan", exc, context)
             return
+        baseline = ""
+        if result.outcome == "done":
+            baseline = plan_input_fingerprint(
+                role,
+                getattr(self._result_context, "input_provenance", None),
+                self._capture_task_base_head(role),
+            )
         if not self._accept_result(role, state, result, phase="plan", allow_issue_updates=False):
             return
         if result.outcome == "assign":
@@ -1356,14 +1435,24 @@ class Supervisor:
                     task_base_head=self._capture_task_base_head(role),
                     blocked_reason="",
                     idle_context_fingerprint="",
+                    planning_input_fingerprint="",
                 )
             )
             return
         if result.outcome == "done":
+            state = replace(state, planning_input_fingerprint=baseline)
+            # Keep the original admission/recovered-journal baseline. A reply
+            # arriving during the call must not be swallowed by a new baseline.
+            fresh_context = self._worker_context(role, state)
+            changed = bool(baseline) and baseline != self._input_fingerprint(
+                role, state, "plan", fresh_context
+            )
             with ControlPlaneLock(self.root / "control-plane.lock"):
                 queued = list(self._queue_store(role).read(default=[]))
-            if any(not self._task_is_deferred(TaskItem(**item).task_id) for item in queued):
-                # Explicit work may arrive while a plan is running or recovering.
+            if changed or any(
+                not self._task_is_deferred(TaskItem(**item).task_id) for item in queued
+            ):
+                # Explicit or external work may arrive while a plan runs or recovers.
                 # Consume this valid decision without declaring the campaign done.
                 self.save_state(
                     replace(

@@ -7,11 +7,12 @@ import json
 import re
 from dataclasses import asdict
 from datetime import UTC, datetime
+from pathlib import Path
 
 from .lifecycle import ControlPlaneLock
 from .schema import validate_agent_result
 from .storage import AtomicJsonStore
-from .types import AgentResult, OrchestratorConfig, WorkerState
+from .types import AgentResult, OrchestratorConfig, WorkerState, WorkerStatus
 
 _FEEDBACK_LIMIT = 2500
 _SHA = re.compile(r"^[0-9a-f]{64}$")
@@ -376,6 +377,172 @@ def read_supplied_input(
     if original != expected:
         raise ValueError("supplied model input manifest binding mismatch")
     return record, data
+
+
+def plan_input_fingerprint(role: str, provenance: dict | None, head: str) -> str:
+    """A done claim needs its original admitted input, not a post-result baseline."""
+    if (
+        not isinstance(provenance, dict)
+        or any(
+            provenance.get(key) != expected
+            for key, expected in (
+                ("role", role),
+                ("phase", "plan"),
+                ("task_id", ""),
+                ("head", head),
+            )
+        )
+        or not isinstance(provenance.get("admission_id"), str)
+        or not provenance["admission_id"].strip()
+        or any(
+            not isinstance(provenance.get(key), str) or not _SHA.fullmatch(provenance[key])
+            for key in ("fingerprint", "source_context_sha256")
+        )
+    ):
+        raise ValueError("original planning input provenance is missing or invalid")
+    return provenance["fingerprint"]
+
+
+def require_planning_hold_lineage(
+    config: OrchestratorConfig,
+    role: str,
+    state: WorkerState,
+    head: str,
+    *,
+    expected_pending: dict | None = None,
+) -> None:
+    """Require the consumed phase to belong to the current validated role handoff."""
+    record = AtomicJsonStore(config.coordination_root / "handoff" / f"{role}.json").read(
+        default=None
+    )
+    repo = config.backend_root if role == "backend" else config.mobile_root
+    if (
+        not isinstance(record, dict)
+        or repo is None
+        or not head
+        or state.task_base_head != head
+        or not state.last_result_invocation_id
+        or record.get("role") != role
+        or record.get("owner") != "supervisor"
+        or not isinstance(record.get("lease_id"), str)
+        or not record["lease_id"].strip()
+        or record.get("head") != head
+        or record.get("last_invocation_id") != state.last_result_invocation_id
+        or Path(str(record.get("worktree", ""))).resolve() != repo.resolve()
+        or (
+            "pending_result" in record
+            if expected_pending is None
+            else record.get("pending_result") != expected_pending
+        )
+    ):
+        raise ValueError("taskless planning hold no longer matches its invocation lease")
+
+
+def validate_consumed_completion_result(
+    config: OrchestratorConfig, role: str, state: WorkerState, pending: dict, head: str
+) -> None:
+    """Validate cleanup of an already-applied done/final-pass result without replaying it."""
+    phase = pending.get("phase")
+    task_id = pending.get("task_id")
+    expected_outcome = (
+        "done"
+        if phase == "plan" and task_id == ""
+        else "pass" if phase == "review" and task_id == f"FINAL-VERIFY-{role}" else ""
+    )
+    if (
+        not expected_outcome
+        or state.status is not WorkerStatus.BLOCKED_USER
+        or state.blocker_kind != "acceptance"
+        or state.task is not None
+        or pending.get("role") != role
+        or pending.get("invocation_id") != state.last_result_invocation_id
+        or pending.get("pre_head") != head
+        or pending.get("post_head") != head
+    ):
+        raise ValueError("consumed completion result identity mismatch")
+    result = validate_agent_result(pending.get("result", {}))
+    if (
+        result.role != role
+        or result.invocation_id != state.last_result_invocation_id
+        or (phase == "review" and result.task_id != task_id)
+        or result.outcome != expected_outcome
+        or result.needs_user
+    ):
+        raise ValueError("consumed completion result does not match its applied phase")
+    provenance = pending.get("input_provenance")
+    if not isinstance(provenance, dict) or any(
+        provenance.get(key) != expected
+        for key, expected in (
+            ("role", role),
+            ("phase", phase),
+            ("task_id", task_id),
+            ("head", head),
+        )
+    ):
+        raise ValueError("consumed completion result input provenance mismatch")
+    read_supplied_input(config, role, phase, task_id, state.last_result_invocation_id, provenance)
+    if phase == "plan":
+        baseline = plan_input_fingerprint(role, provenance, head)
+        if state.planning_input_fingerprint and state.planning_input_fingerprint != baseline:
+            raise ValueError("consumed planning result baseline mismatch")
+    require_planning_hold_lineage(config, role, state, head, expected_pending=pending)
+
+
+def read_consumed_plan_fingerprint(
+    config: OrchestratorConfig, role: str, state: WorkerState, head: str
+) -> str:
+    """Recover only the input baseline of a legacy taskless completion hold."""
+    import stat
+
+    if (
+        state.role != role
+        or state.status is not WorkerStatus.BLOCKED_USER
+        or state.blocker_kind != "acceptance"
+        or state.task is not None
+        or state.resume_status is not WorkerStatus.PLANNING
+    ):
+        raise ValueError("legacy planning baseline requires a taskless acceptance hold")
+    invocation_id = state.last_result_invocation_id
+    if not invocation_id:
+        return ""
+    digest = hashlib.sha256(invocation_id.encode("utf-8")).hexdigest()
+    root = config.coordination_root.resolve()
+    path = root / "model-inputs" / f"{role}-{digest}" / "manifest.json"
+    if not path.exists():
+        return ""  # An older unproven hold does not acquire automatic resume authority.
+    metadata = path.lstat()
+    if (
+        path.resolve() != path
+        or path.is_symlink()
+        or getattr(metadata, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+        or metadata.st_size > _INPUT_LIMIT
+    ):
+        raise ValueError("legacy planning input is outside its trusted bound")
+    record = AtomicJsonStore(path).read()
+    if not isinstance(record, dict) or not isinstance(record.get("admission"), dict):
+        raise ValueError("legacy planning input manifest is malformed")
+    admission = record["admission"]
+    provenance = {**admission, "supplied_input": record.get("supplied_input")}
+    read_supplied_input(config, role, "plan", "", invocation_id, provenance)
+    if (
+        any(
+            admission.get(key) != expected
+            for key, expected in (
+                ("role", role),
+                ("phase", "plan"),
+                ("task_id", ""),
+                ("head", head),
+            )
+        )
+        or state.task_base_head != head
+    ):
+        raise ValueError("legacy planning input does not match its held checkpoint")
+    if not _SHA.fullmatch(str(admission.get("fingerprint", ""))) or not _SHA.fullmatch(
+        str(admission.get("source_context_sha256", ""))
+    ):
+        raise ValueError("legacy planning input digest is malformed")
+    require_planning_hold_lineage(config, role, state, head)
+    return admission["fingerprint"]
 
 
 def record_dependency_check(

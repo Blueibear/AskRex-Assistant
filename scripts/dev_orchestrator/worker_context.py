@@ -31,7 +31,15 @@ class WorkerContext:
     text: str
     external_sources: tuple[tuple[str, str], ...]
 
-    def fingerprint(self, role: str, phase: str, state: WorkerState, head: str) -> str:
+    def fingerprint(
+        self,
+        role: str,
+        phase: str,
+        state: WorkerState,
+        head: str,
+        *,
+        legacy_taskless_base: bool = False,
+    ) -> str:
         # Generated blocker feedback, invocation IDs, admission times and outgoing
         # publications are deliberately not wake events.
         payload = {
@@ -39,7 +47,12 @@ class WorkerContext:
             "role": role,
             "phase": phase,
             "task": state.task.to_dict() if state.task else None,
-            "task_base_head": state.task_base_head,
+            # Final preparation changes this field without changing planning work.
+            "task_base_head": (
+                ""
+                if phase == "plan" and state.task is None and not legacy_taskless_base
+                else state.task_base_head
+            ),
             "head": head,
             "external_sources": sorted(self.external_sources),
         }

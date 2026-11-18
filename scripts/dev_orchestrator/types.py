@@ -74,6 +74,7 @@ class WorkerState:
     codex_session_id: str = ""
     last_result_invocation_id: str = ""
     idle_context_fingerprint: str = ""
+    planning_input_fingerprint: str = ""
     result_contract_phase: str = ""
     result_contract_feedback: str = ""
     result_contract_failures: int = 0
