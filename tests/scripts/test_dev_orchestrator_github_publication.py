@@ -371,8 +371,8 @@ def test_incomplete_or_changed_review_proof_never_reaches_network(reviewed, dama
         ],
         ["https://github.com/Blueibear/AskRex.git"],
         [
-            "https://user:secret@github.com/Blueibear/AskRex-Assistant.git"
-        ],  # pragma: allowlist secret
+            "https://user:secret@github.com/Blueibear/AskRex-Assistant.git"  # pragma: allowlist secret
+        ],
     ],
 )
 def test_every_effective_push_url_must_match_the_role(reviewed, urls):
