@@ -16,6 +16,7 @@ from .handoff import (
     validate_handoff,
 )
 from .lifecycle import ControlPlaneLock
+from .model_blockers import bind_input_provenance, capture_supplied_input, prompt_blocker
 from .openai_budget import (
     OpenAIBudgetExceeded,
     OpenAIBudgetLedger,
@@ -225,6 +226,13 @@ class OpenAIModelWorker:
         text = "\n".join(header) + "\n" + context
         if len(text) <= self.config.openai_max_input_chars:
             return text
+        if hasattr(context, "critical_text"):
+            protected = "\n".join(header) + "\n" + context.critical_text
+            if len(protected) > self.config.openai_max_input_chars:
+                raise AgentInvocationError(
+                    "openai", "incomplete_evidence", "required lead context exceeds input bound"
+                )
+            return protected
         marker = "\n...[truncated coordination context]...\n"
         remaining = self.config.openai_max_input_chars - len(marker)
         if remaining <= 0:
@@ -265,6 +273,37 @@ class OpenAIModelWorker:
             raise AgentInvocationError("openai", "invalid_output", str(exc)) from exc
         return result
 
+    def _capture_input(
+        self,
+        prepared,
+        role: str,
+        phase: str,
+        task: TaskItem | None,
+        invocation_id: str,
+        head: str,
+        context: str,
+    ) -> dict | None:
+        if (
+            bind_input_provenance(
+                self.config, role, phase, self._binding_task_id(task), head, context
+            )
+            is None
+        ):
+            return None
+        if not isinstance(prepared.body, bytes):
+            raise ValueError("prepared provider input is not a byte-bound request")
+        return capture_supplied_input(
+            self.config,
+            role,
+            phase,
+            self._binding_task_id(task),
+            invocation_id,
+            head,
+            context,
+            prepared.body.decode("utf-8"),
+            input_kind="openai_request_input_json",
+        )
+
     def _persist(
         self,
         *,
@@ -274,6 +313,7 @@ class OpenAIModelWorker:
         invocation_id: str,
         pre_head: str,
         result: AgentResult,
+        input_provenance: dict | None = None,
     ) -> AgentResult:
         repo = self._repo(role)
         post_head, _dirty = repo_snapshot(repo)
@@ -286,6 +326,8 @@ class OpenAIModelWorker:
             "post_head": post_head,
             "result": asdict(result),
         }
+        if input_provenance is not None:
+            pending["input_provenance"] = input_provenance
         advance_handoff(
             self.config,
             role,
@@ -342,8 +384,12 @@ class OpenAIModelWorker:
                     + "\n"
                     + issue_update_guidance("review", task.task_id)
                     + prompt_correction(state, "review")
+                    + prompt_blocker(state, "review")
                 ),
                 input_text=evidence.text,
+            )
+            input_provenance = self._capture_input(
+                prepared, role, "review", task, invocation_id, pre_head, context
             )
             response = self._dispatch(prepared=prepared, model=model)
             result = self._parse_and_bind(
@@ -361,6 +407,7 @@ class OpenAIModelWorker:
                 invocation_id=invocation_id,
                 pre_head=pre_head,
                 result=result,
+                input_provenance=input_provenance,
             )
 
     def lead(
@@ -389,7 +436,9 @@ class OpenAIModelWorker:
                 raise HandoffRequired("OpenAI lead requires a clean leased repository")
             prepared = self._prepare_request(
                 model=model,
-                instructions=self._lead_instructions(phase) + prompt_correction(state, phase),
+                instructions=self._lead_instructions(phase)
+                + prompt_correction(state, phase)
+                + prompt_blocker(state, phase),
                 input_text=self._lead_input(
                     role,
                     state,
@@ -398,6 +447,9 @@ class OpenAIModelWorker:
                     invocation_id,
                     phase,
                 ),
+            )
+            input_provenance = self._capture_input(
+                prepared, role, phase, task, invocation_id, pre_head, context
             )
             response = self._dispatch(
                 prepared=prepared,
@@ -420,4 +472,5 @@ class OpenAIModelWorker:
                 invocation_id=invocation_id,
                 pre_head=pre_head,
                 result=result,
+                input_provenance=input_provenance,
             )

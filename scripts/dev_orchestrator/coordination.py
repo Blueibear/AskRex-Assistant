@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import stat
 import uuid
 from pathlib import Path
 
@@ -27,11 +28,16 @@ def _bounded_read(path: Path, max_chars: int = 12000) -> str:
 def _task_context_anchors(task_text: str) -> tuple[str, ...]:
     lowered = task_text.casefold()
     anchors: set[str] = set()
+    first_line = task_text.splitlines()[0].strip() if task_text.splitlines() else ""
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,199}", first_line):
+        anchors.add(first_line.casefold())
     for pattern in (
         r"(?i)\bROADMAP-US\d+(?:-[A-Z0-9-]+)?\b",
         r"(?i)\bROADMAP-US\d+\b",
         r"(?i)\bUS-?\d+\b",
         r"(?i)\bTEST-\d+\b",
+        r"(?i)\bR\d+-\d+\b",
+        r"(?i)\b(?:ROADMAP|SECURITY)-[A-Z0-9-]+\b",
         r"(?i)\bSTORY-S\d+(?:-[A-Z0-9-]+)?\b",
         r"(?i)\bMSG-[A-Za-z0-9-]+(?:\.md)?\b",
         r"(?i)\b[a-f0-9]{40}\b",
@@ -46,6 +52,17 @@ def _task_context_anchors(task_text: str) -> tuple[str, ...]:
     return tuple(sorted(anchor for anchor in anchors if anchor))
 
 
+def _header_field(text: str, field: str) -> str:
+    """Read the first canonical header, never quoted sender/Related lines in a body."""
+    for line in text.splitlines():
+        if line.lstrip().startswith("## "):
+            break
+        name, separator, value = line.partition(":")
+        if separator and name.strip().casefold() == field.casefold():
+            return value.strip()
+    return ""
+
+
 def _rank_task_files(
     paths: list[Path],
     *,
@@ -57,13 +74,28 @@ def _rank_task_files(
     if not paths:
         return []
     task_lower = task_text.casefold()
-    ranked: list[tuple[int, int, int, Path, str]] = []
+    first_line = task_text.splitlines()[0].strip() if task_text.splitlines() else ""
+    task_id = (
+        first_line.casefold()
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,199}", first_line)
+        else ""
+    )
+    ranked: list[tuple[int, int, int, int, Path, str]] = []
     for path in paths:
         text = _bounded_read(path, max_chars)
         if not text:
             continue
         searchable = f"{path.name.casefold()}\n{text.casefold()}"
         explicit = int(path.name.casefold() in task_lower)
+        exact_related = int(
+            bool(task_id)
+            and bool(
+                re.search(
+                    r"(?<![a-z0-9_.-])" + re.escape(task_id) + r"(?![a-z0-9_.-])",
+                    _header_field(text, "Related").casefold(),
+                )
+            )
+        )
         hits = sum(1 for anchor in anchors if anchor in searchable)
         if task_text and not explicit and hits == 0:
             continue
@@ -71,9 +103,177 @@ def _rank_task_files(
             mtime_ns = path.stat().st_mtime_ns
         except OSError:
             mtime_ns = 0
-        ranked.append((explicit, hits, mtime_ns, path, text))
-    ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-    return [(path, text) for _explicit, _hits, _mtime, path, text in ranked[:limit]]
+        ranked.append((explicit, exact_related, hits, mtime_ns, path, text))
+    ranked.sort(key=lambda item: item[:4], reverse=True)
+    return [(path, text) for _explicit, _related, _hits, _mtime, path, text in ranked[:limit]]
+
+
+def _trusted_issue_path(root: Path, path: Path) -> None:
+    issues = root / "issues"
+    expected = root.resolve() / "issues"
+    for candidate in (issues, path):
+        metadata = candidate.lstat()
+        if (
+            candidate.is_symlink()
+            or getattr(metadata, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+        ):
+            raise ValueError("trusted issue source must not be a reparse point: " + candidate.name)
+    if issues.resolve() != expected or (path != issues and path.resolve().parent != expected):
+        raise ValueError("issue source escapes the trusted coordination issues directory")
+
+
+def _complete_task_message(root: Path, path: Path) -> str:
+    expected = root.resolve() / path.relative_to(root)
+    metadata = path.lstat()
+    if (
+        path.resolve() != expected
+        or path.is_symlink()
+        or getattr(metadata, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    ):
+        raise ValueError("task correspondence escapes its trusted coordination path")
+    if metadata.st_size > 480_000:
+        raise ValueError("task correspondence exceeds bounded context capacity: " + path.name)
+    return path.read_text(encoding="utf-8-sig")
+
+
+def coordination_sources(
+    root: Path,
+    role: str,
+    *,
+    deferred_issue_ids: tuple[str, ...] = (),
+    deferred_task_prefixes: tuple[str, ...] = (),
+    task_text: str = "",
+) -> list[tuple[str, str, str]]:
+    """Read each selected source once; outgoing text is not an external wake event."""
+    if role not in _ROLE_FILES:
+        raise ValueError(f"unsupported coordination role: {role}")
+    sources: list[tuple[str, str, str]] = [
+        ("PROTOCOL.md", _bounded_read(root / "PROTOCOL.md"), "required"),
+        (_ROLE_FILES[role], _bounded_read(root / _ROLE_FILES[role]), "required"),
+    ]
+    if deferred_issue_ids or deferred_task_prefixes:
+        constraints = [
+            "The following work is explicitly deferred. Do not assign or execute it.",
+            "Deferred issues: " + ", ".join(deferred_issue_ids),
+            "Deferred task prefixes: " + ", ".join(deferred_task_prefixes),
+        ]
+        sources.append(("Owner scheduling constraints", "\n".join(constraints), "required"))
+    anchors = _task_context_anchors(task_text)
+    issues = root / "issues"
+    explicit_names: set[str] = set()
+    for match in re.finditer(r"(?i)\b(?:ROADMAP|SECURITY|TEST|STORY)-[A-Z0-9_-]+\.md\b", task_text):
+        prefix = task_text[: match.start()].replace("\\", "/")
+        if prefix.endswith("/") and not prefix.casefold().endswith("issues/"):
+            # Repository-qualified audit/output paths are not shared issue files.
+            continue
+        explicit_names.add(match.group(0).casefold())
+    if issues.exists():
+        _trusted_issue_path(root, issues)
+    paths = sorted(issues.glob("*.md")) if issues.is_dir() else []
+    by_name = {path.name.casefold(): path for path in paths}
+    missing = explicit_names - by_name.keys()
+    if missing:
+        raise ValueError("explicit shared requirement is missing: " + ", ".join(sorted(missing)))
+    deferred = {value.strip().casefold() for value in deferred_issue_ids if value.strip()}
+    for path in paths:
+        explicit = path.name.casefold() in explicit_names or path.stem.casefold() in anchors
+        if explicit:
+            # A referenced requirement is evidence even when its status is not an
+            # active defect. Reading it grants no ownership or mutation authority.
+            _trusted_issue_path(root, path)
+            if path.stat().st_size > 480_000:
+                raise ValueError(
+                    "explicit shared requirement exceeds context capacity: " + path.name
+                )
+            text = path.read_text(encoding="utf-8-sig")
+            _trusted_issue_path(root, path)
+            sources.append((f"issues/{path.name}", text, "required"))
+        elif path.stem.casefold() not in deferred:
+            text = _bounded_read(path, 6000)
+            if _issue_status(text) in {"open", "fixed-needs-retest"} and _issue_owner(text) in {
+                role,
+                "both",
+            }:
+                sources.append((f"issues/{path.name}", text, "history"))
+
+    mailbox = root / "mailbox" / role
+    if mailbox.is_dir():
+        mailbox_paths = [
+            path
+            for path in mailbox.glob("*.md")
+            if _header_field(_bounded_read(path, 6000), "From").casefold() != role
+        ]
+        selected: list[tuple[Path, str]] = []
+        seen: set[Path] = set()
+        matching: set[Path] = set()
+        limit = 20 if task_text else 6
+        max_chars = 6000 if task_text else 2500
+        if task_text:
+            selected = _rank_task_files(
+                mailbox_paths,
+                task_text=task_text,
+                anchors=anchors,
+                max_chars=max_chars,
+                limit=12,
+            )
+            seen.update(path for path, _text in selected)
+            matching.update(seen)
+        for path in sorted(mailbox_paths, key=lambda item: item.stat().st_mtime_ns, reverse=True):
+            if path in seen:
+                continue
+            selected.append((path, _bounded_read(path, max_chars)))
+            seen.add(path)
+            if len(selected) >= limit:
+                break
+        for path, text in selected[:limit]:
+            authored_by_role = _header_field(text, "From").casefold() == role
+            category = (
+                "outgoing" if authored_by_role else ("incoming" if path in matching else "history")
+            )
+            if category in {"incoming", "outgoing"}:
+                text = _complete_task_message(root, path)
+            sources.append((f"mailbox/{role}/{path.name}", text, category))
+
+    if task_text and anchors:
+        outgoing: list[Path] = []
+        for recipient in ("backend", "mobile", "testing", "supervisor"):
+            for path in (root / "mailbox" / recipient).glob("*.md"):
+                text = _bounded_read(path, 6000)
+                if _header_field(text, "From").casefold() == role:
+                    outgoing.append(path)
+        for path, _text in _rank_task_files(
+            outgoing, task_text=task_text, anchors=anchors, max_chars=6000, limit=12
+        ):
+            sources.append(
+                (path.relative_to(root).as_posix(), _complete_task_message(root, path), "outgoing")
+            )
+        for directory, pattern, limit, max_chars in (
+            ("evidence", "*", 8, 5000),
+            ("validation", "*.json", 4, 5000),
+        ):
+            task_root = root / directory
+            if not task_root.is_dir():
+                continue
+            for path, text in _rank_task_files(
+                [item for item in task_root.glob(pattern) if item.is_file()],
+                task_text=task_text,
+                anchors=anchors,
+                max_chars=max_chars,
+                limit=limit,
+            ):
+                sources.append((f"{directory}/{path.name}", text, "history"))
+    return [source for source in sources if source[1]]
+
+
+def render_coordination_source(name: str, text: str, category: str) -> str:
+    label = {
+        "required": "Canonical shared requirement (ownership and deferral rules still apply)",
+        "history": "Historical coordination (claims may be superseded by matching host evidence)",
+        "incoming": "Task-matched incoming coordination (agreement must be explicit and within authority)",
+        "outgoing": "Existing outgoing coordination (proposal or report, not approval)",
+        "host": "Host-observed task and revision evidence",
+    }[category]
+    return f"## {name}\n[{label}]\n{text}"
 
 
 def build_coordination_context(
@@ -84,89 +284,16 @@ def build_coordination_context(
     deferred_task_prefixes: tuple[str, ...] = (),
     task_text: str = "",
 ) -> str:
-    if role not in _ROLE_FILES:
-        raise ValueError(f"unsupported coordination role: {role}")
-    sections = [
-        f"# Shared coordination context for {role}",
-        "## PROTOCOL.md",
-        _bounded_read(root / "PROTOCOL.md"),
-        f"## {_ROLE_FILES[role]}",
-        _bounded_read(root / _ROLE_FILES[role]),
-    ]
-    if deferred_issue_ids or deferred_task_prefixes:
-        constraints = [
-            "## Owner scheduling constraints",
-            "The following work is explicitly deferred for the current campaign. Do not assign or execute it.",
-        ]
-        if deferred_issue_ids:
-            constraints.append("Deferred issues: " + ", ".join(deferred_issue_ids))
-        if deferred_task_prefixes:
-            constraints.append("Deferred task prefixes: " + ", ".join(deferred_task_prefixes))
-        sections.append("\n".join(constraints))
-    anchors = _task_context_anchors(task_text)
-    mailbox = root / "mailbox" / role
-    if mailbox.is_dir():
-        mailbox_paths = list(mailbox.glob("*.md"))
-        selected_mailbox: list[tuple[Path, str]] = []
-        seen_mailbox: set[Path] = set()
-        mailbox_limit = 20 if task_text else 6
-        mailbox_max_chars = 6000 if task_text else 2500
-        if task_text:
-            for path, text in _rank_task_files(
-                mailbox_paths,
-                task_text=task_text,
-                anchors=anchors,
-                max_chars=mailbox_max_chars,
-                limit=12,
-            ):
-                selected_mailbox.append((path, text))
-                seen_mailbox.add(path)
-        recent_mailbox = sorted(
-            mailbox_paths,
-            key=lambda path: path.stat().st_mtime_ns if path.exists() else 0,
-            reverse=True,
+    return "\n\n".join(
+        render_coordination_source(*source)
+        for source in coordination_sources(
+            root,
+            role,
+            deferred_issue_ids=deferred_issue_ids,
+            deferred_task_prefixes=deferred_task_prefixes,
+            task_text=task_text,
         )
-        for path in recent_mailbox:
-            if path in seen_mailbox:
-                continue
-            selected_mailbox.append((path, _bounded_read(path, mailbox_max_chars)))
-            seen_mailbox.add(path)
-            if len(selected_mailbox) >= mailbox_limit:
-                break
-        for path, text in selected_mailbox[:mailbox_limit]:
-            sections.extend((f"## mailbox/{role}/{path.name}", text))
-
-    if task_text and anchors:
-        for directory, pattern, limit, max_chars in (
-            ("evidence", "*", 8, 5000),
-            ("validation", "*.json", 4, 5000),
-        ):
-            task_root = root / directory
-            if not task_root.is_dir():
-                continue
-            paths = [path for path in task_root.glob(pattern) if path.is_file()]
-            for path, text in _rank_task_files(
-                paths,
-                task_text=task_text,
-                anchors=anchors,
-                max_chars=max_chars,
-                limit=limit,
-            ):
-                sections.extend((f"## {directory}/{path.name}", text))
-
-    deferred = {value.strip().lower() for value in deferred_issue_ids if value.strip()}
-    issues = root / "issues"
-    if issues.is_dir():
-        for path in sorted(issues.glob("*.md")):
-            if path.stem.lower() in deferred:
-                continue
-            text = _bounded_read(path, 6000)
-            owner = _issue_owner(text)
-            active = _issue_status(text) in {"open", "fixed-needs-retest"}
-            if active and owner in {role, "both"}:
-                sections.extend((f"## issues/{path.name}", text))
-
-    return "\n\n".join(section for section in sections if section)
+    )
 
 
 def _issue_owner(text: str) -> str:

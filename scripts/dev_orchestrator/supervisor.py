@@ -18,7 +18,6 @@ from .coordination import (
     _issue_status,
     active_owned_issues,
     apply_agent_updates,
-    build_coordination_context,
     recover_coordination_transactions,
     validate_agent_updates,
 )
@@ -37,6 +36,13 @@ from .handoff import (
     validate_handoff,
 )
 from .lifecycle import ControlPlaneLock
+from .model_blockers import (
+    archive_model_blocker,
+    blocker_feedback,
+    context_sha256,
+    record_dependency_check,
+    validate_consumed_blocker,
+)
 from .postprocessing import (
     UnclassifiedPostprocessingFailure,
     failure_feedback,
@@ -66,6 +72,7 @@ from .storage import AtomicJsonStore
 from .types import AgentResult, OrchestratorConfig, TaskItem, WorkerState, WorkerStatus
 from .usage import UsageBudget, handle_usage_limit, is_cli_usage_provider
 from .validation import load_validation_receipt, run_iteration_validation
+from .worker_context import SuppliedContext, WorkerContext, build_worker_context
 
 
 class AgentInvoker(Protocol):
@@ -101,6 +108,9 @@ def _state_from_dict(role: str, data: dict | None) -> WorkerState:
         result_contract_phase=str(data.get("result_contract_phase", "")),
         result_contract_feedback=str(data.get("result_contract_feedback", "")),
         result_contract_failures=int(data.get("result_contract_failures", 0)),
+        model_blocker_phase=str(data.get("model_blocker_phase", "")),
+        model_blocker_feedback=str(data.get("model_blocker_feedback", "")),
+        model_blocker_fingerprint=str(data.get("model_blocker_fingerprint", "")),
     )
 
 
@@ -195,6 +205,36 @@ class Supervisor:
             current_head=self._capture_task_base_head(role),
         )
 
+    def _worker_context(self, role: str, state: WorkerState) -> str:
+        packet = build_worker_context(self.config, role, state, self._capture_task_base_head(role))
+        self._result_context.worker_context = packet
+        return packet.text
+
+    def _input_fingerprint(self, role: str, state: WorkerState, phase: str, context: str) -> str:
+        packet = getattr(self._result_context, "worker_context", None)
+        if not isinstance(packet, WorkerContext):
+            packet = WorkerContext(context, (("Supplied context", context),))
+        return packet.fingerprint(role, phase, state, self._capture_task_base_head(role))
+
+    def _blocker_record(
+        self, role: str, state: WorkerState, result: AgentResult, phase: str
+    ) -> dict:
+        pending = read_pending_result(self.config, role)
+        provenance = (
+            pending.get("input_provenance")
+            if pending is not None
+            else getattr(self._result_context, "input_provenance", None)
+        )
+        return archive_model_blocker(
+            self.config,
+            role,
+            state,
+            result,
+            phase=phase,
+            pending_result=pending,
+            input_provenance=provenance,
+        )
+
     def _completed_assignment(self, role: str, task: TaskItem):
         repo = self._repo_for_role(role)
         return self.completed_tasks.matching_record(
@@ -236,6 +276,16 @@ class Supervisor:
                 result_contract_feedback="",
                 result_contract_failures=0,
             )
+        if (
+            getattr(self._result_context, "accepted_role", "") == state.role
+            and state.blocker_kind != "model_dependency"
+        ):
+            state = replace(
+                state,
+                model_blocker_phase="",
+                model_blocker_feedback="",
+                model_blocker_fingerprint="",
+            )
         context_role = getattr(self._result_context, "role", "")
         invocation_id = getattr(self._result_context, "invocation_id", "")
         if invocation_id and context_role == state.role:
@@ -255,8 +305,77 @@ class Supervisor:
         with ControlPlaneLock(self.root / "control-plane.lock"):
             self._state_store(state.role).write(state.to_dict())
 
+    @staticmethod
+    def _assigned_queue_state(state: WorkerState, task: TaskItem, head: str) -> WorkerState:
+        return replace(
+            state,
+            status=WorkerStatus.IMPLEMENTING,
+            task=task,
+            task_base_head=head,
+            blocked_reason="",
+            blocker_kind="",
+            resume_status=None,
+            idle_context_fingerprint="",
+            result_contract_phase="",
+            result_contract_feedback="",
+            result_contract_failures=0,
+            model_blocker_phase="",
+            model_blocker_feedback="",
+            model_blocker_fingerprint="",
+        )
+
+    def _recover_queue_claim_locked(self, role: str) -> bool:
+        """Finish an exact host-selected assignment while holding the control lock."""
+        path = self.root / "queue-claims" / f"{role}.json"
+        if not path.exists():
+            return False
+        claim = AtomicJsonStore(path).read()
+        if not isinstance(claim, dict) or (
+            claim.get("schema_version") != 1
+            or claim.get("kind") != "queued_task_assignment"
+            or claim.get("role") != role
+        ):
+            raise ValueError("queued task claim is malformed")
+        before = claim.get("queue_before")
+        after = claim.get("queue_after")
+        index = claim.get("selected_index")
+        if (
+            not isinstance(before, list)
+            or not isinstance(after, list)
+            or type(index) is not int
+            or not 0 <= index < len(before)
+            or after != before[:index] + before[index + 1 :]
+        ):
+            raise ValueError("queued task claim does not remove exactly its selected task")
+        original_state = _state_from_dict(role, claim.get("state_before"))
+        task = TaskItem(**before[index])
+        head = claim.get("task_base_head")
+        if original_state.task is not None or not isinstance(head, str):
+            raise ValueError("queued task claim has no unassigned source state")
+        assigned = self._assigned_queue_state(original_state, task, head).to_dict()
+        if claim.get("state_after") != assigned:
+            raise ValueError("queued task claim changed fields outside assignment")
+        state_store = self._state_store(role)
+        queue_store = self._queue_store(role)
+        current_state = state_store.read()
+        current_queue = queue_store.read(default=[])
+        if current_state not in (claim["state_before"], assigned) or current_queue not in (
+            before,
+            after,
+        ):
+            raise ValueError("queued task claim conflicts with current state or queue")
+        # Assignment is durable before removal. The retained claim makes either
+        # interrupted write idempotent; enqueues recover it before appending.
+        if current_state != assigned:
+            state_store.write(assigned)
+        if current_queue != after:
+            queue_store.write(after)
+        path.unlink()
+        return True
+
     def enqueue(self, role: str, task: TaskItem) -> None:
         with ControlPlaneLock(self.root / "control-plane.lock"):
+            self._recover_queue_claim_locked(role)
             store = self._queue_store(role)
             queue = list(store.read(default=[]))
             queue.append(task.to_dict())
@@ -275,15 +394,34 @@ class Supervisor:
         )
 
     def _dequeue(self, role: str) -> TaskItem | None:
+        head = self._capture_task_base_head(role)
         with ControlPlaneLock(self.root / "control-plane.lock"):
-            store = self._queue_store(role)
-            queue = list(store.read(default=[]))
+            if self._recover_queue_claim_locked(role):
+                return self.load_state(role).task
+            state_before = self._state_store(role).read()
+            state = _state_from_dict(role, state_before)
+            if state.task is not None:
+                raise ValueError("cannot claim queued work over an assigned task")
+            queue = list(self._queue_store(role).read(default=[]))
             for index, payload in enumerate(queue):
                 task = TaskItem(**payload)
                 if self._task_is_deferred(task.task_id):
                     continue
-                queue.pop(index)
-                store.write(queue)
+                assigned = self._assigned_queue_state(state, task, head)
+                AtomicJsonStore(self.root / "queue-claims" / f"{role}.json").write(
+                    {
+                        "schema_version": 1,
+                        "kind": "queued_task_assignment",
+                        "role": role,
+                        "selected_index": index,
+                        "task_base_head": head,
+                        "queue_before": queue,
+                        "queue_after": queue[:index] + queue[index + 1 :],
+                        "state_before": state_before,
+                        "state_after": assigned.to_dict(),
+                    }
+                )
+                self._recover_queue_claim_locked(role)
                 return task
             return None
 
@@ -325,7 +463,9 @@ class Supervisor:
             raise ValueError("pending result bound task mismatch")
         return result
 
-    def _admit_phase(self, role: str, *, phase: str, task_id: str) -> None:
+    def _admit_phase(
+        self, role: str, *, phase: str, task_id: str, input_provenance: dict | None = None
+    ) -> dict | None:
         """Durably start a phase under the same short lock used to commit pause."""
         if role not in {"backend", "mobile"}:
             raise ValueError(f"unsupported workstream: {role}")
@@ -344,28 +484,57 @@ class Supervisor:
                 raise AgentInvocationError("supervisor", "paused", "new model phase paused")
             # This write is the admission boundary. The last record is audit-only:
             # never reuse it as permission or treat it as a busy/recovery marker.
+            admission_id = uuid.uuid4().hex
+            if input_provenance is not None:
+                input_provenance = {**input_provenance, "admission_id": admission_id}
             AtomicJsonStore(self.root / "phase-admissions" / f"{role}.json").write(
                 {
                     "schema_version": 1,
                     "kind": "model_phase_admission",
-                    "admission_id": uuid.uuid4().hex,
+                    "admission_id": admission_id,
                     "role": role,
                     "phase": phase,
                     "task_id": task_id,
                     "pid": os.getpid(),
                     "admitted_at": datetime.now(UTC).isoformat(),
+                    "input_provenance": input_provenance,
                 }
             )
 
+            return input_provenance
+
     def _invoke_or_recover(
-        self, role: str, state: WorkerState, *, phase: str, task_id: str, invoke
+        self,
+        role: str,
+        state: WorkerState,
+        *,
+        phase: str,
+        task_id: str,
+        invoke,
+        context: str = "",
     ) -> AgentResult:
         result = self._recover_result(role, state, phase=phase, task_id=task_id)
+        self._result_context.phase = phase
         if result is None:
-            self._admit_phase(role, phase=phase, task_id=task_id)
-            # Pause blocks later admissions, not completion of an admitted phase.
-            # Keep model execution outside the global lock so peers and pause proceed.
+            provenance = {
+                "role": role,
+                "phase": phase,
+                "task_id": task_id,
+                "head": self._capture_task_base_head(role),
+                "source_context_sha256": context_sha256(context),
+                "fingerprint": self._input_fingerprint(role, state, phase, context),
+            }
+            self._result_context.input_provenance = self._admit_phase(
+                role, phase=phase, task_id=task_id, input_provenance=provenance
+            )
+            # This snapshot precedes lock waits and model execution. Never replace
+            # its baseline with a post-result observation that could swallow a reply.
             result = invoke()
+        else:
+            pending = read_pending_result(self.config, role)
+            self._result_context.input_provenance = (
+                pending.get("input_provenance") if pending else None
+            )
         self._set_result_context(role, result)
         return result
 
@@ -403,9 +572,14 @@ class Supervisor:
         # Preserve the first cause before a retry can replace its state reason.
         self.alerts.emit(role=role, kind="workstream_failure", message=message)
         with ControlPlaneLock(self.root / "control-plane.lock"):
+            if (self.root / "queue-claims" / f"{role}.json").exists():
+                # Do not change either side of a recoverable assignment transaction.
+                return
             state = self.load_state(role)
-            if state.status is WorkerStatus.BLOCKED_USER or (
-                state.status is WorkerStatus.BLOCKED_SYSTEM and state.resume_status is None
+            if (
+                state.blocker_kind == "model_dependency"
+                or state.status is WorkerStatus.BLOCKED_USER
+                or (state.status is WorkerStatus.BLOCKED_SYSTEM and state.resume_status is None)
             ):
                 self._save_state_preserving_pending_result(state)
                 return
@@ -479,6 +653,8 @@ class Supervisor:
         return False
 
     def _run_role(self, role: str) -> None:
+        with ControlPlaneLock(self.root / "control-plane.lock"):
+            self._recover_queue_claim_locked(role)
         if self.recover_postprocessing_failure(role):
             return
         state = self.load_state(role)
@@ -489,6 +665,41 @@ class Supervisor:
                 clear_pending_result(
                     self.config, role, invocation_id=state.last_result_invocation_id
                 )
+        if state.model_blocker_phase and state.last_result_invocation_id:
+            pending = read_pending_result(self.config, role)
+            if pending and pending.get("invocation_id") == state.last_result_invocation_id:
+                validate_consumed_blocker(self.config, role, state, pending)
+                clear_pending_result(
+                    self.config, role, invocation_id=state.last_result_invocation_id
+                )
+        if state.status is WorkerStatus.BLOCKED_SYSTEM and state.blocker_kind == "model_dependency":
+            queued = state.task is None and any(
+                not self._task_is_deferred(str(item.get("task_id", "")))
+                for item in self._queue_store(role).read(default=[])
+            )
+            if queued:
+                state = replace(
+                    state,
+                    status=WorkerStatus.IDLE,
+                    blocked_reason="",
+                    blocker_kind="",
+                    resume_status=None,
+                    model_blocker_phase="",
+                    model_blocker_feedback="",
+                    model_blocker_fingerprint="",
+                )
+                self.save_state(state)
+            else:
+                context = self._worker_context(role, state)
+                fingerprint = self._input_fingerprint(
+                    role, state, state.model_blocker_phase, context
+                )
+                if (
+                    state.model_blocker_fingerprint
+                    and fingerprint == state.model_blocker_fingerprint
+                ):
+                    record_dependency_check(self.config, role, state, fingerprint)
+                    return
         if state.status is WorkerStatus.BLOCKED_SYSTEM:
             if (
                 not state.result_contract_feedback
@@ -526,6 +737,38 @@ class Supervisor:
                         return
             if state.resume_status is None:
                 return
+            if (
+                not state.model_blocker_feedback
+                and state.blocker_kind == "system"
+                and state.resume_status in {WorkerStatus.IMPLEMENTING, WorkerStatus.REVIEWING}
+                and state.blocked_reason
+                and not state.blocked_reason.startswith(
+                    (
+                        "supervisor workstream failure:",
+                        "agent result rejected",
+                        "coordination validation unavailable:",
+                        "agent coordination publication failed:",
+                    )
+                )
+            ):
+                phase = (
+                    "implement" if state.resume_status is WorkerStatus.IMPLEMENTING else "review"
+                )
+                state = replace(
+                    state,
+                    model_blocker_phase=phase,
+                    model_blocker_feedback=blocker_feedback(
+                        AgentResult(
+                            "blocked_system",
+                            state.blocked_reason,
+                            "",
+                            blocker_reason=state.blocked_reason,
+                            invocation_id=state.last_result_invocation_id,
+                        ),
+                        phase,
+                        legacy=True,
+                    ),
+                )
             state = replace(
                 state,
                 status=state.resume_status,
@@ -553,20 +796,7 @@ class Supervisor:
         ):
             queued = self._dequeue(role)
             if queued is not None:
-                state = replace(
-                    state,
-                    status=WorkerStatus.IMPLEMENTING,
-                    task=queued,
-                    task_base_head=self._capture_task_base_head(role),
-                    blocked_reason="",
-                    blocker_kind="",
-                    resume_status=None,
-                    idle_context_fingerprint="",
-                    result_contract_phase="",
-                    result_contract_feedback="",
-                    result_contract_failures=0,
-                )
-                self.save_state(state)
+                state = self.load_state(role)
         if state.status is WorkerStatus.BLOCKED_USER and state.blocker_kind == "retest":
             if state.task is not None:
                 if state.task.task_id.lower() in {
@@ -613,16 +843,7 @@ class Supervisor:
         if self.config.observe_only:
             return
 
-        task_context_text = ""
-        if state.task is not None:
-            task_context_text = f"{state.task.task_id}\n{state.task.prompt}\n{state.task.feedback}"
-        context = build_coordination_context(
-            self.root,
-            role,
-            deferred_issue_ids=self.config.deferred_issue_ids,
-            deferred_task_prefixes=self.config.deferred_task_prefixes,
-            task_text=task_context_text,
-        )
+        context = self._worker_context(role, state)
         if state.task is None:
             pending = read_pending_result(self.config, role)
             if pending and pending.get("invocation_id") != state.last_result_invocation_id:
@@ -633,23 +854,9 @@ class Supervisor:
                 return
             queued = self._dequeue(role)
             if queued is not None:
-                state = replace(
-                    state,
-                    task=queued,
-                    task_base_head=self._capture_task_base_head(role),
-                    status=WorkerStatus.IMPLEMENTING,
-                    idle_context_fingerprint="",
-                    result_contract_phase="",
-                    result_contract_feedback="",
-                    result_contract_failures=0,
-                )
-                context = build_coordination_context(
-                    self.root,
-                    role,
-                    deferred_issue_ids=self.config.deferred_issue_ids,
-                    deferred_task_prefixes=self.config.deferred_task_prefixes,
-                    task_text=f"{queued.task_id}\n{queued.prompt}\n{queued.feedback}",
-                )
+                state = self.load_state(role)
+                context = self._worker_context(role, state)
+
             else:
                 # IDLE is a transient scheduling state in an active campaign.
                 # After a reviewed task clears, immediately ask the planner for
@@ -657,7 +864,7 @@ class Supervisor:
                 self._plan(role, state, context)
                 return
 
-        if state.result_contract_phase == "adjudicate":
+        if state.result_contract_phase == "adjudicate" or state.model_blocker_phase == "adjudicate":
             self._adjudicate(role, state, context)
             return
         if state.task.task_id == f"FINAL-VERIFY-{role}":
@@ -778,6 +985,10 @@ class Supervisor:
         except ValueError as exc:
             self._reject_result_contract(role, state, result, phase=phase, reason=str(exc))
             return False
+        if result.outcome == "blocked_system" and not is_transient_runner_failure(
+            result.blocker_reason or result.summary
+        ):
+            self._blocker_record(role, state, result, phase)
         try:
             apply_agent_updates(
                 self.root,
@@ -988,6 +1199,7 @@ class Supervisor:
                 state,
                 phase="review",
                 task_id=state.task.task_id,
+                context=context,
                 invoke=lambda: self.invoker.review(role, state, state.task, context, SOL_MODEL),
             )
         except EvidenceError as exc:
@@ -1046,7 +1258,12 @@ class Supervisor:
         self._save_block_or_failure(state, result)
 
     def _plan(self, role: str, state: WorkerState, context: str) -> None:
-        planning_context = context + self._completion_context(role)
+        completion_context = self._completion_context(role)
+        planning_context = context + completion_context
+        if isinstance(context, SuppliedContext):
+            planning_context = SuppliedContext(
+                planning_context, context.critical_text + completion_context
+            )
         planning_fingerprint = hashlib.sha256(planning_context.encode("utf-8")).hexdigest()
         # A rejected completed-task assignment is not new work. Replan only
         # when coordination context changes or an explicit queue item arrives.
@@ -1061,6 +1278,7 @@ class Supervisor:
                 state,
                 phase="plan",
                 task_id="",
+                context=planning_context,
                 invoke=lambda: self.invoker.lead(
                     role, replace(state, status=WorkerStatus.PLANNING), planning_context
                 ),
@@ -1272,6 +1490,7 @@ class Supervisor:
                 state,
                 phase="implement",
                 task_id=state.task.task_id,
+                context=context,
                 invoke=lambda: (
                     self.invoker.poll_existing_cloud(role, state.task, context)
                     if recovering_cloud
@@ -1479,6 +1698,7 @@ class Supervisor:
                     state,
                     phase="review",
                     task_id=state.task.task_id,
+                    context=context,
                     invoke=lambda: self.invoker.review(role, state, state.task, context, model),
                 )
             except AgentInvocationError as exc:
@@ -1600,12 +1820,14 @@ class Supervisor:
                 "The nested evidence-bundle invocation identifier is not the lead invocation binding.\n\n"
                 + evidence.text
             )
+            adjudication_context = SuppliedContext(adjudication_context, adjudication_context)
         try:
             result = self._invoke_or_recover(
                 role,
                 state,
                 phase="adjudicate",
                 task_id=state.task.task_id,
+                context=adjudication_context,
                 invoke=lambda: self.invoker.lead(
                     role, state, adjudication_context, task=state.task
                 ),
@@ -1885,6 +2107,26 @@ class Supervisor:
         if is_transient_runner_failure(reason):
             recover_codex_windows_terminal_runner()
             self._save_transient_runner_failure(state, reason)
+            return
+        if result.outcome == "blocked_system" and not result.needs_user:
+            phase = getattr(self._result_context, "phase", "")
+            if not phase:
+                phase = "review" if state.status is WorkerStatus.REVIEWING else "implement"
+            record = self._blocker_record(state.role, state, result, phase)
+            self.save_state(
+                replace(
+                    state,
+                    status=WorkerStatus.BLOCKED_SYSTEM,
+                    blocked_reason=reason,
+                    blocker_kind="model_dependency",
+                    resume_status=self._resume_status_for_phase(state, phase),
+                    model_blocker_phase=phase,
+                    model_blocker_feedback=blocker_feedback(result, phase),
+                    model_blocker_fingerprint=(record.get("input_provenance") or {}).get(
+                        "fingerprint", ""
+                    ),
+                )
+            )
             return
         if result.outcome == "blocked_user" or result.needs_user:
             status = WorkerStatus.BLOCKED_USER

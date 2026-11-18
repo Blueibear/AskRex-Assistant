@@ -503,7 +503,7 @@ def build_review_evidence(
         ),
         ("task", f"prompt:\n{task.prompt}\n\nhistorical_feedback_context_only:\n{task.feedback}"),
         ("task_issues", _task_issue_contents(config, task)),
-        ("coordination", coordination_context),
+        ("coordination", getattr(coordination_context, "critical_text", coordination_context)),
         ("outgoing_coordination", _outgoing_coordination(config, role, task)),
         ("supervisor_coordination", _supervisor_coordination(config, role, task)),
         ("coordination_checks", coordination_checks),
@@ -514,6 +514,10 @@ def build_review_evidence(
         ("validation", "receipt_path: " + str(receipt_path) + "\n" + _receipt_text(receipt)),
     )
     safe_sections = {name: _redact(raw, config) for name, raw in sections}
+    protected_coordination = hasattr(coordination_context, "critical_text")
+    shared_sections = (
+        ("coordination", "task_issues") if protected_coordination else ("task_issues",)
+    )
     bounded_sections = {
         name: _bound(
             name,
@@ -521,24 +525,28 @@ def build_review_evidence(
             max_section_chars if max_section_chars is not None else _DEFAULT_SECTION_LIMITS[name],
         )
         for name, safe in safe_sections.items()
-        if name != "task_issues"
+        if name not in shared_sections
     }
-    issue_limit = max_section_chars
-    if issue_limit is None:
-        # Issue files may use unused packet capacity without shrinking any other
-        # section or increasing the original aggregate content budget. Account
-        # for the actual redacted, bounded text, including truncation markers.
-        issue_limit = sum(_DEFAULT_SECTION_LIMITS.values()) - sum(
-            len(bounded) for bounded, _truncated in bounded_sections.values()
-        )
-    bounded_sections["task_issues"] = _bound(
-        "task_issues", safe_sections["task_issues"], issue_limit
+    remaining = sum(_DEFAULT_SECTION_LIMITS.values()) - sum(
+        len(bounded) for bounded, _truncated in bounded_sections.values()
     )
+    for name in shared_sections:
+        limit = max_section_chars if max_section_chars is not None else max(0, remaining)
+        bounded_sections[name] = (
+            ("", bool(safe_sections[name]))
+            if max_section_chars is None and limit == 0
+            else _bound(name, safe_sections[name], limit)
+        )
+        remaining -= len(bounded_sections[name][0])
     rendered: list[str] = []
     reasons: list[str] = []
     for name in safe_sections:
         bounded, truncated = bounded_sections[name]
-        if truncated and (max_section_chars is not None or name in _REVIEW_CRITICAL_SECTIONS):
+        if truncated and (
+            max_section_chars is not None
+            or name in _REVIEW_CRITICAL_SECTIONS
+            or (name == "coordination" and protected_coordination)
+        ):
             reasons.append(name)
         rendered.append(f"## {name}\n{bounded}")
     return ReviewEvidenceBundle(

@@ -35,6 +35,7 @@ from .handoff import (
     validate_handoff,
 )
 from .lifecycle import ControlPlaneLock
+from .model_blockers import capture_supplied_input, prompt_blocker
 from .paths import validate_runtime_paths
 from .postprocessing import (
     ScratchGateFailure,
@@ -670,7 +671,10 @@ def _task_prompt(role: str, task, coordination_root: Path, context: str, invocat
         + f"For continue or ready_for_review, return task_id={task.task_id!r}, role={role!r}, and invocation_id={invocation_id!r} exactly. "
         "Return only the required structured result.\n\n"
         f"Coordination root reference: {coordination_root}\n"
-        "Authoritative bounded review evidence:\n"
+        "Bounded shared context with explicit source and task/revision labels:\n"
+        "Current host evidence supersedes dated mailbox claims only for the same task and revision. "
+        "A prior-task baseline does not validate this task or close a broader issue. "
+        "A proposal is not peer agreement; use existing proposals and wait for an actual response.\n"
         f"{context}"
     )
 
@@ -1123,6 +1127,7 @@ class CliAgentInvoker:
         task_id: str = "",
         task: TaskItem | None = None,
         task_base_head: str = "",
+        input_context: str | None = None,
     ) -> ProcessResult:
         if provider == "claude" and phase in {"plan", "review"}:
             require_configured_provider("Claude planning or review delegation")
@@ -1144,6 +1149,17 @@ class CliAgentInvoker:
             pre_head, pre_dirty = repo_snapshot(repo)
             if pre_dirty:
                 raise HandoffRequired("leased repository must be clean before agent invocation")
+            input_provenance = capture_supplied_input(
+                self.config,
+                role,
+                phase,
+                task_id,
+                invocation_id,
+                pre_head,
+                input_context,
+                command[-1],
+                input_kind="cli_prompt_utf8",
+            )
             activity_file = self.config.coordination_root / "active-agents" / f"{role}.json"
             metadata = {
                 "role": role,
@@ -1400,6 +1416,8 @@ class CliAgentInvoker:
                             "post_head": post_head,
                             "result": asdict(parsed),
                         }
+                        if input_provenance is not None:
+                            pending_result["input_provenance"] = input_provenance
                     try:
                         advance_handoff(
                             self.config,
@@ -1641,7 +1659,7 @@ class CliAgentInvoker:
         prompt = _codex_task_prompt(
             role, task, self.config.coordination_root, context, invocation_id
         )
-        prompt += prompt_correction(state, "implement")
+        prompt += prompt_correction(state, "implement") + prompt_blocker(state, "implement")
         command = build_codex_command(
             "implement", repo, prompt, TERRA_MODEL, read_only=not repository_changes_allowed(task)
         )
@@ -1658,6 +1676,7 @@ class CliAgentInvoker:
                     task_id=task.task_id,
                     task=task,
                     task_base_head=state.task_base_head,
+                    input_context=context,
                 ),
             )
         except AgentInvocationError as exc:
@@ -1669,7 +1688,9 @@ class CliAgentInvoker:
         fallback_prompt = _task_prompt(
             role, task, self.config.coordination_root, context, fallback_id
         )
-        fallback_prompt += prompt_correction(state, "implement")
+        fallback_prompt += prompt_correction(state, "implement") + prompt_blocker(
+            state, "implement"
+        )
         fallback_command = build_claude_command(repo, fallback_prompt, model)
         return self._finish(
             "claude",
@@ -1683,6 +1704,7 @@ class CliAgentInvoker:
                 task_id=task.task_id,
                 task=task,
                 task_base_head=state.task_base_head,
+                input_context=context,
             ),
         )
 
@@ -1707,7 +1729,7 @@ class CliAgentInvoker:
         prompt = _review_prompt(
             role, task, self.config.coordination_root, evidence.text, invocation_id
         )
-        prompt += prompt_correction(state, "review")
+        prompt += prompt_correction(state, "review") + prompt_blocker(state, "review")
         if model == "fable":
             # The provider router authorizes this expiring route. Read-only
             # Claude sandbox and revision-bound evidence are mandatory.
@@ -1726,6 +1748,7 @@ class CliAgentInvoker:
                 invocation_id,
                 phase="review",
                 task_id=task.task_id,
+                input_context=context,
             ),
         )
 
@@ -1738,13 +1761,16 @@ class CliAgentInvoker:
         command = build_claude_command(
             repo,
             _lead_prompt(role, self.config.coordination_root, context, invocation_id)
-            + prompt_correction(state, "plan"),
+            + prompt_correction(state, "plan")
+            + prompt_blocker(state, "plan"),
             CLAUDE_ROUTINE_MODEL,
             read_only=True,
         )
         return self._finish(
             "claude",
-            self._execute_agent(command, repo, role, "claude", invocation_id, phase="plan"),
+            self._execute_agent(
+                command, repo, role, "claude", invocation_id, phase="plan", input_context=context
+            ),
         )
 
     def lead(self, role, state, context, task=None) -> AgentResult:
@@ -1756,7 +1782,8 @@ class CliAgentInvoker:
             "lead",
             repo,
             _lead_prompt(role, self.config.coordination_root, context, invocation_id)
-            + prompt_correction(state, "adjudicate" if task is not None else "plan"),
+            + prompt_correction(state, "adjudicate" if task is not None else "plan")
+            + prompt_blocker(state, "adjudicate" if task is not None else "plan"),
             SOL_MODEL,
         )
         return self._finish(
@@ -1769,5 +1796,6 @@ class CliAgentInvoker:
                 invocation_id,
                 phase="adjudicate" if task is not None else "plan",
                 task_id=task.task_id if task is not None else "",
+                input_context=context,
             ),
         )

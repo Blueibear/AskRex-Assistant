@@ -106,7 +106,12 @@ def final_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     def execute(arguments, repo, role, provider, invocation_id, **kwargs):
         assert provider == "codex"
         assert SOL_MODEL in arguments
-        assert kwargs == {"phase": "review", "task_id": "FINAL-VERIFY-backend"}
+        assert kwargs == {
+            "phase": "review",
+            "task_id": "FINAL-VERIFY-backend",
+            "input_context": kwargs["input_context"],
+        }
+        assert isinstance(kwargs["input_context"], str)
         observed.prompts.append(arguments[-1])
         result = AgentResult(
             observed.outcome,

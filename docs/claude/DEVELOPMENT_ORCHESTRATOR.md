@@ -171,3 +171,51 @@ The `issue_updates` API remains limited to owned, open or fixed-needs-retest `TE
 A deterministic result-contract rejection invalidates the entire result before publication. The supervisor saves the original parsed result and real pending envelope under `rejected-results/`, then atomically commits bounded current correction feedback and the consumed invocation ID before clearing the journal. The next attempt stays in the same phase, including final review, and must produce a fresh valid result. The rejected PASS and its messages are never accepted or replayed. The separate contract-failure counter permits at most three rejected attempts before parking without automatic resume; existing implementation/review counters and canonical receipts are preserved. A valid accepted result clears this correction state. Publication or transaction failures keep the pending result for idempotent recovery instead of requesting a new model result.
 
 An older consumed `invalid live-test issue id` review blocker can supply its known host reason to normal review resumption. This is labeled as prior host rejection, not a reconstructed result or review approval. No one-time pending-envelope reconstruction or canonical gate rerun is required. Keep older runtimes paused during rollback so they cannot silently discard the new correction state and repeat rejected requests.
+
+## Worker context and model dependency waits
+
+Implementation receives complete explicitly referenced canonical issue requirements, including accepted-requirements documents, before optional mailbox history. Required sources that are missing or exceed the bounded context capacity stop model dispatch. Reading a requirement does not change its owner, deferral, privacy, approval, or verification rules.
+
+Host status identifies the exact task, repository revision, receipt and matching failure artifacts. A prior-task baseline does not validate the current task or close a broader campaign issue. A newer matching failure remains authoritative over an older receipt; an old-head receipt cannot describe the new revision as passed. A receipt without complete current host captures is reported conservatively. Independent review and canonical validation gates remain unchanged.
+
+Task-relevant outgoing proposals are supplied alongside incoming coordination. An outgoing proposal is not approval or peer agreement. Workers must reuse the existing proposal and obtain the actual required response before implementation, without inferring new permission from the proposal itself.
+
+A valid non-human model blocked_system result is archived under model-blockers/ before its authorized coordination publication. The immutable record preserves the original parsed result, pending envelope, phase, task/base revision and first observation. The input_provenance field binds the pending result to the exact supplied-context digest and stable external-input fingerprint recorded at phase admission. The admission remains an audit record, never reusable permission or a busy marker.
+
+The state fields model_blocker_phase, model_blocker_feedback and model_blocker_fingerprint retain bounded actionable context. The role waits as blocked_system/model_dependency while relevant external inputs are unchanged. Incoming peer replies, requirements, current HEAD or task-bound validation evidence can wake the same phase. Invocation IDs, new timestamps, retained blocker feedback, the role's own capture refresh and outgoing publications cannot wake it. The baseline precedes model execution and lock waits, so a reply arriving during an invocation is not swallowed by a later snapshot.
+
+Archive, transactional publication, atomic state transition and pending-result cleanup preserve replay identity. Host I/O, publication failures, uncertain process outcomes, human gates and transient runner recovery keep their existing paths. Legacy consumed model reasons may receive one truthfully labeled corrected attempt; no old result or passing receipt is reconstructed.
+
+Keep earlier runtimes paused during rollback. They do not understand model dependency wait semantics and must not consume an unhandled new blocker journal or blindly resume this state. Use the reviewed current archive validator and consumer before resuming an older runtime.
+
+### Exact supplied input and queued assignment recovery
+
+The admission fingerprint describes the external input baseline selected before
+any provider-slot wait. Its source_context_sha256 identifies that selected
+source context, not the final review rendering. The provider adapter preserves
+the exact rendered CLI prompt or prepared API request body in
+model-inputs/<role>-<sha256(invocation_id)>/input.txt, with its byte length, SHA256,
+and original phase-admission record in manifest.json. The pending result and
+model-blocker archive bind the supplied_input descriptor. The read_supplied_input
+validator reads those immutable artifacts without acquiring diagnostic lease
+locks or rebuilding context.
+
+Explicit requirements and task-related incoming and outgoing correspondence are
+complete critical inputs. They precede unrelated mailbox history, including in
+review. If they do not fit the existing packet budget, dispatch stops visibly.
+An outgoing proposal remains a proposal; only an actual peer response can supply
+agreement, and all task, ownership, approval, and validation gates still apply.
+
+An eligible unchanged-input wait appends one model_dependency_wait event to
+logs/model-dependency-checks.jsonl under a fresh unpaused policy check. The event
+binds the blocked invocation and original admission to both equal fingerprints;
+it does not grant permission or become a wake input. No event or counter is
+invented for a pause, an already-present reply, or a reply arriving during a slot
+wait.
+
+Explicit queue selection first writes queue-claims/<role>.json with the exact
+before/after state and queue. State assignment commits before queue removal.
+Role entry and enqueue finish an interrupted claim under the control-plane lock
+before other work. Unknown or conflicting claims remain blocked and intact.
+Earlier runtimes must remain paused while a queue claim or new model-blocker
+checkpoint is unhandled; use the reviewed newer recovery code first.

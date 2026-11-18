@@ -77,6 +77,9 @@ class WorkerState:
     result_contract_phase: str = ""
     result_contract_feedback: str = ""
     result_contract_failures: int = 0
+    model_blocker_phase: str = ""
+    model_blocker_feedback: str = ""
+    model_blocker_fingerprint: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
