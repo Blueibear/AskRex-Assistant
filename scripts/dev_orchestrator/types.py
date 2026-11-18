@@ -74,6 +74,9 @@ class WorkerState:
     codex_session_id: str = ""
     last_result_invocation_id: str = ""
     idle_context_fingerprint: str = ""
+    result_contract_phase: str = ""
+    result_contract_feedback: str = ""
+    result_contract_failures: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)

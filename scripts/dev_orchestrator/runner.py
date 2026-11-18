@@ -49,6 +49,7 @@ from .provider_policy import (
     require_model_allowed,
     subscription_only,
 )
+from .result_contract import issue_update_guidance, prompt_correction, task_bound_test_issue_ids
 from .schema import allowed_outcomes_for_phase, validate_agent_result
 from .types import AgentResult, TaskItem
 
@@ -223,6 +224,13 @@ def _write_bound_codex_schema(
     }
     if phase in {"implement", "review"} and task_id:
         schema["properties"]["task_id"] = {"type": "string", "enum": [task_id]}
+    candidates = task_bound_test_issue_ids(task_id) if phase == "review" else ()
+    updates = schema["properties"]["issue_updates"]
+    updates["description"] = issue_update_guidance(phase, task_id)
+    if candidates:
+        updates["items"]["properties"]["issue_id"] = {"type": "string", "enum": list(candidates)}
+    else:
+        updates["maxItems"] = 0
     path = directory / "agent-result.bound.codex.schema.json"
     path.write_text(
         json.dumps(schema, indent=2, sort_keys=True) + "\n",
@@ -708,8 +716,10 @@ def _review_prompt(
         "files. Do not modify files. Return pass only when the task is actually ready; "
         "otherwise return changes_required, "
         "blocked_user, blocked_system, or failed using the required structured result. On a passing owned TEST issue "
-        "that is still open, include an issue_updates request for fixed-needs-retest; if authoritative evidence already "
+        "that is still open and whose full ID occurs in this task_id, include an issue_updates request for "
+        "fixed-needs-retest; if authoritative evidence already "
         "shows fixed-needs-retest, return pass with no redundant issue update. Never request verified. "
+        f"{issue_update_guidance('review', task.task_id)}\n"
         f"Return task_id={task.task_id!r}, role={role!r}, and invocation_id={invocation_id!r} exactly.\n\n"
         f"Coordination root reference: {coordination_root}\n"
         "The supervisor coordination_checks section records the required opening/closing script results, "
@@ -1222,15 +1232,14 @@ class CliAgentInvoker:
                             )
                         try:
                             parsed = extract_agent_result(result.stdout)
-                            validate_agent_updates(
-                                self.config.coordination_root,
-                                role,
-                                parsed,
-                                allow_issue_updates=(
-                                    phase == "review" and parsed.outcome == "pass"
-                                ),
-                                task_id=task_id,
-                            )
+                            if phase == "implement":
+                                validate_agent_updates(
+                                    self.config.coordination_root,
+                                    role,
+                                    parsed,
+                                    allow_issue_updates=False,
+                                    task_id=task_id,
+                                )
                             if self._production_executor:
                                 if (
                                     (phase in {"implement", "review"} and parsed.task_id != task_id)
@@ -1632,6 +1641,7 @@ class CliAgentInvoker:
         prompt = _codex_task_prompt(
             role, task, self.config.coordination_root, context, invocation_id
         )
+        prompt += prompt_correction(state, "implement")
         command = build_codex_command(
             "implement", repo, prompt, TERRA_MODEL, read_only=not repository_changes_allowed(task)
         )
@@ -1659,6 +1669,7 @@ class CliAgentInvoker:
         fallback_prompt = _task_prompt(
             role, task, self.config.coordination_root, context, fallback_id
         )
+        fallback_prompt += prompt_correction(state, "implement")
         fallback_command = build_claude_command(repo, fallback_prompt, model)
         return self._finish(
             "claude",
@@ -1696,6 +1707,7 @@ class CliAgentInvoker:
         prompt = _review_prompt(
             role, task, self.config.coordination_root, evidence.text, invocation_id
         )
+        prompt += prompt_correction(state, "review")
         if model == "fable":
             # The provider router authorizes this expiring route. Read-only
             # Claude sandbox and revision-bound evidence are mandatory.
@@ -1725,7 +1737,8 @@ class CliAgentInvoker:
         invocation_id = str(uuid.uuid4())
         command = build_claude_command(
             repo,
-            _lead_prompt(role, self.config.coordination_root, context, invocation_id),
+            _lead_prompt(role, self.config.coordination_root, context, invocation_id)
+            + prompt_correction(state, "plan"),
             CLAUDE_ROUTINE_MODEL,
             read_only=True,
         )
@@ -1742,7 +1755,8 @@ class CliAgentInvoker:
         command = build_codex_command(
             "lead",
             repo,
-            _lead_prompt(role, self.config.coordination_root, context, invocation_id),
+            _lead_prompt(role, self.config.coordination_root, context, invocation_id)
+            + prompt_correction(state, "adjudicate" if task is not None else "plan"),
             SOL_MODEL,
         )
         return self._finish(

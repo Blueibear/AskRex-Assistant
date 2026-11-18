@@ -408,7 +408,9 @@ def test_review_phase_rejects_continue_before_coordination_side_effects(tmp_path
     saved = supervisor.load_state("backend")
     assert saved.status is WorkerStatus.BLOCKED_SYSTEM
     assert saved.resume_status is WorkerStatus.REVIEWING
-    assert "invalid review agent result" in saved.blocked_reason
+    assert saved.blocker_kind == "result_contract"
+    assert saved.result_contract_phase == "review"
+    assert "invalid for phase" in saved.result_contract_feedback
     mailbox = supervisor.root / "mailbox" / "testing"
     assert not list(mailbox.glob("*.md"))
 

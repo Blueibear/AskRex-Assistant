@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 
 from .lifecycle import ControlPlaneLock
+from .result_contract import task_bound_test_issue_ids
 from .storage import AtomicJsonStore, atomic_write_text
 
 _ROLE_FILES = {
@@ -194,13 +195,7 @@ def validate_agent_updates(
             raise ValueError("development agents may only request fixed-needs-retest")
         if not re.fullmatch(r"TEST-\d{3}", update.issue_id):
             raise ValueError(f"invalid live-test issue id: {update.issue_id}")
-        task_match = update.issue_id == task_id or bool(
-            re.search(
-                rf"(?<![A-Z0-9]){re.escape(update.issue_id)}(?![A-Z0-9])",
-                task_id,
-                flags=re.IGNORECASE,
-            )
-        )
+        task_match = update.issue_id in task_bound_test_issue_ids(task_id)
         if not task_match:
             raise ValueError(f"issue update {update.issue_id} does not match active task {task_id}")
         issue = root / "issues" / f"{update.issue_id}.md"

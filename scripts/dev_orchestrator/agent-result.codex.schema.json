@@ -121,7 +121,8 @@
             "type": "string"
           }
         }
-      }
+      },
+      "description": "Only a passing independent review may request fixed-needs-retest for an existing owned TEST-### live-test issue whose full identifier occurs in the bound task_id. SECURITY, ROADMAP and other IDs are not supported. Otherwise return an empty array and use authorized coordination_messages for evidence; never request verified."
     }
   }
 }

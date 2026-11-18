@@ -23,6 +23,7 @@ from .openai_budget import (
 )
 from .openai_transport import OpenAIResponsesTransport, OpenAITransportError
 from .provider_policy import ProviderPolicyError, require_configured_provider
+from .result_contract import issue_update_guidance, prompt_correction
 from .routing import METERED_OPENAI_API_ALLOWED_ROLES
 from .runner import AgentInvocationError
 from .schema import validate_agent_result, validate_phase_outcome
@@ -336,7 +337,12 @@ class OpenAIModelWorker:
                 )
             prepared = self._prepare_request(
                 model=model,
-                instructions=self._review_instructions(),
+                instructions=(
+                    self._review_instructions()
+                    + "\n"
+                    + issue_update_guidance("review", task.task_id)
+                    + prompt_correction(state, "review")
+                ),
                 input_text=evidence.text,
             )
             response = self._dispatch(prepared=prepared, model=model)
@@ -383,7 +389,7 @@ class OpenAIModelWorker:
                 raise HandoffRequired("OpenAI lead requires a clean leased repository")
             prepared = self._prepare_request(
                 model=model,
-                instructions=self._lead_instructions(phase),
+                instructions=self._lead_instructions(phase) + prompt_correction(state, phase),
                 input_text=self._lead_input(
                     role,
                     state,

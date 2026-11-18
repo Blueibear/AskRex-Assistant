@@ -20,6 +20,7 @@ from .coordination import (
     apply_agent_updates,
     build_coordination_context,
     recover_coordination_transactions,
+    validate_agent_updates,
 )
 from .coordination_checks import (
     CoordinationCheckError,
@@ -45,6 +46,13 @@ from .provider_routing import (
     FABLE_REVIEW_MODEL,
     temporary_fable_policy_active,
     temporary_fable_review_active,
+)
+from .result_contract import (
+    RESULT_CONTRACT_RETRY_LIMIT,
+    archive_rejected_result,
+    existing_rejection_reason,
+    rejection_feedback,
+    validate_consumed_rejection,
 )
 from .review_fallback import fallback_active, load_hourly_review, review_receipt_path
 from .routing import SOL_MODEL, select_implementer_model, select_reviewer_model
@@ -90,6 +98,9 @@ def _state_from_dict(role: str, data: dict | None) -> WorkerState:
         codex_session_id=str(data.get("codex_session_id", "")),
         last_result_invocation_id=str(data.get("last_result_invocation_id", "")),
         idle_context_fingerprint=str(data.get("idle_context_fingerprint", "")),
+        result_contract_phase=str(data.get("result_contract_phase", "")),
+        result_contract_feedback=str(data.get("result_contract_feedback", "")),
+        result_contract_failures=int(data.get("result_contract_failures", 0)),
     )
 
 
@@ -218,18 +229,27 @@ class Supervisor:
         return _state_from_dict(role, self._state_store(role).read())
 
     def save_state(self, state: WorkerState) -> None:
+        if getattr(self._result_context, "accepted_role", "") == state.role:
+            state = replace(
+                state,
+                result_contract_phase="",
+                result_contract_feedback="",
+                result_contract_failures=0,
+            )
         context_role = getattr(self._result_context, "role", "")
         invocation_id = getattr(self._result_context, "invocation_id", "")
         if invocation_id and context_role == state.role:
             state = replace(state, last_result_invocation_id=invocation_id)
         with ControlPlaneLock(self.root / "control-plane.lock"):
             self._state_store(state.role).write(state.to_dict())
+        self._result_context.accepted_role = ""
         if invocation_id and context_role == state.role:
             clear_pending_result(self.config, state.role, invocation_id=invocation_id)
             self._result_context.role = ""
             self._result_context.invocation_id = ""
 
     def _save_state_preserving_pending_result(self, state: WorkerState) -> None:
+        self._result_context.accepted_role = ""
         self._result_context.role = ""
         self._result_context.invocation_id = ""
         with ControlPlaneLock(self.root / "control-plane.lock"):
@@ -268,6 +288,7 @@ class Supervisor:
             return None
 
     def _set_result_context(self, role: str, result: AgentResult) -> None:
+        self._result_context.accepted_role = ""
         if not result.invocation_id:
             return
         pending = read_pending_result(self.config, role)
@@ -461,7 +482,36 @@ class Supervisor:
         if self.recover_postprocessing_failure(role):
             return
         state = self.load_state(role)
+        if state.result_contract_phase and state.last_result_invocation_id:
+            pending = read_pending_result(self.config, role)
+            if pending and pending.get("invocation_id") == state.last_result_invocation_id:
+                validate_consumed_rejection(self.config, role, state, pending)
+                clear_pending_result(
+                    self.config, role, invocation_id=state.last_result_invocation_id
+                )
         if state.status is WorkerStatus.BLOCKED_SYSTEM:
+            if (
+                not state.result_contract_feedback
+                and state.blocker_kind == "system"
+                and state.resume_status is WorkerStatus.REVIEWING
+                and state.task is not None
+                and state.blocked_reason.startswith(
+                    "agent result rejected by supervisor safety gate: invalid live-test issue id: "
+                )
+            ):
+                # Older runtimes consumed the rejected result. Preserve only the known
+                # host reason; never reconstruct a journal or accept that prior result.
+                state = replace(
+                    state,
+                    result_contract_phase="review",
+                    result_contract_feedback=rejection_feedback(
+                        "review",
+                        state.task.task_id,
+                        state.blocked_reason,
+                        invocation_id=state.last_result_invocation_id,
+                        legacy=True,
+                    ),
+                )
             if state.blocker_kind in {"review_fallback_wait", "review_fallback_invalid"}:
                 # A newly active Fable delegation supersedes old hourly receipt waits.
                 # Normal review eligibility is still checked before invoking Fable.
@@ -512,6 +562,9 @@ class Supervisor:
                     blocker_kind="",
                     resume_status=None,
                     idle_context_fingerprint="",
+                    result_contract_phase="",
+                    result_contract_feedback="",
+                    result_contract_failures=0,
                 )
                 self.save_state(state)
         if state.status is WorkerStatus.BLOCKED_USER and state.blocker_kind == "retest":
@@ -571,6 +624,13 @@ class Supervisor:
             task_text=task_context_text,
         )
         if state.task is None:
+            pending = read_pending_result(self.config, role)
+            if pending and pending.get("invocation_id") != state.last_result_invocation_id:
+                # Consume the durable planner result before selecting queued work.
+                # PLANNING bypasses the idle fingerprint, while _recover_result still
+                # enforces the exact pending role/phase/task binding.
+                self._plan(role, replace(state, status=WorkerStatus.PLANNING), context)
+                return
             queued = self._dequeue(role)
             if queued is not None:
                 state = replace(
@@ -579,6 +639,9 @@ class Supervisor:
                     task_base_head=self._capture_task_base_head(role),
                     status=WorkerStatus.IMPLEMENTING,
                     idle_context_fingerprint="",
+                    result_contract_phase="",
+                    result_contract_feedback="",
+                    result_contract_failures=0,
                 )
                 context = build_coordination_context(
                     self.root,
@@ -594,6 +657,9 @@ class Supervisor:
                 self._plan(role, state, context)
                 return
 
+        if state.result_contract_phase == "adjudicate":
+            self._adjudicate(role, state, context)
+            return
         if state.task.task_id == f"FINAL-VERIFY-{role}":
             self._final_verify(role, state, context)
             return
@@ -601,6 +667,44 @@ class Supervisor:
             self._review(role, state, context)
             return
         self._implement(role, state, context)
+
+    def _reject_result_contract(
+        self, role: str, state: WorkerState, result: AgentResult, *, phase: str, reason: str
+    ) -> None:
+        archive_rejected_result(
+            self.config,
+            role,
+            state,
+            result,
+            phase=phase,
+            reason=reason,
+            pending_result=read_pending_result(self.config, role),
+        )
+        # Archive first, then atomically persist the same-phase correction and
+        # invocation ledger before save_state clears the real pending journal.
+        failures = state.result_contract_failures + 1
+        retrying = failures < RESULT_CONTRACT_RETRY_LIMIT
+        self.save_state(
+            replace(
+                state,
+                status=WorkerStatus.BLOCKED_SYSTEM,
+                blocked_reason=(
+                    f"agent result contract rejected ({failures}/{RESULT_CONTRACT_RETRY_LIMIT}): "
+                    + ("automatic correction exhausted; " if not retrying else "")
+                    + reason[:1000]
+                ),
+                blocker_kind="result_contract",
+                resume_status=self._resume_status_for_phase(state, phase) if retrying else None,
+                result_contract_phase=phase,
+                result_contract_failures=failures,
+                result_contract_feedback=rejection_feedback(
+                    phase,
+                    state.task.task_id if state.task else "",
+                    reason,
+                    invocation_id=result.invocation_id,
+                ),
+            )
+        )
 
     def _accept_result(
         self,
@@ -611,18 +715,24 @@ class Supervisor:
         phase: str,
         allow_issue_updates: bool,
     ) -> bool:
+        self._result_context.accepted_role = ""
+        previous_rejection = existing_rejection_reason(
+            self.config,
+            role,
+            state,
+            result,
+            phase=phase,
+            pending_result=read_pending_result(self.config, role),
+        )
+        if previous_rejection is not None:
+            self._reject_result_contract(
+                role, state, result, phase=phase, reason=previous_rejection
+            )
+            return False
         try:
             validate_phase_outcome(result, phase)
         except ValueError as exc:
-            self.save_state(
-                replace(
-                    state,
-                    status=WorkerStatus.BLOCKED_SYSTEM,
-                    blocked_reason=f"invalid {phase} agent result: {exc}",
-                    blocker_kind="system",
-                    resume_status=state.status,
-                )
-            )
+            self._reject_result_contract(role, state, result, phase=phase, reason=str(exc))
             return False
         if result.needs_user and result.outcome != "blocked_user":
             self.save_state(
@@ -638,15 +748,35 @@ class Supervisor:
         if result.outcome == "blocked_user" and (
             not result.needs_user or not result.blocker_reason.strip()
         ):
-            self.save_state(
+            self._reject_result_contract(
+                role, state, result, phase=phase, reason="invalid blocked_user agent result"
+            )
+            return False
+        try:
+            validate_agent_updates(
+                self.root,
+                role,
+                result,
+                allow_issue_updates=allow_issue_updates,
+                task_id=state.task.task_id if state.task else "",
+            )
+            if (
+                result.issue_updates or result.coordination_messages
+            ) and not result.invocation_id.strip():
+                raise ValueError("coordination publication requires invocation_id")
+        except (OSError, UnicodeError) as exc:
+            self._save_state_preserving_pending_result(
                 replace(
                     state,
                     status=WorkerStatus.BLOCKED_SYSTEM,
-                    blocked_reason="invalid blocked_user agent result",
+                    blocked_reason=f"coordination validation unavailable: {exc}",
                     blocker_kind="system",
-                    resume_status=state.status,
+                    resume_status=self._resume_status_for_phase(state, phase),
                 )
             )
+            return False
+        except ValueError as exc:
+            self._reject_result_contract(role, state, result, phase=phase, reason=str(exc))
             return False
         try:
             apply_agent_updates(
@@ -657,16 +787,19 @@ class Supervisor:
                 task_id=state.task.task_id if state.task else "",
             )
         except (ValueError, OSError) as exc:
-            self.save_state(
+            # A publication/transaction failure is not a model contract defect.
+            # Keep the exact pending result for idempotent transaction recovery.
+            self._save_state_preserving_pending_result(
                 replace(
                     state,
                     status=WorkerStatus.BLOCKED_SYSTEM,
-                    blocked_reason=f"agent result rejected by supervisor safety gate: {exc}",
+                    blocked_reason=f"agent coordination publication failed: {exc}",
                     blocker_kind="system",
-                    resume_status=state.status,
+                    resume_status=self._resume_status_for_phase(state, phase),
                 )
             )
             return False
+        self._result_context.accepted_role = role
         return True
 
     def _done_claim(self, role: str, state: WorkerState, context: str) -> None:
@@ -989,6 +1122,22 @@ class Supervisor:
             )
             return
         if result.outcome == "done":
+            with ControlPlaneLock(self.root / "control-plane.lock"):
+                queued = list(self._queue_store(role).read(default=[]))
+            if any(not self._task_is_deferred(TaskItem(**item).task_id) for item in queued):
+                # Explicit work may arrive while a plan is running or recovering.
+                # Consume this valid decision without declaring the campaign done.
+                self.save_state(
+                    replace(
+                        state,
+                        status=WorkerStatus.IDLE,
+                        blocked_reason="",
+                        blocker_kind="",
+                        resume_status=None,
+                        idle_context_fingerprint="",
+                    )
+                )
+                return
             self._done_claim(role, state, context)
             return
         self._save_block_or_failure(state, result)
