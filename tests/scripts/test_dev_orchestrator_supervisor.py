@@ -56,6 +56,8 @@ class FakeInvoker:
 
 
 def make_config(tmp_path: Path, *, observe_only: bool) -> OrchestratorConfig:
+    from scripts.dev_orchestrator.cli import save_config
+
     coordination = tmp_path / "coordination"
     coordination.mkdir()
     (coordination / "PROTOCOL.md").write_text("# Protocol\nCheck mailboxes.\n", encoding="utf-8")
@@ -70,7 +72,7 @@ def make_config(tmp_path: Path, *, observe_only: bool) -> OrchestratorConfig:
     backend.mkdir()
     mobile.mkdir()
     frozen.mkdir()
-    return OrchestratorConfig(
+    config = OrchestratorConfig(
         coordination_root=coordination,
         backend_root=backend,
         mobile_root=mobile,
@@ -78,6 +80,8 @@ def make_config(tmp_path: Path, *, observe_only: bool) -> OrchestratorConfig:
         observe_only=observe_only,
         metadata={"iteration_validation": {"enabled": False}},
     )
+    save_config(config)
+    return config
 
 
 def result(

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.dev_orchestrator.cli import save_config
 from scripts.dev_orchestrator.review_fallback import (
     fallback_active,
     load_hourly_review,
@@ -35,6 +36,7 @@ def _setup(tmp_path: Path):
             }
         },
     )
+    save_config(config)
     state = WorkerState(
         role="backend",
         status=WorkerStatus.REVIEWING,

@@ -24,9 +24,11 @@ from scripts.dev_orchestrator.types import (
 
 
 def config(tmp_path):
+    from scripts.dev_orchestrator.cli import save_config
+
     root = tmp_path / "coordination"
     root.mkdir()
-    return replace(
+    config = replace(
         OrchestratorConfig.default(root),
         observe_only=False,
         metadata={
@@ -39,6 +41,8 @@ def config(tmp_path):
             }
         },
     )
+    save_config(config)
+    return config
 
 
 def test_fable_review_only_for_ordinary_claude_work(tmp_path):

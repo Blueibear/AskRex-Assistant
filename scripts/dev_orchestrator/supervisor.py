@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -290,17 +293,46 @@ class Supervisor:
             raise ValueError("pending result bound task mismatch")
         return result
 
+    def _admit_phase(self, role: str, *, phase: str, task_id: str) -> None:
+        """Durably start a phase under the same short lock used to commit pause."""
+        if role not in {"backend", "mobile"}:
+            raise ValueError(f"unsupported workstream: {role}")
+        with ControlPlaneLock(self.root / "control-plane.lock", timeout_seconds=2.0):
+            try:
+                current = AtomicJsonStore(self.root / "orchestrator-config.json").read()
+            except (OSError, ValueError) as exc:
+                raise AgentInvocationError(
+                    "supervisor", "paused", "current model-phase policy is unavailable"
+                ) from exc
+            if (
+                self.config.observe_only
+                or not isinstance(current, dict)
+                or current.get("observe_only") is not False
+            ):
+                raise AgentInvocationError("supervisor", "paused", "new model phase paused")
+            # This write is the admission boundary. The last record is audit-only:
+            # never reuse it as permission or treat it as a busy/recovery marker.
+            AtomicJsonStore(self.root / "phase-admissions" / f"{role}.json").write(
+                {
+                    "schema_version": 1,
+                    "kind": "model_phase_admission",
+                    "admission_id": uuid.uuid4().hex,
+                    "role": role,
+                    "phase": phase,
+                    "task_id": task_id,
+                    "pid": os.getpid(),
+                    "admitted_at": datetime.now(UTC).isoformat(),
+                }
+            )
+
     def _invoke_or_recover(
         self, role: str, state: WorkerState, *, phase: str, task_id: str, invoke
     ) -> AgentResult:
         result = self._recover_result(role, state, phase=phase, task_id=task_id)
         if result is None:
-            current = AtomicJsonStore(self.root / "orchestrator-config.json").read(default=None)
-            if self.config.observe_only or (
-                current is not None
-                and (not isinstance(current, dict) or current.get("observe_only") is not False)
-            ):
-                raise AgentInvocationError("supervisor", "paused", "new model phase paused")
+            self._admit_phase(role, phase=phase, task_id=task_id)
+            # Pause blocks later admissions, not completion of an admitted phase.
+            # Keep model execution outside the global lock so peers and pause proceed.
             result = invoke()
         self._set_result_context(role, result)
         return result

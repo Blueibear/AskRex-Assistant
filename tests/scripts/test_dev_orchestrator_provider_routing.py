@@ -461,6 +461,9 @@ def test_done_claim_final_verification_bypasses_openai_even_when_enabled(
     )
     (config.coordination_root / "issues").mkdir(exist_ok=True)
     config = replace(config, observe_only=False)
+    from scripts.dev_orchestrator.cli import save_config
+
+    save_config(config)
     router.config = config
     supervisor = Supervisor(config, router)
     monkeypatch.setattr(supervisor, "_capture_task_base_head", lambda *_args: "1" * 40)

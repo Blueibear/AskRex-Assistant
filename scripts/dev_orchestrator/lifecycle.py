@@ -140,7 +140,10 @@ _CONTROL_DEPTH = threading.local()
 
 
 class ControlPlaneLock:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, timeout_seconds: float = 0.0) -> None:
+        if not 0.0 <= timeout_seconds < float("inf"):
+            raise ValueError("control-plane lock timeout must be finite and non-negative")
+        self._timeout_seconds = timeout_seconds
         self.path = path.resolve()
         self._key = str(self.path).casefold()
         self._thread_lock = _CONTROL_THREAD_LOCKS[self._key]
@@ -153,7 +156,18 @@ class ControlPlaneLock:
         depth = depths.get(self._key, 0)
         if depth == 0:
             try:
-                self._file_lock.acquire()
+                # Only short control-plane transactions opt into cross-process
+                # waiting. Supervisor and role lease locks remain nonblocking.
+                deadline = time.monotonic() + self._timeout_seconds
+                while True:
+                    try:
+                        self._file_lock.acquire()
+                        break
+                    except RuntimeError as exc:
+                        remaining = deadline - time.monotonic()
+                        if not isinstance(exc.__cause__, BlockingIOError) or remaining <= 0:
+                            raise
+                        time.sleep(min(0.01, remaining))
             except Exception:
                 self._thread_lock.release()
                 raise

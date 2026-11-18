@@ -332,7 +332,7 @@ def _build_active_invoker(config: OrchestratorConfig, *, credential_manager=None
 
 
 def set_observe_only(root: Path, observe_only: bool) -> OrchestratorConfig:
-    with ControlPlaneLock(root / "control-plane.lock"):
+    with ControlPlaneLock(root / "control-plane.lock", timeout_seconds=2.0):
         config = replace(load_config(root), observe_only=observe_only)
         save_config(config)
         return config
@@ -623,10 +623,12 @@ def run_locked_cycle(config: OrchestratorConfig, *, invoker=None) -> None:
 
 
 def _run_role_cycle(root: Path, role: str, *, invoker=None) -> None:
-    # Read again on the worker thread so a queued dispatch cannot use stale policy.
-    current = load_config(root)
-    if current.observe_only:
-        return
+    # A queued cycle must win admission against pause, then each model phase
+    # independently requires the supervisor's durable admission transaction.
+    with ControlPlaneLock(root / "control-plane.lock", timeout_seconds=2.0):
+        current = load_config(root)
+        if current.observe_only:
+            return
     # Shared config and transaction corruption must still stop the controller.
     supervisor = Supervisor(current, _ObserveOnlyInvoker())
     try:
@@ -657,19 +659,22 @@ def run_loop(
     ):
         try:
             while max_cycles is None or cycles < max_cycles:
-                current = load_config(config.coordination_root)
                 for role, future in list(active.items()):
                     if future.done():
                         future.result()
                         del active[role]
+                with ControlPlaneLock(
+                    config.coordination_root / "control-plane.lock", timeout_seconds=2.0
+                ):
+                    current = load_config(config.coordination_root)
+                    if not current.observe_only:
+                        for role in ("backend", "mobile"):
+                            if role not in active:
+                                active[role] = pool.submit(
+                                    _run_role_cycle, config.coordination_root, role, invoker=invoker
+                                )
                 if current.observe_only:
                     run_observe_cycle(current)
-                else:
-                    for role in ("backend", "mobile"):
-                        if role not in active:
-                            active[role] = pool.submit(
-                                _run_role_cycle, config.coordination_root, role, invoker=invoker
-                            )
                 cycles += 1
                 if max_cycles is not None and cycles >= max_cycles:
                     break

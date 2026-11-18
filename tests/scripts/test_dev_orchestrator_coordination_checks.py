@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.dev_orchestrator.cli import save_config
 from scripts.dev_orchestrator.coordination_checks import (
     CoordinationCheckError,
     begin_checks,
@@ -48,6 +49,7 @@ def ready(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             }
         },
     )
+    save_config(config)
     acknowledge_handoff(config, "backend", source="test")
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
     real_run = subprocess.run
