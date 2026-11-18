@@ -116,6 +116,8 @@ OpenAI API activation is a separate operator sequence: create/use a dedicated Op
 
 The supervisor itself performs frequent deterministic checks. A background heartbeat remains fresh while a long Claude/Codex subprocess is running, so the watchdog must not mistake legitimate model work for a dead supervisor.
 
+During continuous operation each role has at most one active cycle. The loop reloads configuration before each role dispatch, so a long backend validation does not prevent the mobile role from advancing. Pausing suppresses new dispatches; it does not cancel an active operation. The supervisor keeps its single-instance lock and heartbeat until active operations drain, including when the scheduler fails. Manual `cycle` still waits for both roles.
+
 ## Rollout rule
 
 Never let browser-based coding workers and CLI orchestrator workers write the same worktree concurrently. Initialize and test in observe-only mode. For each role use `request-handoff`, have the trusted local operator verify the active browser worker checkpointed/stopped, record `operator-ack-handoff` with the request nonce and browser-session correlation ID, then `accept-handoff` after the quiescence recheck. Activation remains forbidden until both exclusive leases validate. Any external writer invalidates the lease and blocks further mutation.

@@ -2,6 +2,7 @@ import argparse
 import getpass
 import json
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -14,6 +15,7 @@ from .completion import record_acceptance
 from .handoff import (
     accept_handoff,
     request_handoff,
+    validate_handoff,
     validate_handoffs,
     worker_ack_handoff,
 )
@@ -616,6 +618,16 @@ def run_locked_cycle(config: OrchestratorConfig, *, invoker=None) -> None:
         run_cycle(current, invoker=invoker)
 
 
+def _run_role_cycle(root: Path, role: str, *, invoker=None) -> None:
+    # Read again on the worker thread so a queued dispatch cannot use stale policy.
+    current = load_config(root)
+    if current.observe_only:
+        return
+    validate_handoff(current, role)
+    active_invoker = invoker or _build_active_invoker(current)
+    Supervisor(current, active_invoker).run_role(role)
+
+
 def run_loop(
     config: OrchestratorConfig,
     *,
@@ -626,14 +638,38 @@ def run_loop(
     lock = SupervisorLock(config.coordination_root / _LOCK_NAME)
     heartbeat_path = config.coordination_root / _HEARTBEAT_NAME
     cycles = 0
-    with lock, HeartbeatPump(heartbeat_path):
-        while max_cycles is None or cycles < max_cycles:
-            current = load_config(config.coordination_root)
-            run_cycle(current, invoker=invoker)
-            cycles += 1
-            if max_cycles is not None and cycles >= max_cycles:
-                break
-            sleep_fn(current.poll_seconds)
+    active: dict[str, Future[None]] = {}
+    # The executor drains before heartbeat/lock release, including on failure.
+    with (
+        lock,
+        HeartbeatPump(heartbeat_path),
+        ThreadPoolExecutor(max_workers=2, thread_name_prefix="askrex-workstream") as pool,
+    ):
+        try:
+            while max_cycles is None or cycles < max_cycles:
+                current = load_config(config.coordination_root)
+                for role, future in list(active.items()):
+                    if future.done():
+                        future.result()
+                        del active[role]
+                if current.observe_only:
+                    run_observe_cycle(current)
+                else:
+                    for role in ("backend", "mobile"):
+                        if role not in active:
+                            active[role] = pool.submit(
+                                _run_role_cycle, config.coordination_root, role, invoker=invoker
+                            )
+                cycles += 1
+                if max_cycles is not None and cycles >= max_cycles:
+                    break
+                sleep_fn(current.poll_seconds)
+            for future in active.values():
+                future.result()
+        except BaseException:
+            for future in active.values():
+                future.cancel()
+            raise
 
 
 def build_parser() -> argparse.ArgumentParser:

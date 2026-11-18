@@ -321,25 +321,33 @@ class Supervisor:
         payload = f"{head}\0{context}".encode()
         return hashlib.sha256(payload).hexdigest()
 
+    def run_role(self, role: str) -> None:
+        """Advance one role through the same failure boundary as a manual cycle."""
+        if role not in {"backend", "mobile"}:
+            raise ValueError(f"unsupported workstream: {role}")
+        if self.config.observe_only:
+            return
+        try:
+            self._run_role(role)
+        except Exception as exc:
+            state = self.load_state(role)
+            self._save_state_preserving_pending_result(
+                replace(
+                    state,
+                    status=WorkerStatus.BLOCKED_SYSTEM,
+                    blocked_reason=f"supervisor workstream failure: {exc}",
+                    blocker_kind="system",
+                    resume_status=state.status,
+                )
+            )
+
     def run_cycle(self) -> None:
         if self.config.observe_only:
             return
         with ThreadPoolExecutor(max_workers=2, thread_name_prefix="askrex-workstream") as pool:
-            futures = {role: pool.submit(self._run_role, role) for role in ("backend", "mobile")}
-            for role, future in futures.items():
-                try:
-                    future.result()
-                except Exception as exc:
-                    state = self.load_state(role)
-                    self.save_state(
-                        replace(
-                            state,
-                            status=WorkerStatus.BLOCKED_SYSTEM,
-                            blocked_reason=f"supervisor workstream failure: {exc}",
-                            blocker_kind="system",
-                            resume_status=state.status,
-                        )
-                    )
+            futures = [pool.submit(self.run_role, role) for role in ("backend", "mobile")]
+            for future in futures:
+                future.result()
 
     @staticmethod
     def _task_family(task_id: str) -> str:

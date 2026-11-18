@@ -1243,3 +1243,245 @@ def test_active_invoker_wires_vault_claude_oauth_resolver(tmp_path: Path, monkey
 
     assert invoker._claude_oauth_resolver is not None
     assert invoker._claude_oauth_resolver() == "vault-token"
+
+
+def _scheduler_runtime(tmp_path: Path):
+    root = tmp_path / "coordination"
+    backend = tmp_path / "backend"
+    mobile = tmp_path / "mobile"
+    frozen = tmp_path / "rex-ai-pc-test"
+    for path in (root, backend, mobile, frozen):
+        path.mkdir()
+    _git_repo(backend)
+    _git_repo(mobile)
+    config = initialize_runtime(root, backend, mobile, frozen)
+    _handoff(config)
+    return set_observe_only(root, False)
+
+
+def test_run_loop_continues_mobile_while_backend_is_busy(tmp_path: Path) -> None:
+    import threading
+
+    from scripts.dev_orchestrator.cli import run_loop
+    from scripts.dev_orchestrator.supervisor import Supervisor
+    from scripts.dev_orchestrator.types import AgentResult, TaskItem
+
+    config = _scheduler_runtime(tmp_path)
+    backend_started = threading.Event()
+    mobile_started = threading.Event()
+    mobile_repeated = threading.Event()
+    release_backend = threading.Event()
+    stop = threading.Event()
+    guard = threading.Lock()
+    active = {"backend": 0, "mobile": 0}
+    maximum_active = {"backend": 0, "mobile": 0}
+    calls = {"backend": 0, "mobile": 0}
+    failures = []
+
+    class Invoker:
+        def implement(self, role, *_args):
+            with guard:
+                active[role] += 1
+                maximum_active[role] = max(maximum_active[role], active[role])
+                calls[role] += 1
+                role_calls = calls[role]
+            try:
+                if role == "backend":
+                    backend_started.set()
+                    if not release_backend.wait(10):
+                        raise RuntimeError("test did not release backend")
+                else:
+                    mobile_started.set()
+                    if role_calls == 2:
+                        mobile_repeated.set()
+                return AgentResult("continue", "bounded fake work", "continue")
+            finally:
+                with guard:
+                    active[role] -= 1
+
+        def lead(self, *_args, **_kwargs):
+            raise AssertionError("test tasks are already queued")
+
+    invoker = Invoker()
+    supervisor = Supervisor(config, invoker)
+    for role in ("backend", "mobile"):
+        supervisor.enqueue(role, TaskItem(role + "-work", "bounded test task"))
+
+    def run():
+        try:
+            run_loop(config, invoker=invoker, max_cycles=40, sleep_fn=lambda _: stop.wait(0.02))
+        except BaseException as exc:
+            failures.append(exc)
+
+    controller = threading.Thread(target=run)
+    controller.start()
+    try:
+        assert backend_started.wait(5)
+        assert mobile_started.wait(5)
+        assert mobile_repeated.wait(3), "mobile waited for the unrelated backend task"
+        assert not release_backend.is_set()
+        assert maximum_active == {"backend": 1, "mobile": 1}
+        assert calls["backend"] == 1
+    finally:
+        set_observe_only(config.coordination_root, True)
+        release_backend.set()
+        stop.set()
+        controller.join(10)
+    assert not controller.is_alive()
+    assert not failures
+
+
+def test_run_loop_pause_prevents_new_role_dispatches(tmp_path: Path) -> None:
+    import threading
+
+    from scripts.dev_orchestrator.cli import run_loop
+    from scripts.dev_orchestrator.supervisor import Supervisor
+    from scripts.dev_orchestrator.types import AgentResult, TaskItem
+
+    config = _scheduler_runtime(tmp_path)
+    started = {role: threading.Event() for role in ("backend", "mobile")}
+    release = threading.Event()
+    calls = []
+    sleeps = 0
+
+    class Invoker:
+        def implement(self, role, *_args):
+            calls.append(role)
+            started[role].set()
+            if not release.wait(10):
+                raise RuntimeError("test did not release workers")
+            return AgentResult("continue", "bounded fake work", "continue")
+
+        def lead(self, *_args, **_kwargs):
+            raise AssertionError("test tasks are already queued")
+
+    invoker = Invoker()
+    supervisor = Supervisor(config, invoker)
+    for role in ("backend", "mobile"):
+        supervisor.enqueue(role, TaskItem(role + "-work", "bounded test task"))
+
+    def pause_after_dispatch(_seconds):
+        nonlocal sleeps
+        sleeps += 1
+        assert started["backend"].wait(5)
+        assert started["mobile"].wait(5)
+        set_observe_only(config.coordination_root, True)
+        release.set()
+
+    try:
+        run_loop(config, invoker=invoker, max_cycles=4, sleep_fn=pause_after_dispatch)
+    finally:
+        release.set()
+    assert sleeps == 3
+    assert sorted(calls) == ["backend", "mobile"]
+
+
+def test_run_loop_drains_workers_before_releasing_supervisor_lock(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from scripts.dev_orchestrator import cli as cli_module
+    from scripts.dev_orchestrator.cli import run_loop
+    from scripts.dev_orchestrator.supervisor import Supervisor
+    from scripts.dev_orchestrator.types import AgentResult, TaskItem
+
+    config = _scheduler_runtime(tmp_path)
+    started = threading.Event()
+    release = threading.Event()
+    stopping = threading.Event()
+    failures = []
+    calls = []
+
+    def one_worker(**kwargs):
+        kwargs["max_workers"] = 1
+        return ThreadPoolExecutor(**kwargs)
+
+    monkeypatch.setattr(cli_module, "ThreadPoolExecutor", one_worker)
+
+    class Invoker:
+        def implement(self, role, *_args):
+            calls.append(role)
+            if role == "backend":
+                started.set()
+                if not release.wait(10):
+                    raise RuntimeError("test did not release backend")
+            return AgentResult("continue", "bounded fake work", "continue")
+
+        def lead(self, *_args, **_kwargs):
+            raise AssertionError("test tasks are already queued")
+
+    invoker = Invoker()
+    supervisor = Supervisor(config, invoker)
+    for role in ("backend", "mobile"):
+        supervisor.enqueue(role, TaskItem(role + "-work", "bounded test task"))
+
+    def fail_poll(_seconds):
+        assert started.wait(5)
+        stopping.set()
+        raise RuntimeError("injected scheduler failure")
+
+    def run():
+        try:
+            run_loop(config, invoker=invoker, sleep_fn=fail_poll)
+        except BaseException as exc:
+            failures.append(exc)
+
+    controller = threading.Thread(target=run)
+    controller.start()
+    try:
+        assert started.wait(5)
+        assert stopping.wait(3), "scheduler could not inspect state during active work"
+        with pytest.raises(RuntimeError, match="already running"):
+            with SupervisorLock(config.coordination_root / "supervisor.lock"):
+                pass
+        assert controller.is_alive()
+    finally:
+        release.set()
+        controller.join(10)
+    assert not controller.is_alive()
+    assert len(failures) == 1
+    assert str(failures[0]) == "injected scheduler failure"
+    assert calls == ["backend"], "queued mobile work started after scheduler failure"
+    with SupervisorLock(config.coordination_root / "supervisor.lock"):
+        pass
+
+
+def test_run_loop_propagates_role_start_failure_on_final_poll(tmp_path: Path, monkeypatch) -> None:
+    from scripts.dev_orchestrator import cli as cli_module
+
+    config = _scheduler_runtime(tmp_path)
+
+    def unavailable_role(*_args, **_kwargs):
+        raise RuntimeError("role launch could not validate its lease")
+
+    monkeypatch.setattr(cli_module, "_run_role_cycle", unavailable_role)
+    with pytest.raises(RuntimeError, match="could not validate its lease"):
+        cli_module.run_loop(config, max_cycles=1)
+
+
+def test_role_failure_preserves_unconsumed_durable_result(tmp_path: Path, monkeypatch) -> None:
+    from scripts.dev_orchestrator.storage import AtomicJsonStore
+    from scripts.dev_orchestrator.supervisor import Supervisor
+
+    config = _scheduler_runtime(tmp_path)
+    supervisor = Supervisor(config, object())
+    store = AtomicJsonStore(config.coordination_root / "handoff" / "backend.json")
+    record = store.read()
+    pending = {"invocation_id": "pending-before-failure", "phase": "implement"}
+    record["pending_result"] = pending
+    store.write(record)
+
+    def fail_after_receiving_result(role):
+        supervisor._result_context.role = role
+        supervisor._result_context.invocation_id = pending["invocation_id"]
+        raise RuntimeError("result application failed")
+
+    monkeypatch.setattr(supervisor, "_run_role", fail_after_receiving_result)
+    supervisor.run_role("backend")
+
+    assert store.read().get("pending_result") == pending
+    state = supervisor.load_state("backend")
+    assert state.status.value == "blocked_system"
+    assert state.last_result_invocation_id == ""
