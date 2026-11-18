@@ -657,10 +657,24 @@ def test_backend_human_blocker_does_not_stop_mobile(tmp_path: Path) -> None:
     assert supervisor.load_state("mobile").status is WorkerStatus.IMPLEMENTING
 
 
-def test_empty_queue_invokes_astra_lead_only_when_active(tmp_path: Path) -> None:
+def test_empty_queue_invokes_astra_lead_only_when_active(tmp_path: Path, monkeypatch) -> None:
+    from scripts.dev_orchestrator import supervisor as supervisor_module
+    from scripts.dev_orchestrator.completion import CompletionGate
+
     invoker = FakeInvoker()
     invoker.add("backend", "lead", result("assign", task_id="B-2", task_prompt="Next backend task"))
     invoker.add("mobile", "lead", result("done"))
+    # Keep planner routing independent of this fixture's empty repositories.
+    monkeypatch.setattr(
+        supervisor_module,
+        "prepare_final_review",
+        lambda *_args, **_kwargs: CompletionGate(
+            False,
+            ("CI workflow is missing",),
+            False,
+            local_remediation=("missing_ci_workflow",),
+        ),
+    )
     supervisor = Supervisor(make_config(tmp_path, observe_only=False), invoker)
 
     supervisor.run_cycle()
@@ -670,7 +684,7 @@ def test_empty_queue_invokes_astra_lead_only_when_active(tmp_path: Path) -> None
     assert backend.status is WorkerStatus.IMPLEMENTING
     assert backend.task == TaskItem("B-2", "Next backend task")
     assert mobile.status is WorkerStatus.IMPLEMENTING
-    assert mobile.task is not None and mobile.task.task_id == "FINAL-mobile"
+    assert mobile.task is not None and mobile.task.task_id == "FINAL-mobile-ci-workflow"
     assert ("backend", "lead", "") in invoker.calls
     assert ("mobile", "lead", "") in invoker.calls
 
