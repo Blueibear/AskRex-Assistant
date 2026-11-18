@@ -463,9 +463,18 @@ def test_done_claim_final_verification_bypasses_openai_even_when_enabled(
     config = replace(config, observe_only=False)
     router.config = config
     supervisor = Supervisor(config, router)
+    monkeypatch.setattr(supervisor, "_capture_task_base_head", lambda *_args: "1" * 40)
     monkeypatch.setattr(
-        supervisor_module, "evaluate_completion", lambda *_args: CompletionGate(True)
+        supervisor_module, "prepare_final_review", lambda *_args, **_kwargs: CompletionGate(True)
     )
+    monkeypatch.setattr(
+        supervisor_module,
+        "recheck_final_completion",
+        lambda *_args, **_kwargs: CompletionGate(True),
+    )
+    # Full final-proof construction is covered through the real CLI boundary
+    # in test_dev_orchestrator_final_review.py; this test isolates routing.
+    monkeypatch.setattr(supervisor, "_require_final_evidence", lambda *_args: None)
     monkeypatch.setattr(supervisor_module, "validate_handoff", lambda *_args: None)
 
     supervisor._done_claim("backend", WorkerState("backend"), "ctx")

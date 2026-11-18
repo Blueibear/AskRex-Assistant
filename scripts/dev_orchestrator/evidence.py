@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from dataclasses import dataclass
@@ -463,6 +464,19 @@ def build_review_evidence(
     )
 
     validated_artifacts = _validated_artifact_contents(config, receipt, task)
+    if task.task_id == f"FINAL-VERIFY-{role}":
+        from .completion import load_final_validation_receipt
+
+        try:
+            final_receipt = load_final_validation_receipt(config, role, head=head)
+        except (OSError, ValueError) as exc:
+            raise EvidenceError(f"invalid final completion evidence: {exc}") from exc
+        validated_artifacts = (
+            "### Final completion observations bound to the validation receipt\n"
+            + json.dumps(final_receipt.completion_evidence, indent=2, sort_keys=True)
+            + "\n\n"
+            + validated_artifacts
+        )
     receipt_path = (
         config.coordination_root / "validation" / f"{role}-{task.task_id}.json"
     ).resolve()

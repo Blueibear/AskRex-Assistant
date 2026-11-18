@@ -945,8 +945,10 @@ def test_final_completion_auth_gate_blocks_user_instead_of_assigning_work(
     supervisor = Supervisor(config, invoker)
     monkeypatch.setattr(
         supervisor_module,
-        "evaluate_completion",
-        lambda *_args: CompletionGate(False, ("GitHub CLI authentication required",), True),
+        "prepare_final_review",
+        lambda *_args, **_kwargs: CompletionGate(
+            False, ("GitHub CLI authentication required",), True
+        ),
     )
 
     supervisor._run_role("backend")
@@ -1027,7 +1029,15 @@ def test_final_sol_pass_revalidates_completion_before_done(tmp_path: Path, monke
             CompletionGate(False, ("required CI changed during final review",), False),
         ]
     )
-    monkeypatch.setattr(supervisor_module, "evaluate_completion", lambda *_args: next(gates))
+    monkeypatch.setattr(
+        supervisor_module, "prepare_final_review", lambda *_args, **_kwargs: next(gates)
+    )
+    monkeypatch.setattr(
+        supervisor_module, "recheck_final_completion", lambda *_args, **_kwargs: next(gates)
+    )
+    # This policy-only test isolates the post-review gate; final_review tests
+    # exercise the real receipt, host capture, and CLI evidence boundary.
+    monkeypatch.setattr(supervisor, "_require_final_evidence", lambda *_args: None)
 
     supervisor._done_claim("backend", WorkerState(role="backend"), "context")
 
@@ -1293,8 +1303,10 @@ def test_done_claim_does_not_promote_owner_deferred_issue(tmp_path: Path, monkey
     )
     monkeypatch.setattr(
         supervisor_module,
-        "evaluate_completion",
-        lambda *_args: CompletionGate(False, ("release campaign remains active",), False),
+        "prepare_final_review",
+        lambda *_args, **_kwargs: CompletionGate(
+            False, ("release campaign remains active",), False
+        ),
     )
 
     supervisor = Supervisor(config, invoker)
@@ -1310,17 +1322,27 @@ def test_final_done_transition_holds_role_lease_lock(tmp_path: Path, monkeypatch
     from scripts.dev_orchestrator import supervisor as supervisor_module
     from scripts.dev_orchestrator.completion import CompletionGate
     from scripts.dev_orchestrator.handoff import role_lease_lock_path
+    from scripts.dev_orchestrator.lifecycle import SupervisorLock
 
     invoker = FakeInvoker()
     config = make_config(tmp_path, observe_only=False)
     supervisor = Supervisor(config, invoker)
     monkeypatch.setattr(
-        supervisor_module, "evaluate_completion", lambda *_args: CompletionGate(True)
+        supervisor_module, "prepare_final_review", lambda *_args, **_kwargs: CompletionGate(True)
     )
+    monkeypatch.setattr(
+        supervisor_module,
+        "recheck_final_completion",
+        lambda *_args, **_kwargs: CompletionGate(True),
+    )
+    monkeypatch.setattr(supervisor, "_require_final_evidence", lambda *_args: None)
     observed = {"locked": False}
 
     def verify_locked(_config, role):
-        observed["locked"] = role_lease_lock_path(config, role).exists()
+        with pytest.raises(RuntimeError, match="already running"):
+            with SupervisorLock(role_lease_lock_path(config, role)):
+                pytest.fail("final completion must hold the existing OS lease lock")
+        observed["locked"] = True
 
     monkeypatch.setattr(supervisor_module, "validate_handoff", verify_locked)
     supervisor._done_claim("backend", WorkerState(role="backend"), "context")

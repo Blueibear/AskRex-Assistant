@@ -10,7 +10,7 @@ from typing import Protocol
 
 from .alerts import AlertSink
 from .completed_tasks import CompletedTaskLedger
-from .completion import evaluate_completion
+from .completion import CompletionGate, prepare_final_review, recheck_final_completion
 from .coordination import (
     _issue_status,
     active_owned_issues,
@@ -547,6 +547,9 @@ class Supervisor:
                 self._plan(role, state, context)
                 return
 
+        if state.task.task_id == f"FINAL-VERIFY-{role}":
+            self._final_verify(role, state, context)
+            return
         if state.status is WorkerStatus.REVIEWING:
             self._review(role, state, context)
             return
@@ -662,44 +665,123 @@ class Supervisor:
                 )
             )
             return
-        gate = evaluate_completion(self.config, role)
-        if not gate.ready:
-            reason = "; ".join(gate.reasons)
-            if gate.needs_user:
-                self.save_state(
-                    replace(
-                        state,
-                        status=WorkerStatus.BLOCKED_USER,
-                        task=None,
-                        blocked_reason=reason,
-                        blocker_kind=gate.blocker_kind or "human",
-                        resume_status=WorkerStatus.PLANNING,
-                    )
-                )
-                return
-            prompt = "Satisfy deterministic final completion gates: " + reason
-            self.save_state(
-                replace(
-                    state,
-                    status=WorkerStatus.IMPLEMENTING,
-                    task=TaskItem(f"FINAL-{role}", prompt),
-                    task_base_head=self._capture_task_base_head(role),
-                    blocked_reason="",
-                )
-            )
-            return
         final_task = TaskItem(
             f"FINAL-VERIFY-{role}",
             "Independently verify final workstream readiness, tests, CI, docs, and safety gates.",
         )
+        state = replace(
+            state,
+            status=WorkerStatus.IMPLEMENTING,
+            task=final_task,
+            task_base_head=self._capture_task_base_head(role),
+            blocked_reason="",
+            blocker_kind="",
+            resume_status=None,
+        )
+        # This reserved task prepares deterministic final evidence, never model
+        # implementation. Persist it before preparation so restart preserves phase.
+        self.save_state(state)
+        self._final_verify(role, state, context)
+
+    def _block_final_gate(self, state: WorkerState, gate: CompletionGate) -> None:
+        reason = gate.system_error or "; ".join(gate.reasons)
+        if gate.system_error or gate.blocker_kind == "incomplete_evidence":
+            self._save_state_preserving_pending_result(
+                replace(
+                    state,
+                    status=WorkerStatus.BLOCKED_SYSTEM,
+                    blocked_reason=reason,
+                    blocker_kind="incomplete_evidence" if not gate.system_error else "validation",
+                    resume_status=None,
+                )
+            )
+        elif gate.needs_user:
+            self.save_state(
+                replace(
+                    state,
+                    status=WorkerStatus.BLOCKED_USER,
+                    task=None,
+                    blocked_reason=reason,
+                    blocker_kind=gate.blocker_kind or "human",
+                    resume_status=WorkerStatus.PLANNING,
+                )
+            )
+        else:
+            self.save_state(
+                replace(
+                    state,
+                    status=WorkerStatus.IMPLEMENTING,
+                    task=TaskItem(
+                        f"FINAL-{state.role}",
+                        "Satisfy deterministic final completion gates: " + reason,
+                    ),
+                    task_base_head=self._capture_task_base_head(state.role),
+                    blocked_reason="",
+                    blocker_kind="",
+                    resume_status=None,
+                )
+            )
+
+    def _require_final_evidence(self, role: str, state: WorkerState, context: str) -> None:
+        assert state.task is not None
+        bundle = build_review_evidence(
+            self.config, role, state, state.task, context, "final-verification-preflight"
+        )
+        if bundle.truncated:
+            raise EvidenceError(
+                "review-critical evidence truncated: " + ", ".join(bundle.truncation_reasons)
+            )
+
+    def _final_verify(self, role: str, state: WorkerState, context: str) -> None:
+        assert state.task is not None and state.task.task_id == f"FINAL-VERIFY-{role}"
+        if state.status is WorkerStatus.IMPLEMENTING:
+            try:
+                begin_checks(
+                    self.config,
+                    role,
+                    state.task,
+                    state.task_base_head,
+                    self._capture_task_base_head(role),
+                    recovered=True,
+                )
+                gate = prepare_final_review(self.config, role, head=state.task_base_head)
+                if not gate.ready:
+                    self._block_final_gate(state, gate)
+                    return
+                finish_checks(
+                    self.config, role, state.task, state.task_base_head, state.task_base_head
+                )
+            except CoordinationCheckError as exc:
+                self._handle_invocation_error(
+                    role,
+                    state,
+                    "review",
+                    AgentInvocationError("supervisor", "incomplete_evidence", str(exc)),
+                    context,
+                )
+                return
+            state = replace(state, status=WorkerStatus.REVIEWING)
+            self.save_state(state)
         try:
+            # Recovery must verify the same complete evidence before applying a
+            # durable reviewer result, even when no fresh model call is needed.
+            self._require_final_evidence(role, state, context)
             result = self._invoke_or_recover(
                 role,
                 state,
                 phase="review",
-                task_id=final_task.task_id,
-                invoke=lambda: self.invoker.review(role, state, final_task, context, SOL_MODEL),
+                task_id=state.task.task_id,
+                invoke=lambda: self.invoker.review(role, state, state.task, context, SOL_MODEL),
             )
+        except EvidenceError as exc:
+            self._handle_invocation_error(
+                role,
+                state,
+                "review",
+                AgentInvocationError("supervisor", "incomplete_evidence", str(exc)),
+                context,
+            )
+            return
         except AgentInvocationError as exc:
             self._handle_invocation_error(role, state, "review", exc, context)
             return
@@ -707,38 +789,31 @@ class Supervisor:
             return
         if result.outcome == "pass":
             with ControlPlaneLock(role_lease_lock_path(self.config, role)):
-                post_review_gate = evaluate_completion(self.config, role)
-                if post_review_gate.ready:
-                    validate_handoff(self.config, role)
-                    self.save_state(replace(state, status=WorkerStatus.DONE, blocked_reason=""))
+                gate = recheck_final_completion(self.config, role, head=state.task_base_head)
+                if not gate.ready:
+                    self._block_final_gate(state, gate)
                     return
-            if not post_review_gate.ready:
-                reason = "; ".join(post_review_gate.reasons)
-                if post_review_gate.needs_user:
-                    self.save_state(
-                        replace(
-                            state,
-                            status=WorkerStatus.BLOCKED_USER,
-                            task=None,
-                            blocked_reason=reason,
-                            blocker_kind=post_review_gate.blocker_kind or "human",
-                            resume_status=WorkerStatus.PLANNING,
-                        )
+                validate_handoff(self.config, role)
+                try:
+                    self._require_final_evidence(role, state, context)
+                except EvidenceError as exc:
+                    self._handle_invocation_error(
+                        role,
+                        state,
+                        "review",
+                        AgentInvocationError("supervisor", "incomplete_evidence", str(exc)),
+                        context,
                     )
-                else:
-                    self.save_state(
-                        replace(
-                            state,
-                            status=WorkerStatus.IMPLEMENTING,
-                            task=TaskItem(
-                                f"FINAL-{role}",
-                                "Satisfy deterministic final completion gates: " + reason,
-                            ),
-                            task_base_head=self._capture_task_base_head(role),
-                            blocked_reason="",
-                        )
+                    return
+                self.save_state(
+                    replace(
+                        state,
+                        status=WorkerStatus.DONE,
+                        blocked_reason="",
+                        blocker_kind="",
+                        resume_status=None,
                     )
-                return
+                )
             return
         if result.outcome == "changes_required":
             prompt = "\n\n".join(part for part in (result.summary, result.next_action) if part)

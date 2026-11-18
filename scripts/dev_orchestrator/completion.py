@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -12,6 +12,7 @@ from .handoff import HandoffRequired, validate_handoff
 from .lifecycle import ControlPlaneLock
 from .storage import AtomicJsonStore
 from .types import OrchestratorConfig
+from .validation import ValidationReceipt, load_validation_receipt, run_iteration_validation
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,9 @@ class CompletionGate:
     reasons: tuple[str, ...] = ()
     needs_user: bool = False
     blocker_kind: str = ""
+    head: str = ""
+    evidence: dict | None = None
+    system_error: str = ""
 
 
 _BACKEND_CHECKS = (
@@ -151,11 +155,12 @@ def record_acceptance(root: Path, role: str, kind: str, evidence: str) -> Path:
 
 
 def _acceptance_reasons(
-    config: OrchestratorConfig, role: str, current_head: str
+    config: OrchestratorConfig, role: str, current_head: str, *, payload: dict | None = None
 ) -> tuple[str, ...]:
     manifest = COMPLETION_MANIFESTS[role]
     root = config.coordination_root
-    payload = AtomicJsonStore(root / "completion" / f"{role}-acceptance.json").read(default={})
+    if payload is None:
+        payload = AtomicJsonStore(root / "completion" / f"{role}-acceptance.json").read(default={})
     reasons: list[str] = []
     try:
         lease = _lease_record(root, role)
@@ -254,7 +259,7 @@ def _check_conclusion(check: dict) -> str:
     return str(check.get("conclusion") or check.get("state") or "").upper()
 
 
-def evaluate_completion(config: OrchestratorConfig, role: str) -> CompletionGate:
+def _completion_preflight(config: OrchestratorConfig, role: str) -> CompletionGate:
     if role not in COMPLETION_MANIFESTS:
         raise ValueError(f"unsupported completion role: {role}")
     repo = _repo(config, role)
@@ -287,7 +292,10 @@ def evaluate_completion(config: OrchestratorConfig, role: str) -> CompletionGate
         reasons.append("cannot resolve current Git HEAD")
         return CompletionGate(False, tuple(reasons))
     head = head_result.stdout.strip()
-    acceptance = _acceptance_reasons(config, role, head)
+    acceptance_payload = AtomicJsonStore(
+        config.coordination_root / "completion" / f"{role}-acceptance.json"
+    ).read(default={})
+    acceptance = _acceptance_reasons(config, role, head, payload=acceptance_payload)
     reasons.extend(acceptance)
     needs_user = bool(acceptance)
     blocker_kind = "acceptance" if acceptance else ""
@@ -327,6 +335,27 @@ def evaluate_completion(config: OrchestratorConfig, role: str) -> CompletionGate
         reasons.append("GitHub pull-request status was not valid JSON")
         return CompletionGate(False, tuple(reasons), needs_user, blocker_kind)
 
+    if not isinstance(payload, dict):
+        return CompletionGate(False, ("GitHub pull-request status was not an object",))
+    reasons.extend(_pull_request_reasons(payload, manifest, head, lease))
+    evidence = {
+        "schema_version": 1,
+        "role": role,
+        "head": head,
+        "lease_id": lease["lease_id"],
+        "required_checks": list(manifest.required_checks),
+        "pull_request": payload,
+        "acceptance": acceptance_payload,
+    }
+    return CompletionGate(
+        not reasons, tuple(reasons), needs_user, blocker_kind, head=head, evidence=evidence
+    )
+
+
+def _pull_request_reasons(
+    payload: dict, manifest: CompletionManifest, head: str, lease: dict
+) -> tuple[str, ...]:
+    reasons: list[str] = []
     if str(payload.get("state", "")).upper() != "OPEN":
         reasons.append("pull request must be open")
     if str(payload.get("baseRefName", "")) != manifest.base_branch:
@@ -359,6 +388,110 @@ def evaluate_completion(config: OrchestratorConfig, role: str) -> CompletionGate
     if hard_failures:
         reasons.append("CI contains failing checks: " + ", ".join(hard_failures))
 
-    if not reasons:
-        reasons.extend(_run_local_gates(repo, manifest))
-    return CompletionGate(not reasons, tuple(reasons), needs_user, blocker_kind)
+    return tuple(reasons)
+
+
+def evaluate_completion(config: OrchestratorConfig, role: str) -> CompletionGate:
+    """Check all completion requirements, including fresh local release gates."""
+    gate = _completion_preflight(config, role)
+    if not gate.ready:
+        return gate
+    failures = _run_local_gates(_repo(config, role), COMPLETION_MANIFESTS[role])
+    return replace(gate, ready=not failures, reasons=failures)
+
+
+def prepare_final_review(config: OrchestratorConfig, role: str, *, head: str) -> CompletionGate:
+    """Execute the canonical final gates and retain their actual review evidence."""
+    gate = _completion_preflight(config, role)
+    if not gate.ready:
+        return gate
+    if gate.head != head:
+        return CompletionGate(False, system_error="final validation revision changed")
+    task_id = f"FINAL-VERIFY-{role}"
+    local_gates = COMPLETION_MANIFESTS[role].local_gates
+    # Final release gates are authoritative even when ordinary iteration gates
+    # are disabled or scoped. This configuration is local to this execution.
+    validation_config = replace(
+        config,
+        metadata={
+            **config.metadata,
+            "iteration_validation": {
+                "enabled": True,
+                role: {
+                    "overrides": [
+                        {
+                            "task_prefix": task_id,
+                            "gates": [
+                                {"name": item.name, "command": list(item.command), "cwd": item.cwd}
+                                for item in local_gates
+                            ],
+                        }
+                    ],
+                },
+            },
+        },
+    )
+    report = run_iteration_validation(
+        validation_config,
+        role,
+        task_id,
+        base_head=head,
+        head=head,
+        completion_evidence=gate.evidence,
+    )
+    if not report.passed or report.receipt is None:
+        return CompletionGate(
+            False,
+            (report.feedback,) if report.feedback else (),
+            system_error=report.system_error
+            or ("final validation produced no receipt" if report.passed else ""),
+        )
+    return gate
+
+
+def load_final_validation_receipt(
+    config: OrchestratorConfig, role: str, *, head: str
+) -> ValidationReceipt:
+    """Require the final task's real gates and complete completion observations."""
+    receipt = load_validation_receipt(
+        config, role, f"FINAL-VERIFY-{role}", base_head=head, head=head
+    )
+    manifest = COMPLETION_MANIFESTS[role]
+    actual = [(item.name, item.command, item.cwd) for item in receipt.gates]
+    expected = [(item.name, item.command, item.cwd) for item in manifest.local_gates]
+    if not expected or actual != expected:
+        raise ValueError("final validation receipt does not match the completion manifest")
+    evidence = receipt.completion_evidence
+    lease = _lease_record(config.coordination_root, role)
+    if (
+        not isinstance(evidence, dict)
+        or evidence.get("schema_version") != 1
+        or evidence.get("role") != role
+        or evidence.get("head") != head
+        or evidence.get("lease_id") != lease.get("lease_id")
+        or evidence.get("required_checks") != list(manifest.required_checks)
+        or not isinstance(evidence.get("pull_request"), dict)
+        or not isinstance(evidence.get("acceptance"), dict)
+    ):
+        raise ValueError("final validation is missing bound completion evidence")
+    reasons = _pull_request_reasons(evidence["pull_request"], manifest, head, lease)
+    reasons += _acceptance_reasons(config, role, head, payload=evidence["acceptance"])
+    if reasons:
+        raise ValueError("final completion evidence is invalid: " + "; ".join(reasons))
+    return receipt
+
+
+def recheck_final_completion(config: OrchestratorConfig, role: str, *, head: str) -> CompletionGate:
+    """Refresh mutable CI/acceptance gates while retaining same-HEAD local proof."""
+    gate = _completion_preflight(config, role)
+    if not gate.ready:
+        return gate
+    if gate.head != head:
+        return CompletionGate(
+            False, ("final review revision changed",), blocker_kind="incomplete_evidence"
+        )
+    try:
+        load_final_validation_receipt(config, role, head=head)
+    except (OSError, ValueError) as exc:
+        return CompletionGate(False, (str(exc),), blocker_kind="incomplete_evidence")
+    return gate

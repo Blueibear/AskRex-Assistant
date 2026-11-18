@@ -49,9 +49,10 @@ class ValidationReceipt:
     head: str
     gates: tuple[ValidationGateEvidence, ...]
     passed_at: str
+    completion_evidence: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "role": self.role,
             "task_id": self.task_id,
             "base_head": self.base_head,
@@ -59,6 +60,9 @@ class ValidationReceipt:
             "gates": [gate.to_dict() for gate in self.gates],
             "passed_at": self.passed_at,
         }
+        if self.completion_evidence is not None:
+            payload["completion_evidence"] = self.completion_evidence
+        return payload
 
 
 @dataclass(frozen=True)
@@ -139,6 +143,9 @@ def load_validation_receipt(
         raise ValueError("validation receipt timestamp is malformed") from exc
     if passed_stamp.tzinfo is None or passed_stamp.utcoffset() is None:
         raise ValueError("validation receipt timestamp must be timezone-aware")
+    completion_evidence = payload.get("completion_evidence")
+    if completion_evidence is not None and not isinstance(completion_evidence, dict):
+        raise ValueError("validation receipt completion evidence is malformed")
     return ValidationReceipt(
         role=role,
         task_id=task_id,
@@ -146,6 +153,7 @@ def load_validation_receipt(
         head=head,
         gates=tuple(gates),
         passed_at=passed_at,
+        completion_evidence=completion_evidence,
     )
 
 
@@ -425,6 +433,7 @@ def run_iteration_validation(
     base_head: str = "",
     head: str = "",
     coordination_only: bool = False,
+    completion_evidence: dict[str, Any] | None = None,
 ) -> ValidationReport:
     _receipt_path(config, role, task_id)
     try:
@@ -486,6 +495,7 @@ def run_iteration_validation(
             head=head,
             gates=tuple(evidence),
             passed_at=datetime.now(UTC).isoformat(),
+            completion_evidence=completion_evidence,
         )
         AtomicJsonStore(_receipt_path(config, role, task_id)).write(receipt.to_dict())
         return ValidationReport(True, receipt=receipt)
