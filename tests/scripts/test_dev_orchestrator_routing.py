@@ -43,6 +43,36 @@ def _safe_config(tmp_path: Path):
     return config, backend, mobile
 
 
+@pytest.fixture
+def complete_review_evidence(monkeypatch: pytest.MonkeyPatch):
+    """Supply complete input only to routing, scratch, and result-binding tests."""
+    from scripts.dev_orchestrator import runner
+    from scripts.dev_orchestrator.evidence import ReviewEvidenceBundle
+    from scripts.dev_orchestrator.handoff import repo_snapshot
+
+    def review_state(config):
+        assert config.backend_root is not None
+        head, dirty = repo_snapshot(config.backend_root)
+        assert not dirty
+
+        def build_bundle(_config, role, state, task, _context, _invocation_id):
+            assert _config is config
+            assert role == "backend"
+            assert state.task_base_head == head
+            return ReviewEvidenceBundle(
+                text=f"Review evidence for {task.task_id} at {head}",
+                truncated=False,
+                truncation_reasons=(),
+                base_head=head,
+                head=head,
+            )
+
+        monkeypatch.setattr(runner, "build_review_evidence", build_bundle)
+        return WorkerState("backend", task_base_head=head)
+
+    return review_state
+
+
 def test_codex_task_prompt_defers_supervisor_owned_evidence() -> None:
     task = TaskItem(
         "MOBILE-1",
@@ -461,7 +491,7 @@ def test_cli_invoker_uses_codex_for_review_and_sol_for_lead(
     assert str(mobile.resolve()) not in calls[1][0]
 
 
-def test_cli_invoker_raises_typed_usage_failure(tmp_path: Path) -> None:
+def test_cli_invoker_raises_typed_usage_failure(tmp_path: Path, complete_review_evidence) -> None:
     from scripts.dev_orchestrator.runner import AgentInvocationError, CliAgentInvoker, ProcessResult
     from scripts.dev_orchestrator.types import TaskItem
 
@@ -473,7 +503,7 @@ def test_cli_invoker_raises_typed_usage_failure(tmp_path: Path) -> None:
     )
     with __import__("pytest").raises(AgentInvocationError) as exc:
         invoker.review(
-            "backend", WorkerState("backend"), TaskItem("B-1", "Fix"), "ctx", TERRA_MODEL
+            "backend", complete_review_evidence(config), TaskItem("B-1", "Fix"), "ctx", TERRA_MODEL
         )
     assert exc.value.provider == "codex"
     assert exc.value.kind == "usage_limit"
@@ -1290,7 +1320,7 @@ def test_production_claude_rejects_concurrent_live_repo_change(tmp_path: Path, m
 
 @pytest.mark.parametrize("phase", ["review", "lead"])
 def test_codex_results_validate_before_handoff_lease_mutation(
-    tmp_path: Path, monkeypatch, phase: str
+    tmp_path: Path, monkeypatch, phase: str, complete_review_evidence
 ) -> None:
     from scripts.dev_orchestrator import runner
     from scripts.dev_orchestrator.runner import AgentInvocationError, ProcessResult
@@ -1309,7 +1339,7 @@ def test_codex_results_validate_before_handoff_lease_mutation(
         if phase == "review":
             invoker.review(
                 "backend",
-                WorkerState("backend"),
+                complete_review_evidence(config),
                 TaskItem("B-INVALID-CODEX", "Invalid reviewer output"),
                 "ctx",
                 TERRA_MODEL,
@@ -1448,7 +1478,7 @@ def test_implementation_context_invalid_issue_update_does_not_publish(tmp_path: 
     assert not (backend / "should-not-publish.txt").exists()
 
 
-def test_custom_codex_executor_uses_scratch_clone(tmp_path: Path) -> None:
+def test_custom_codex_executor_uses_scratch_clone(tmp_path: Path, complete_review_evidence) -> None:
     import json
 
     from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
@@ -1476,7 +1506,11 @@ def test_custom_codex_executor_uses_scratch_clone(tmp_path: Path) -> None:
         )
 
     result = CliAgentInvoker(config, execute=execute, allow_test_executor=True).review(
-        "backend", WorkerState("backend"), TaskItem("B-REVIEW", "Review"), "ctx", TERRA_MODEL
+        "backend",
+        complete_review_evidence(config),
+        TaskItem("B-REVIEW", "Review"),
+        "ctx",
+        TERRA_MODEL,
     )
     assert result.outcome == "pass"
     assert observed["cwd"] != backend.resolve()
@@ -1598,7 +1632,9 @@ def test_scratch_cleanup_exhausted_sharing_violation_is_nonfatal(
     assert scratch.exists()
 
 
-def test_production_codex_review_uses_disposable_clone(tmp_path: Path, monkeypatch) -> None:
+def test_production_codex_review_uses_disposable_clone(
+    tmp_path: Path, monkeypatch, complete_review_evidence
+) -> None:
     import json
 
     from scripts.dev_orchestrator import runner
@@ -1639,7 +1675,11 @@ def test_production_codex_review_uses_disposable_clone(tmp_path: Path, monkeypat
 
     monkeypatch.setattr(runner, "run_command", fake_run)
     result = runner.CliAgentInvoker(config).review(
-        "backend", WorkerState("backend"), TaskItem("B-PROD-REVIEW", "Review"), "ctx", TERRA_MODEL
+        "backend",
+        complete_review_evidence(config),
+        TaskItem("B-PROD-REVIEW", "Review"),
+        "ctx",
+        TERRA_MODEL,
     )
     assert result.outcome == "pass"
     assert observed["cwd"] != backend.resolve()
@@ -1794,7 +1834,9 @@ def test_custom_claude_executor_cannot_publish_to_live_repo(tmp_path: Path) -> N
     assert sp.check_output(["git", "status", "--porcelain"], cwd=backend, text=True).strip() == ""
 
 
-def test_production_codex_review_uses_invocation_bound_schema(tmp_path: Path, monkeypatch) -> None:
+def test_production_codex_review_uses_invocation_bound_schema(
+    tmp_path: Path, monkeypatch, complete_review_evidence
+) -> None:
     import json
 
     from scripts.dev_orchestrator import runner
@@ -1831,7 +1873,7 @@ def test_production_codex_review_uses_invocation_bound_schema(tmp_path: Path, mo
     monkeypatch.setattr(runner, "run_command", fake_run)
     result = runner.CliAgentInvoker(config).review(
         "backend",
-        WorkerState("backend"),
+        complete_review_evidence(config),
         TaskItem("B-BOUND", "Review"),
         "ctx",
         TERRA_MODEL,
@@ -1861,7 +1903,7 @@ def test_production_codex_review_uses_invocation_bound_schema(tmp_path: Path, mo
 
 
 def test_production_codex_review_rejects_mismatched_task_binding(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, complete_review_evidence
 ) -> None:
     import json
 
@@ -1892,7 +1934,11 @@ def test_production_codex_review_rejects_mismatched_task_binding(
     invoker = runner.CliAgentInvoker(config)
     with pytest.raises(AgentInvocationError, match="binding mismatch"):
         invoker.review(
-            "backend", WorkerState("backend"), TaskItem("B-BOUND", "Review"), "ctx", TERRA_MODEL
+            "backend",
+            complete_review_evidence(config),
+            TaskItem("B-BOUND", "Review"),
+            "ctx",
+            TERRA_MODEL,
         )
 
 
@@ -2430,7 +2476,7 @@ def test_temporary_claude_planning_does_not_override_codex_first_implementation(
 
 
 def test_fable_review_uses_read_only_claude_scratch_and_schema(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, complete_review_evidence
 ) -> None:
     from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
 
@@ -2459,7 +2505,7 @@ def test_fable_review_uses_read_only_claude_scratch_and_schema(
 
     result = CliAgentInvoker(config, execute=execute, allow_test_executor=True).review(
         "backend",
-        WorkerState("backend"),
+        complete_review_evidence(config),
         TaskItem("backend-layout", "Fix layout"),
         "review evidence",
         "fable",
