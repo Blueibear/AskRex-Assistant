@@ -490,7 +490,17 @@ def run_iteration_validation(
         AtomicJsonStore(_receipt_path(config, role, task_id)).write(receipt.to_dict())
         return ValidationReport(True, receipt=receipt)
     except subprocess.TimeoutExpired as exc:
-        output = _bounded((exc.stdout or "") + (exc.stderr or ""))
+        # Timeout captures may be bytes even when the subprocess uses text mode.
+        output = _bounded(
+            "".join(
+                (
+                    stream.decode("utf-8", errors="replace")
+                    if isinstance(stream, bytes)
+                    else stream or ""
+                )
+                for stream in (exc.stdout, exc.stderr)
+            )
+        )
         return ValidationReport(
             False, f"Deterministic validation timed out before review.\n{output}"
         )
