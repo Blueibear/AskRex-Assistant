@@ -28,6 +28,7 @@ def config(tmp_path):
     root.mkdir()
     return replace(
         OrchestratorConfig.default(root),
+        observe_only=False,
         metadata={
             "temporary_fable_review": {
                 "enabled": True,

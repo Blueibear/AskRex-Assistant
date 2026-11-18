@@ -663,6 +663,11 @@ def _review_prompt(
         "shows fixed-needs-retest, return pass with no redundant issue update. Never request verified. "
         f"Return task_id={task.task_id!r}, role={role!r}, and invocation_id={invocation_id!r} exactly.\n\n"
         f"Coordination root reference: {coordination_root}\n"
+        "The supervisor coordination_checks section records the required opening/closing script results, "
+        "matching exclusive role-lease observations, and the successful validation receipt digest. "
+        "These checks run on the trusted supervisor because isolated model workers cannot access shared "
+        "coordination files. Judge their recorded scope and actual contents without asking the isolated "
+        "worker to rerun host-only commands.\n"
         "Authoritative bounded review evidence:\n"
         f"{context}"
     )
@@ -1472,6 +1477,20 @@ class CliAgentInvoker:
             role=role,
         )
 
+    def poll_existing_cloud(self, role, task, context) -> AgentResult:
+        """Recover only the bound cloud session; never dispatch a new local worker."""
+        session = read_cloud_session(self.config, role)
+        if session is None or session.task_id != task.task_id or not self._cloud_task_allowed(task):
+            raise AgentInvocationError(
+                "claude_cloud", "invalid_state", "existing cloud ownership cannot be verified"
+            )
+        result = self._cloud_implementation_state(role, task, context)
+        if result is None:
+            raise AgentInvocationError(
+                "claude_cloud", "invalid_state", "bound cloud session disappeared during polling"
+            )
+        return result
+
     def implement(self, role, state, task, context, model) -> AgentResult:
         from .routing import TERRA_MODEL
 
@@ -1501,8 +1520,13 @@ class CliAgentInvoker:
             return self._finish(
                 "codex",
                 self._execute_agent(
-                    command, repo, role, "codex", invocation_id,
-                    phase="implement", task_id=task.task_id,
+                    command,
+                    repo,
+                    role,
+                    "codex",
+                    invocation_id,
+                    phase="implement",
+                    task_id=task.task_id,
                 ),
             )
         except AgentInvocationError as exc:
@@ -1518,31 +1542,35 @@ class CliAgentInvoker:
         return self._finish(
             "claude",
             self._execute_agent(
-                fallback_command, repo, role, "claude", fallback_id,
-                phase="implement", task_id=task.task_id,
+                fallback_command,
+                repo,
+                role,
+                "claude",
+                fallback_id,
+                phase="implement",
+                task_id=task.task_id,
             ),
         )
 
     def review(self, role, state, task, context, model) -> AgentResult:
         repo = self._repo(role)
         invocation_id = str(uuid.uuid4())
-        review_context = context
-        if state.task_base_head:
-            try:
-                evidence = build_review_evidence(
-                    self.config,
-                    role,
-                    state,
-                    task,
-                    context,
-                    invocation_id,
-                )
-            except EvidenceError:
-                evidence = None
-            if evidence is not None and not evidence.truncated:
-                review_context = evidence.text
+        if not state.task_base_head:
+            raise AgentInvocationError(
+                "codex", "incomplete_evidence", "review requires a captured base revision"
+            )
+        try:
+            evidence = build_review_evidence(self.config, role, state, task, context, invocation_id)
+        except EvidenceError as exc:
+            raise AgentInvocationError("codex", "incomplete_evidence", str(exc)) from exc
+        if evidence.truncated:
+            raise AgentInvocationError(
+                "codex",
+                "incomplete_evidence",
+                "review-critical evidence truncated: " + ", ".join(evidence.truncation_reasons),
+            )
         prompt = _review_prompt(
-            role, task, self.config.coordination_root, review_context, invocation_id
+            role, task, self.config.coordination_root, evidence.text, invocation_id
         )
         if model == "fable":
             # The provider router authorizes this expiring route. Read-only
@@ -1578,9 +1606,7 @@ class CliAgentInvoker:
         )
         return self._finish(
             "claude",
-            self._execute_agent(
-                command, repo, role, "claude", invocation_id, phase="plan"
-            ),
+            self._execute_agent(command, repo, role, "claude", invocation_id, phase="plan"),
         )
 
     def lead(self, role, state, context, task=None) -> AgentResult:

@@ -164,6 +164,9 @@ class ProviderRoutingInvoker:
             return ""
         return str(record.get("last_provider", ""))
 
+    def poll_existing_cloud(self, role, task, context) -> AgentResult:
+        return self.cli_invoker.poll_existing_cloud(role, task, context)
+
     def implement(self, role, state, task, context, model) -> AgentResult:
         return self.cli_invoker.implement(role, state, task, context, model)
 

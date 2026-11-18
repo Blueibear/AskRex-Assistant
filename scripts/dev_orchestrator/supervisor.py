@@ -18,6 +18,7 @@ from .coordination import (
     build_coordination_context,
     recover_coordination_transactions,
 )
+from .coordination_checks import CoordinationCheckError, begin_checks, finish_checks
 from .evidence import EvidenceError, build_review_evidence
 from .handoff import (
     clear_pending_result,
@@ -47,6 +48,8 @@ from .validation import load_validation_receipt, run_iteration_validation
 
 class AgentInvoker(Protocol):
     def implement(self, role, state, task, context, model) -> AgentResult: ...
+
+    def poll_existing_cloud(self, role, task, context) -> AgentResult: ...
 
     def review(self, role, state, task, context, model) -> AgentResult: ...
 
@@ -105,6 +108,7 @@ _NO_PRODUCT_MUTATION_MARKERS = (
     "without changing implementation",
     "without modifying implementation",
     "accepted implementation unchanged",
+    "do not modify the mobile, backend, or frozen testing repositories",
 )
 
 
@@ -291,6 +295,12 @@ class Supervisor:
     ) -> AgentResult:
         result = self._recover_result(role, state, phase=phase, task_id=task_id)
         if result is None:
+            current = AtomicJsonStore(self.root / "orchestrator-config.json").read(default=None)
+            if self.config.observe_only or (
+                current is not None
+                and (not isinstance(current, dict) or current.get("observe_only") is not False)
+            ):
+                raise AgentInvocationError("supervisor", "paused", "new model phase paused")
             result = invoke()
         self._set_result_context(role, result)
         return result
@@ -397,9 +407,7 @@ class Supervisor:
                     if state.blocker_kind == "review_fallback_invalid" or state.task is None:
                         return
                     head = self._capture_task_base_head(role)
-                    receipt_path = review_receipt_path(
-                        self.config, role, state.task.task_id, head
-                    )
+                    receipt_path = review_receipt_path(self.config, role, state.task.task_id, head)
                     if not receipt_path.is_file():
                         return
             if state.resume_status is None:
@@ -730,9 +738,7 @@ class Supervisor:
 
     def _plan(self, role: str, state: WorkerState, context: str) -> None:
         planning_context = context + self._completion_context(role)
-        planning_fingerprint = hashlib.sha256(
-            planning_context.encode("utf-8")
-        ).hexdigest()
+        planning_fingerprint = hashlib.sha256(planning_context.encode("utf-8")).hexdigest()
         # A rejected completed-task assignment is not new work. Replan only
         # when coordination context changes or an explicit queue item arrives.
         if (
@@ -831,19 +837,66 @@ class Supervisor:
     def _implement(self, role: str, state: WorkerState, context: str) -> None:
         assert state.task is not None
         model = select_implementer_model(state, self.config)
+        recovering_cloud = (self.root / "cloud-sessions" / f"{role}.json").exists()
+        try:
+            if not recovering_cloud:
+                begin_checks(
+                    self.config,
+                    role,
+                    state.task,
+                    state.task_base_head,
+                    self._capture_task_base_head(role),
+                    recovered=read_pending_result(self.config, role) is not None,
+                )
+        except CoordinationCheckError as exc:
+            self.save_state(
+                replace(
+                    state,
+                    status=WorkerStatus.BLOCKED_SYSTEM,
+                    blocked_reason=f"initial coordination evidence unavailable: {exc}",
+                    blocker_kind="coordination_evidence",
+                    resume_status=None,
+                )
+            )
+            return
         try:
             result = self._invoke_or_recover(
                 role,
                 state,
                 phase="implement",
                 task_id=state.task.task_id,
-                invoke=lambda: self.invoker.implement(role, state, state.task, context, model),
+                invoke=lambda: (
+                    self.invoker.poll_existing_cloud(role, state.task, context)
+                    if recovering_cloud
+                    else self.invoker.implement(role, state, state.task, context, model)
+                ),
             )
         except AgentInvocationError as exc:
             self._handle_invocation_error(role, state, "implement", exc, context)
             return
         if result.outcome == "ready_for_review":
             validation_head = self._capture_task_base_head(role)
+            if recovering_cloud:
+                try:
+                    begin_checks(
+                        self.config,
+                        role,
+                        state.task,
+                        state.task_base_head,
+                        validation_head,
+                        recovered=True,
+                    )
+                except CoordinationCheckError as exc:
+                    self._save_state_preserving_pending_result(
+                        replace(
+                            state,
+                            status=WorkerStatus.BLOCKED_SYSTEM,
+                            blocked_reason=f"post-adoption coordination evidence unavailable: {exc}",
+                            blocker_kind="coordination_evidence",
+                            resume_status=None,
+                        )
+                    )
+                    return
             report = run_iteration_validation(
                 self.config,
                 role,
@@ -879,6 +932,27 @@ class Supervisor:
             if not self._accept_result(
                 role, state, result, phase="implement", allow_issue_updates=False
             ):
+                return
+            try:
+                if self._capture_task_base_head(role) != validation_head:
+                    raise CoordinationCheckError("revision changed after validation")
+                finish_checks(
+                    self.config,
+                    role,
+                    state.task,
+                    state.task_base_head,
+                    validation_head,
+                )
+            except CoordinationCheckError as exc:
+                self._save_state_preserving_pending_result(
+                    replace(
+                        state,
+                        status=WorkerStatus.BLOCKED_SYSTEM,
+                        blocked_reason=f"final coordination evidence unavailable: {exc}",
+                        blocker_kind="coordination_evidence",
+                        resume_status=None,
+                    )
+                )
                 return
             self.save_state(
                 replace(
@@ -932,9 +1006,19 @@ class Supervisor:
             and not any(
                 marker in state.task.task_id.casefold()
                 for marker in (
-                    "final-verify", "security", "privacy", "auth", "credential",
-                    "permission", "policy", "release", "deploy", "audit",
-                    "approval", "identity", "secret",
+                    "final-verify",
+                    "security",
+                    "privacy",
+                    "auth",
+                    "credential",
+                    "permission",
+                    "policy",
+                    "release",
+                    "deploy",
+                    "audit",
+                    "approval",
+                    "identity",
+                    "secret",
                 )
             )
             and "codex" not in state.task.prompt.casefold()
@@ -972,8 +1056,11 @@ class Supervisor:
                 return
         else:
             model = (
-                FABLE_REVIEW_MODEL if using_fable else (
-                    SOL_MODEL if self._last_provider(role) == "codex"
+                FABLE_REVIEW_MODEL
+                if using_fable
+                else (
+                    SOL_MODEL
+                    if self._last_provider(role) == "codex"
                     else select_reviewer_model(state, self.config)
                 )
             )
@@ -1076,14 +1163,34 @@ class Supervisor:
                     context,
                     "supervisor-adjudication-evidence",
                 )
-            except EvidenceError:
-                evidence = None
-            if evidence is not None and not evidence.truncated:
-                adjudication_context = (
-                    "Authoritative revision-bound supervisor evidence follows. "
-                    "The nested evidence-bundle invocation identifier is not the lead invocation binding.\n\n"
-                    + evidence.text
+            except EvidenceError as exc:
+                self._handle_invocation_error(
+                    role,
+                    state,
+                    "adjudicate",
+                    AgentInvocationError("supervisor", "incomplete_evidence", str(exc)),
+                    context,
                 )
+                return
+            if evidence.truncated:
+                self._handle_invocation_error(
+                    role,
+                    state,
+                    "adjudicate",
+                    AgentInvocationError(
+                        "supervisor",
+                        "incomplete_evidence",
+                        "Adjudication evidence is incomplete: "
+                        + ", ".join(evidence.truncation_reasons),
+                    ),
+                    context,
+                )
+                return
+            adjudication_context = (
+                "Authoritative revision-bound supervisor evidence follows. "
+                "The nested evidence-bundle invocation identifier is not the lead invocation binding.\n\n"
+                + evidence.text
+            )
         try:
             result = self._invoke_or_recover(
                 role,
@@ -1198,6 +1305,19 @@ class Supervisor:
         context: str,
     ) -> None:
         resume_status = self._resume_status_for_phase(state, phase)
+        if exc.kind == "paused":
+            return
+        if exc.kind == "incomplete_evidence":
+            self._save_state_preserving_pending_result(
+                replace(
+                    state,
+                    status=WorkerStatus.BLOCKED_SYSTEM,
+                    blocked_reason=exc.detail,
+                    blocker_kind="incomplete_evidence",
+                    resume_status=None,
+                )
+            )
+            return
         if is_transient_runner_failure(exc.detail):
             recover_codex_windows_terminal_runner()
             self._save_transient_runner_failure(state, exc.detail)

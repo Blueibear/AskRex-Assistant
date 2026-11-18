@@ -648,7 +648,9 @@ def test_windows_watchdog_is_model_free() -> None:
     assert " claude -p" not in lowered
 
 
-def test_active_cycle_uses_injected_invoker(tmp_path: Path) -> None:
+def test_active_cycle_uses_injected_invoker(tmp_path: Path, monkeypatch) -> None:
+    # The injected invoker wiring fixture does not execute host coordination checks.
+    monkeypatch.setattr("scripts.dev_orchestrator.supervisor.begin_checks", lambda *a, **kw: None)
     from dataclasses import replace
 
     from scripts.dev_orchestrator.cli import run_cycle
@@ -667,6 +669,9 @@ def test_active_cycle_uses_injected_invoker(tmp_path: Path) -> None:
     base_config = initialize_runtime(root, backend, mobile, frozen)
     _handoff(base_config)
     config = replace(base_config, observe_only=False)
+    from scripts.dev_orchestrator.cli import save_config
+
+    save_config(config)
 
     class Invoker:
         def implement(self, *args):

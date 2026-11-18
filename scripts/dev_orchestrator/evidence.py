@@ -5,6 +5,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from .coordination_checks import CoordinationCheckError, read_check_summary
 from .types import OrchestratorConfig, TaskItem, WorkerState
 from .validation import ValidationReceipt, load_validation_receipt
 
@@ -33,6 +34,8 @@ _DEFAULT_SECTION_LIMITS = {
     "task_issues": 12_000,
     "coordination": 6_000,
     "outgoing_coordination": 12_000,
+    "supervisor_coordination": 12_000,
+    "coordination_checks": 10_000,
     "diff_stat": 4_000,
     "task_diff": 70_000,
     "changed_file_contents": 35_000,
@@ -44,6 +47,7 @@ _REVIEW_CRITICAL_SECTIONS = frozenset(
         "identity",
         "task",
         "task_issues",
+        "coordination_checks",
         "task_diff",
         "validated_artifacts",
         "validation",
@@ -103,9 +107,7 @@ def _message_field(text: str, field: str) -> str:
     return ""
 
 
-def _task_coordination_anchors(
-    config: OrchestratorConfig, task: TaskItem
-) -> tuple[str, ...]:
+def _task_coordination_anchors(config: OrchestratorConfig, task: TaskItem) -> tuple[str, ...]:
     anchors = {task.task_id.casefold()}
     task_text = f"{task.task_id}\n{task.prompt}\n{task.feedback}"
     for pattern in (
@@ -185,6 +187,44 @@ def _outgoing_coordination(config: OrchestratorConfig, role: str, task: TaskItem
         relative = path.relative_to(config.coordination_root).as_posix()
         rendered.append(f"### {relative}\n{text}")
     return "\n\n".join(rendered)
+
+
+def _supervisor_coordination(config: OrchestratorConfig, role: str, task: TaskItem) -> str:
+    """Expose task-matched supervisor messages without relying on truncated context.
+
+    Messages are evidence for a reviewer, not independent approval or proof
+    that the requirements described in those messages were satisfied.
+    """
+    mailbox = config.coordination_root / "mailbox"
+    task_id_pattern = re.compile(
+        rf"(?<![a-z0-9_.-]){re.escape(task.task_id)}(?![a-z0-9_.-])",
+        re.IGNORECASE,
+    )
+    matches: list[tuple[int, Path, str]] = []
+    try:
+        for recipient in ("supervisor", role):
+            directory = mailbox / recipient
+            if not directory.is_dir():
+                continue
+            for path in directory.glob("*.md"):
+                body = path.read_text(encoding="utf-8-sig", errors="replace")
+                if _message_field(body, "From").casefold() != "supervisor":
+                    continue
+                if _message_field(body, "To").casefold() != recipient:
+                    continue
+                if not task_id_pattern.search(_message_field(body, "Related")):
+                    continue
+                matches.append((path.stat().st_mtime_ns, path, body))
+    except OSError as exc:
+        raise EvidenceError("cannot read supervisor coordination evidence") from exc
+
+    if not matches:
+        return "No task-matching supervisor coordination message was recorded."
+    matches.sort(key=lambda item: item[0], reverse=True)
+    return "\n\n".join(
+        f"### {path.relative_to(config.coordination_root).as_posix()}\n{body}"
+        for _mtime, path, body in matches[:4]
+    )
 
 
 def _task_issue_contents(config: OrchestratorConfig, task: TaskItem) -> str:
@@ -388,7 +428,11 @@ def build_review_evidence(
     invocation_id: str,
     *,
     max_section_chars: int | None = None,
+    coordination_config: OrchestratorConfig | None = None,
 ) -> ReviewEvidenceBundle:
+    authoritative = coordination_config or config
+    if authoritative.coordination_root.resolve() != config.coordination_root.resolve():
+        raise EvidenceError("snapshot and authoritative coordination roots differ")
     repo = _repo_root(config, role)
     base_head = state.task_base_head.strip()
     if not base_head:
@@ -423,6 +467,13 @@ def build_review_evidence(
         config.coordination_root / "validation" / f"{role}-{task.task_id}.json"
     ).resolve()
 
+    try:
+        coordination_checks = read_check_summary(
+            authoritative, role, task, base_head, head, strict=True
+        )
+    except CoordinationCheckError as exc:
+        raise EvidenceError(f"invalid supervisor coordination receipt: {exc}") from exc
+
     sections = (
         (
             "identity",
@@ -440,6 +491,8 @@ def build_review_evidence(
         ("task_issues", _task_issue_contents(config, task)),
         ("coordination", coordination_context),
         ("outgoing_coordination", _outgoing_coordination(config, role, task)),
+        ("supervisor_coordination", _supervisor_coordination(config, role, task)),
+        ("coordination_checks", coordination_checks),
         ("diff_stat", _git(repo, "diff", "--stat", f"{base_head}..{head}", "--")),
         ("task_diff", task_diff),
         ("changed_file_contents", changed_file_contents),

@@ -6,6 +6,9 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
+from scripts.dev_orchestrator.evidence import EvidenceError, ReviewEvidenceBundle
 from scripts.dev_orchestrator.supervisor import Supervisor, _is_coordination_only_task
 from scripts.dev_orchestrator.types import (
     AgentResult,
@@ -509,6 +512,12 @@ def test_coordination_only_second_review_rejection_escalates_and_astra_can_close
     invoker.add("backend", "lead", result("done", summary="Closeout evidence is sufficient"))
     supervisor = Supervisor(make_config(tmp_path, observe_only=False), invoker)
     monkeypatch.setattr(supervisor, "_has_current_green_validation", lambda *_args: True)
+    monkeypatch.setattr(
+        "scripts.dev_orchestrator.supervisor.build_review_evidence",
+        lambda *_args, **_kwargs: ReviewEvidenceBundle(
+            "Complete task-bound evidence", False, (), "abc123", "abc123"
+        ),
+    )
     state = WorkerState(
         role="backend",
         status=WorkerStatus.REVIEWING,
@@ -543,6 +552,12 @@ def test_coordination_review_circuit_clears_pending_review_before_adjudication(
     invoker.add("backend", "lead", result("done", summary="closeout complete"))
     supervisor = Supervisor(config, invoker)
     monkeypatch.setattr(supervisor, "_has_current_green_validation", lambda *_args: True)
+    monkeypatch.setattr(
+        "scripts.dev_orchestrator.supervisor.build_review_evidence",
+        lambda *_args, **_kwargs: ReviewEvidenceBundle(
+            "Complete task-bound evidence", False, (), "abc123", "abc123"
+        ),
+    )
     task = TaskItem(
         "backend-closeout-evidence-v1",
         (
@@ -1386,7 +1401,12 @@ def test_astra_adjudication_publication_rejection_blocks_assignment(
 
 def test_validation_infrastructure_retry_reuses_durable_result_without_reinvoking_worker(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    # This unit fixture has a minimal result journal, not a real Git lease.
+    # Lease-backed recovery is exercised in test_dev_orchestrator_coordination_checks.
+    monkeypatch.setattr("scripts.dev_orchestrator.supervisor.begin_checks", lambda *a, **kw: None)
+    monkeypatch.setattr("scripts.dev_orchestrator.supervisor.finish_checks", lambda *a, **kw: None)
     task = TaskItem("B-RECOVER-VALIDATE", "Validate durable implementation")
     failing_config = replace(
         make_config(tmp_path, observe_only=False),
@@ -1466,7 +1486,12 @@ def test_validation_infrastructure_retry_reuses_durable_result_without_reinvokin
 
 def test_restart_consumes_durable_implementation_result_without_reinvoking_model(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    # This unit fixture has a minimal result journal, not a real Git lease.
+    # Lease-backed recovery is exercised in test_dev_orchestrator_coordination_checks.
+    monkeypatch.setattr("scripts.dev_orchestrator.supervisor.begin_checks", lambda *a, **kw: None)
+    monkeypatch.setattr("scripts.dev_orchestrator.supervisor.finish_checks", lambda *a, **kw: None)
     config = make_config(tmp_path, observe_only=False)
     invoker = FakeInvoker()
     supervisor = Supervisor(config, invoker)
@@ -1715,9 +1740,16 @@ def test_review_pass_records_completed_task_and_planner_cannot_resurrect_it(
     calls_before = list(invoker.calls)
     supervisor._run_role("backend")
     assert invoker.calls == calls_before
-    assert len(list((config.coordination_root / "alerts").glob(
-        "duplicate-completed-task-backend-*.json"
-    ))) == 1
+    assert (
+        len(
+            list(
+                (config.coordination_root / "alerts").glob(
+                    "duplicate-completed-task-backend-*.json"
+                )
+            )
+        )
+        == 1
+    )
 
     # A new authorized mailbox update wakes planning without clearing history.
     (config.coordination_root / "mailbox" / "backend" / "new-task.md").write_text(
@@ -1725,7 +1757,8 @@ def test_review_pass_records_completed_task_and_planner_cannot_resurrect_it(
         encoding="utf-8",
     )
     invoker.add(
-        "backend", "lead",
+        "backend",
+        "lead",
         result("assign", task_id="backend-us102-new", task_prompt="New bounded work"),
     )
     supervisor._run_role("backend")
@@ -1868,9 +1901,115 @@ def test_temporary_fable_review_precedes_hourly_receipt_but_not_protected_gates(
     supervisor._review("backend", normal, "bounded review context")
     assert invoker.review_models == ["fable"]
 
-    protected = replace(
-        normal, task=TaskItem("backend-security-001", "Review security issue")
-    )
+    protected = replace(normal, task=TaskItem("backend-security-001", "Review security issue"))
     invoker.add("backend", "review", result("changes_required"))
     supervisor._review("backend", protected, "bounded review context")
     assert invoker.review_models == ["fable", "gpt-5.6-terra"]
+
+
+def test_mobile_repository_freeze_ack_uses_coordination_validation() -> None:
+    task = TaskItem(
+        "mobile-no-metered-api-policy-ack-20261117",
+        "Perform one bounded coordination-only task. Re-read the critical mailbox message "
+        "and current mobile coordination state. Send a new response to mailbox/supervisor "
+        "acknowledging that mobile work must use only authorized subscription/local routes. "
+        "Do not modify the mobile, backend, or frozen testing repositories; do not start "
+        "deferred S35/TEST work. Re-run the mobile coordination check and report the "
+        "created response path and check result.",
+    )
+    assert _is_coordination_only_task(task)
+
+
+def test_security_review_is_not_downgraded_to_coordination_only() -> None:
+    task = TaskItem(
+        "backend-security-exact-head-review-aa1f43f7",
+        "Independently review SECURITY-REPO-20261111. Run all security gates. "
+        "Do not modify the mobile, backend, or frozen testing repositories.",
+    )
+    assert not _is_coordination_only_task(task)
+
+
+def test_live_pause_prevents_new_phase_without_counting_a_failure(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.storage import AtomicJsonStore
+
+    config = make_config(tmp_path, observe_only=False)
+    invoker = FakeInvoker()
+    supervisor = Supervisor(config, invoker)
+    task = TaskItem("B-PAUSE", "Review finished work")
+    state = WorkerState(role="backend", status=WorkerStatus.REVIEWING, task=task)
+    supervisor.save_state(state)
+    AtomicJsonStore(config.coordination_root / "orchestrator-config.json").write(
+        {"observe_only": True}
+    )
+    supervisor._review("backend", state, "context")
+    assert invoker.calls == []
+    assert supervisor.load_state("backend") == state
+
+
+def test_missing_review_evidence_parks_without_repeated_model_calls(tmp_path: Path) -> None:
+    from scripts.dev_orchestrator.runner import AgentInvocationError
+
+    config = make_config(tmp_path, observe_only=False)
+    invoker = FakeInvoker()
+    invoker.add(
+        "backend", "review", AgentInvocationError("codex", "incomplete_evidence", "missing checks")
+    )
+    supervisor = Supervisor(config, invoker)
+    state = WorkerState(
+        role="backend", status=WorkerStatus.REVIEWING, task=TaskItem("B-MISSING", "review")
+    )
+    supervisor.save_state(state)
+    supervisor._run_role("backend")
+    blocked = supervisor.load_state("backend")
+    assert blocked.status is WorkerStatus.BLOCKED_SYSTEM
+    assert blocked.blocker_kind == "incomplete_evidence"
+    assert blocked.resume_status is None
+    assert blocked.review_failures == 0
+    supervisor._run_role("backend")
+    assert len(invoker.calls) == 1
+
+
+@pytest.mark.parametrize("failure", ["missing", "truncated"])
+def test_coordination_adjudication_requires_complete_evidence(
+    tmp_path: Path, monkeypatch, failure: str
+) -> None:
+    from scripts.dev_orchestrator import supervisor as supervisor_module
+
+    invoker = FakeInvoker()
+    invoker.add("backend", "lead", result("done", summary="must not close without evidence"))
+    supervisor = Supervisor(make_config(tmp_path, observe_only=False), invoker)
+    monkeypatch.setattr(supervisor, "_has_current_green_validation", lambda *_args: True)
+    state = WorkerState(
+        role="backend",
+        status=WorkerStatus.REVIEWING,
+        task=TaskItem(
+            "backend-closeout-evidence-v1",
+            "Complete only the coordination closeout. Do not modify backend source/tests.",
+        ),
+        task_base_head="abc123",
+        review_failures=2,
+    )
+    supervisor.save_state(state)
+
+    def incomplete_bundle(*_args, **_kwargs):
+        if failure == "missing":
+            raise EvidenceError("missing final coordination capture")
+        return ReviewEvidenceBundle(
+            text="partial evidence",
+            truncated=True,
+            truncation_reasons=("coordination_checks",),
+            base_head="abc123",
+            head="abc123",
+        )
+
+    monkeypatch.setattr(supervisor_module, "build_review_evidence", incomplete_bundle)
+    supervisor._adjudicate("backend", state, "thin context")
+    blocked = supervisor.load_state("backend")
+    assert blocked.status is WorkerStatus.BLOCKED_SYSTEM
+    assert blocked.blocker_kind == "incomplete_evidence"
+    assert blocked.resume_status is None
+    assert blocked.task == state.task
+    assert blocked.review_failures == 2
+    assert invoker.calls == []
+    supervisor._run_role("backend")
+    assert invoker.calls == []

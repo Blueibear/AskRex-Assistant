@@ -368,7 +368,9 @@ def test_codex_output_schema_avoids_unsupported_conditionals(tmp_path: Path) -> 
     assert set(schema["required"]) == set(schema["properties"])
 
 
-def test_cli_invoker_runs_codex_first_in_correct_repo_with_coordination_access(tmp_path: Path) -> None:
+def test_cli_invoker_runs_codex_first_in_correct_repo_with_coordination_access(
+    tmp_path: Path,
+) -> None:
     import json
 
     from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
@@ -403,9 +405,12 @@ def test_cli_invoker_runs_codex_first_in_correct_repo_with_coordination_access(t
     assert "context" in command[-1]
 
 
-def test_cli_invoker_uses_codex_for_review_and_sol_for_lead(tmp_path: Path) -> None:
+def test_cli_invoker_uses_codex_for_review_and_sol_for_lead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import json
 
+    from scripts.dev_orchestrator.evidence import ReviewEvidenceBundle
     from scripts.dev_orchestrator.runner import CliAgentInvoker, ProcessResult
     from scripts.dev_orchestrator.types import TaskItem
 
@@ -427,9 +432,23 @@ def test_cli_invoker_uses_codex_for_review_and_sol_for_lead(tmp_path: Path) -> N
         return ProcessResult(0, payload, "")
 
     invoker = CliAgentInvoker(config, execute=execute, allow_test_executor=True)
+    monkeypatch.setattr(
+        "scripts.dev_orchestrator.runner.build_review_evidence",
+        lambda *args, **kwargs: ReviewEvidenceBundle(
+            text="validated test evidence",
+            truncated=False,
+            truncation_reasons=(),
+            base_head="1" * 40,
+            head="2" * 40,
+        ),
+    )
     assert (
         invoker.review(
-            "backend", WorkerState("backend"), TaskItem("B-1", "Fix"), "ctx", TERRA_MODEL
+            "backend",
+            WorkerState("backend", task_base_head="1" * 40),
+            TaskItem("B-1", "Fix"),
+            "ctx",
+            TERRA_MODEL,
         ).outcome
         == "pass"
     )
@@ -471,22 +490,38 @@ def test_codex_primary_precedes_new_cloud_dispatch_even_in_preferred_mode(
     config, _backend, _mobile = _safe_config(tmp_path)
     config = replace(config, claude_cloud_mode="preferred")
     launches = []
-    monkeypatch.setattr(runner, "launch_cloud_session", lambda *args, **kwargs: launches.append(kwargs))
+    monkeypatch.setattr(
+        runner, "launch_cloud_session", lambda *args, **kwargs: launches.append(kwargs)
+    )
     calls = []
 
     def execute(command, *_args, **_kwargs):
         calls.append(Path(command[0]).stem)
-        return ProcessResult(0, json.dumps({
-            "outcome": "continue", "summary": "Codex implementation",
-            "next_action": "continue", "needs_user": False, "blocker_reason": "",
-        }), "")
+        return ProcessResult(
+            0,
+            json.dumps(
+                {
+                    "outcome": "continue",
+                    "summary": "Codex implementation",
+                    "next_action": "continue",
+                    "needs_user": False,
+                    "blocker_reason": "",
+                }
+            ),
+            "",
+        )
 
     result = CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
-        "backend", WorkerState("backend"), TaskItem("B-CLOUD", "Implement bounded work"), "ctx", "sonnet"
+        "backend",
+        WorkerState("backend"),
+        TaskItem("B-CLOUD", "Implement bounded work"),
+        "ctx",
+        "sonnet",
     )
     assert result.outcome == "continue"
     assert calls == ["codex"]
     assert launches == []
+
 
 def test_both_local_subscription_limits_do_not_dispatch_a_new_cloud_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -499,7 +534,9 @@ def test_both_local_subscription_limits_do_not_dispatch_a_new_cloud_worker(
     config, _backend, _mobile = _safe_config(tmp_path)
     config = replace(config, claude_cloud_mode="fallback")
     launches = []
-    monkeypatch.setattr(runner, "launch_cloud_session", lambda *args, **kwargs: launches.append(kwargs))
+    monkeypatch.setattr(
+        runner, "launch_cloud_session", lambda *args, **kwargs: launches.append(kwargs)
+    )
     calls = []
 
     def execute(command, *_args, **_kwargs):
@@ -508,13 +545,17 @@ def test_both_local_subscription_limits_do_not_dispatch_a_new_cloud_worker(
 
     with pytest.raises(AgentInvocationError) as caught:
         CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
-            "backend", WorkerState("backend"), TaskItem("B-CLOUD-FALLBACK", "Implement bounded work"),
-            "ctx", "sonnet",
+            "backend",
+            WorkerState("backend"),
+            TaskItem("B-CLOUD-FALLBACK", "Implement bounded work"),
+            "ctx",
+            "sonnet",
         )
     assert caught.value.provider == "claude"
     assert caught.value.kind == "usage_limit"
     assert calls == ["codex", "claude"]
     assert launches == []
+
 
 def test_existing_cloud_session_is_polled_without_local_model_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -627,32 +668,50 @@ def test_expired_mismatched_cloud_session_is_cleared_before_codex_dispatch(
     config, _backend, _mobile = _safe_config(tmp_path)
     config = replace(config, claude_cloud_mode="preferred", claude_cloud_timeout_minutes=1)
     stale = SimpleNamespace(
-        task_id="OLD-CLOUD-TASK", session_id="session_stale", url="https://claude.ai/code/session_stale",
-        status="running", launched_at="2000-01-01T00:00:00+00:00",
+        task_id="OLD-CLOUD-TASK",
+        session_id="session_stale",
+        url="https://claude.ai/code/session_stale",
+        status="running",
+        launched_at="2000-01-01T00:00:00+00:00",
     )
     cleared = []
     launches = []
     calls = []
     monkeypatch.setattr(runner, "read_cloud_session", lambda *_args: stale)
     monkeypatch.setattr(runner, "clear_cloud_session", lambda _config, role: cleared.append(role))
-    monkeypatch.setattr(runner, "launch_cloud_session", lambda *args, **kwargs: launches.append(kwargs))
+    monkeypatch.setattr(
+        runner, "launch_cloud_session", lambda *args, **kwargs: launches.append(kwargs)
+    )
 
     def execute(command, *_args, **_kwargs):
         assert cleared == ["backend"]
         calls.append(Path(command[0]).stem)
-        return ProcessResult(0, json.dumps({
-            "outcome": "continue", "summary": "Codex resumed current work",
-            "next_action": "continue", "needs_user": False, "blocker_reason": "",
-        }), "")
+        return ProcessResult(
+            0,
+            json.dumps(
+                {
+                    "outcome": "continue",
+                    "summary": "Codex resumed current work",
+                    "next_action": "continue",
+                    "needs_user": False,
+                    "blocker_reason": "",
+                }
+            ),
+            "",
+        )
 
     result = CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
-        "backend", WorkerState("backend"), TaskItem("CURRENT-TASK", "Continue current work"),
-        "current bounded context", "sonnet",
+        "backend",
+        WorkerState("backend"),
+        TaskItem("CURRENT-TASK", "Continue current work"),
+        "current bounded context",
+        "sonnet",
     )
     assert result.outcome == "continue"
     assert cleared == ["backend"]
     assert launches == []
     assert calls == ["codex"]
+
 
 def test_live_mismatched_cloud_session_still_blocks_new_task(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -751,20 +810,32 @@ def test_claude_fallback_zero_exit_monthly_spend_limit_is_classified(tmp_path: P
         calls.append(Path(command[0]).stem)
         if len(calls) == 1:
             return ProcessResult(1, "", "You've hit your usage limit")
-        return ProcessResult(0, json.dumps({
-            "is_error": True, "terminal_reason": "api_error", "api_error_status": 429,
-            "result": "You've hit your monthly spend limit; raise it at claude.ai/settings/usage",
-            "type": "result",
-        }), "")
+        return ProcessResult(
+            0,
+            json.dumps(
+                {
+                    "is_error": True,
+                    "terminal_reason": "api_error",
+                    "api_error_status": 429,
+                    "result": "You've hit your monthly spend limit; raise it at claude.ai/settings/usage",
+                    "type": "result",
+                }
+            ),
+            "",
+        )
 
     with pytest.raises(AgentInvocationError) as caught:
         CliAgentInvoker(config, execute=execute, allow_test_executor=True).implement(
-            "backend", WorkerState("backend"), TaskItem("B-SPEND-LIMIT", "Continue backend"),
-            "ctx", "sonnet",
+            "backend",
+            WorkerState("backend"),
+            TaskItem("B-SPEND-LIMIT", "Continue backend"),
+            "ctx",
+            "sonnet",
         )
     assert caught.value.provider == "claude"
     assert caught.value.kind == "usage_limit"
     assert calls == ["codex", "claude"]
+
 
 def test_implementation_falls_back_to_claude_when_codex_auth_is_revoked(tmp_path: Path) -> None:
     import json
@@ -1085,9 +1156,7 @@ def test_production_claude_applies_only_scratch_patch(tmp_path: Path, monkeypatc
     assert sp.check_output(["git", "status", "--porcelain"], cwd=backend, text=True).strip() == ""
 
 
-def test_production_codex_primary_publishes_only_scratch_patch(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_production_codex_primary_publishes_only_scratch_patch(tmp_path: Path, monkeypatch) -> None:
     import json
     import subprocess as sp
 
@@ -2212,14 +2281,19 @@ def test_claude_planning_command_is_read_only(tmp_path: Path) -> None:
     assert command[command.index("--tools") + 1] == "Read,Glob,Grep"
     assert "Write" not in command[command.index("--tools") + 1]
     sandbox = build_claude_sandbox_command(
-        tmp_path, "Plan next task", "sonnet", container_name="askrex-plan-test",
-        use_oauth_token_env=True, read_only=True,
+        tmp_path,
+        "Plan next task",
+        "sonnet",
+        container_name="askrex-plan-test",
+        use_oauth_token_env=True,
+        read_only=True,
     )
     assert sandbox[sandbox.index("--tools") + 1] == "Read,Glob,Grep"
     assert any(part.endswith("dst=/workspace,readonly") for part in sandbox)
-    assert build_claude_command(tmp_path, "Implement", "sonnet")[
-        command.index("--tools") + 1
-    ] == "Read,Write,Edit,Glob,Grep"
+    assert (
+        build_claude_command(tmp_path, "Implement", "sonnet")[command.index("--tools") + 1]
+        == "Read,Write,Edit,Glob,Grep"
+    )
 
 
 def test_claude_planner_returns_task_id_without_repo_mutation(
@@ -2231,11 +2305,13 @@ def test_claude_planner_returns_task_id_without_repo_mutation(
     from scripts.dev_orchestrator.runner import CliAgentInvoker
 
     monkeypatch.setattr(
-        sys.modules[__name__], "_safe_config",
+        sys.modules[__name__],
+        "_safe_config",
         lambda _path: (SimpleNamespace(coordination_root=tmp_path), tmp_path, tmp_path),
     )
     monkeypatch.setattr(
-        CliAgentInvoker, "__init__",
+        CliAgentInvoker,
+        "__init__",
         lambda self, config, **_kwargs: setattr(self, "config", config),
     )
     monkeypatch.setattr(CliAgentInvoker, "_repo", lambda self, _role: tmp_path)
@@ -2250,22 +2326,30 @@ def test_claude_planner_returns_task_id_without_repo_mutation(
 
     config, _backend, mobile = _safe_config(tmp_path)
     calls = []
+
     def execute(command, cwd, timeout_seconds=1800):
         calls.append((command, cwd))
-        return ProcessResult(0, json.dumps({
-            "outcome": "assign",
-            "summary": "Bounded next task",
-            "next_action": "Implement",
-            "needs_user": False,
-            "blocker_reason": "",
-            "task_id": "M-NEW",
-            "task_prompt": "Implement the next authorized mobile task",
-            "role": "mobile",
-        }), "")
+        return ProcessResult(
+            0,
+            json.dumps(
+                {
+                    "outcome": "assign",
+                    "summary": "Bounded next task",
+                    "next_action": "Implement",
+                    "needs_user": False,
+                    "blocker_reason": "",
+                    "task_id": "M-NEW",
+                    "task_prompt": "Implement the next authorized mobile task",
+                    "role": "mobile",
+                }
+            ),
+            "",
+        )
 
     invoker = CliAgentInvoker(config, execute=execute, allow_test_executor=True)
     monkeypatch.setattr(
-        invoker, "_execute_agent",
+        invoker,
+        "_execute_agent",
         lambda command, repo, role, provider, invocation_id, **_kwargs: execute(
             command, repo.parent / "isolated-test-scratch"
         ),
@@ -2288,11 +2372,13 @@ def test_temporary_claude_planning_does_not_override_codex_first_implementation(
     from scripts.dev_orchestrator.types import OrchestratorConfig
 
     monkeypatch.setattr(
-        sys.modules[__name__], "_safe_config",
+        sys.modules[__name__],
+        "_safe_config",
         lambda _path: (OrchestratorConfig.default(tmp_path), tmp_path, tmp_path),
     )
     monkeypatch.setattr(
-        CliAgentInvoker, "__init__",
+        CliAgentInvoker,
+        "__init__",
         lambda self, config, **_kwargs: setattr(self, "config", config),
     )
     monkeypatch.setattr(CliAgentInvoker, "_repo", lambda self, _role: tmp_path)
@@ -2311,16 +2397,20 @@ def test_temporary_claude_planning_does_not_override_codex_first_implementation(
     )
 
     config, _backend, _mobile = _safe_config(tmp_path)
-    config = replace(config, metadata={
-        **config.metadata,
-        "temporary_claude_planning": {
-            "enabled": True,
-            "reason": "openai_weekly_usage_limit",
-            "expires_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
-            "roles": ["mobile"],
+    config = replace(
+        config,
+        metadata={
+            **config.metadata,
+            "temporary_claude_planning": {
+                "enabled": True,
+                "reason": "openai_weekly_usage_limit",
+                "expires_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+                "roles": ["mobile"],
+            },
         },
-    })
+    )
     calls = []
+
     def execute(command, cwd, timeout_seconds=1800):
         calls.append(command[0])
         return ProcessResult(1, "You have reached your usage limit", "")
@@ -2328,8 +2418,11 @@ def test_temporary_claude_planning_does_not_override_codex_first_implementation(
     invoker = CliAgentInvoker(config, execute=execute, allow_test_executor=True)
     with pytest.raises(AgentInvocationError) as caught:
         invoker.implement(
-            "mobile", WorkerState("mobile"),
-            TaskItem("M-1", "Do not modify source, only inspect"), "ctx", "sonnet",
+            "mobile",
+            WorkerState("mobile"),
+            TaskItem("M-1", "Do not modify source, only inspect"),
+            "ctx",
+            "sonnet",
         )
     assert caught.value.provider == "claude"
     assert caught.value.kind == "usage_limit"
@@ -2343,6 +2436,7 @@ def test_fable_review_uses_read_only_claude_scratch_and_schema(
 
     config, backend, _mobile = _safe_config(tmp_path)
     from scripts.dev_orchestrator import runner
+
     monkeypatch.setattr(runner, "_custom_executor_repository_state", lambda _config: ())
     seen = {}
 
@@ -2351,21 +2445,24 @@ def test_fable_review_uses_read_only_claude_scratch_and_schema(
         seen["cwd"] = cwd.resolve()
         return ProcessResult(
             0,
-            json.dumps({
-                "outcome": "pass",
-                "summary": "Validated source and gate evidence",
-                "next_action": "Proceed",
-                "needs_user": False,
-                "blocker_reason": "",
-            }),
+            json.dumps(
+                {
+                    "outcome": "pass",
+                    "summary": "Validated source and gate evidence",
+                    "next_action": "Proceed",
+                    "needs_user": False,
+                    "blocker_reason": "",
+                }
+            ),
             "",
         )
 
-    result = CliAgentInvoker(
-        config, execute=execute, allow_test_executor=True
-    ).review(
-        "backend", WorkerState("backend"),
-        TaskItem("backend-layout", "Fix layout"), "review evidence", "fable"
+    result = CliAgentInvoker(config, execute=execute, allow_test_executor=True).review(
+        "backend",
+        WorkerState("backend"),
+        TaskItem("backend-layout", "Fix layout"),
+        "review evidence",
+        "fable",
     )
     assert result.outcome == "pass"
     command = seen["command"]

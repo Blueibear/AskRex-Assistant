@@ -311,9 +311,16 @@ class OpenAIModelWorker:
                         task,
                         context,
                         invocation_id,
+                        coordination_config=self.config,
                     )
             except EvidenceError as exc:
-                raise AgentInvocationError("openai", "invalid_output", str(exc)) from exc
+                raise AgentInvocationError("openai", "incomplete_evidence", str(exc)) from exc
+            if evidence.truncated:
+                raise AgentInvocationError(
+                    "openai",
+                    "incomplete_evidence",
+                    "review evidence was truncated; route to a fallback reviewer with complete evidence",
+                )
             prepared = self._prepare_request(
                 model=model,
                 instructions=self._review_instructions(),
@@ -328,12 +335,6 @@ class OpenAIModelWorker:
                 phase="review",
                 allow_issue_updates=True,
             )
-            if evidence.truncated:
-                raise AgentInvocationError(
-                    "openai",
-                    "incomplete_evidence",
-                    "review evidence was truncated; route to a fallback reviewer with complete evidence",
-                )
             return self._persist(
                 role=role,
                 phase="review",

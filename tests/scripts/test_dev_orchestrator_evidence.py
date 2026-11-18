@@ -315,9 +315,7 @@ def test_review_evidence_includes_named_canonical_issue_referenced_in_prompt(
     issue = config.coordination_root / "issues" / "SECURITY-HA-MACOS.md"
     issue.parent.mkdir(parents=True, exist_ok=True)
     issue.write_text(
-        "# SECURITY-HA-MACOS\n\n"
-        "Status: integrated-needs-retest\n"
-        "Owner: backend\n",
+        "# SECURITY-HA-MACOS\n\nStatus: integrated-needs-retest\nOwner: backend\n",
         encoding="utf-8",
     )
     mailbox = config.coordination_root / "mailbox" / "testing"
@@ -442,6 +440,46 @@ def test_review_evidence_includes_task_relevant_outgoing_coordination(tmp_path: 
     assert "## outgoing_coordination" in bundle.text
     assert "MSG-task-retest-00-backend.md" in bundle.text
     assert "Please retest the bounded B-COORD behavior" in bundle.text
+    assert bundle.truncated is False
+
+
+def test_review_evidence_surfaces_matching_supervisor_messages(tmp_path: Path) -> None:
+    repo = tmp_path / "backend"
+    base = _git_repo(repo)
+    head = _commit(repo, "base\nchanged\n")
+    config = _config(tmp_path, repo, [sys.executable, "-c", "print('OK')"])
+    assert run_iteration_validation(
+        config, "backend", "B-SUPERVISOR", base_head=base, head=head
+    ).passed
+    for recipient, name, related, content in (
+        ("supervisor", "matched.md", "B-SUPERVISOR", "CHECK-RESULT-0"),
+        ("backend", "reply.md", "B-SUPERVISOR", "EVIDENCE-PATH-VERIFIED"),
+        ("supervisor", "unrelated.md", "OTHER-TASK", "UNRELATED-RECORD"),
+        ("supervisor", "collision.md", "B-SUPERVISOR-EXTRA", "COLLIDING-TASK"),
+    ):
+        directory = config.coordination_root / "mailbox" / recipient
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / name).write_text(
+            "# AskRex Coordination Message\n"
+            f"From: supervisor\nTo: {recipient}\n"
+            f"Related: {related}\n\n{content}\n",
+            encoding="utf-8",
+        )
+    state = WorkerState(
+        role="backend",
+        task=TaskItem("B-SUPERVISOR", "read-only review"),
+        task_base_head=base,
+    )
+    bundle = build_review_evidence(
+        config, "backend", state, state.task, "bounded context", "inv-supervisor"
+    )
+    section = bundle.text.split("## supervisor_coordination\n", 1)[1].split("## diff_stat\n", 1)[0]
+    assert "mailbox/supervisor/matched.md" in section
+    assert "mailbox/backend/reply.md" in section
+    assert "CHECK-RESULT-0" in section
+    assert "EVIDENCE-PATH-VERIFIED" in section
+    assert "UNRELATED-RECORD" not in section
+    assert "COLLIDING-TASK" not in section
     assert bundle.truncated is False
 
 
@@ -651,9 +689,7 @@ def test_review_evidence_includes_current_changed_file_contents_for_small_diff(
     tests_dir.mkdir()
     regression = tests_dir / "test_regression.py"
     regression.write_text(
-        "def test_existing_context():\n"
-        "    marker = 'FULL-CURRENT-CONTEXT'\n"
-        "    assert marker\n",
+        "def test_existing_context():\n    marker = 'FULL-CURRENT-CONTEXT'\n    assert marker\n",
         encoding="utf-8",
     )
     subprocess.run(["git", "add", "tests/test_regression.py"], cwd=repo, check=True)
@@ -812,7 +848,7 @@ def test_verbose_validation_output_does_not_critically_truncate_review_bundle(
     repo = tmp_path / "backend"
     base = _git_repo(repo)
     head = _commit(repo, "base\nchanged\n")
-    noisy = "print('START-VALIDATION'); " "print('X' * 40000); " "print('112 passed');"
+    noisy = "print('START-VALIDATION'); print('X' * 40000); print('112 passed');"
     config = _config(tmp_path, repo, [sys.executable, "-c", noisy])
     assert run_iteration_validation(config, "backend", "B-NOISY", base_head=base, head=head).passed
     state = WorkerState(

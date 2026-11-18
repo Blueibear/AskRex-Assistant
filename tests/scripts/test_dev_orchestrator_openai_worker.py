@@ -67,6 +67,25 @@ def _leased_review(tmp_path: Path):
         head=head,
     )
     assert report.passed
+    # Keep real lease, artifact hashes, and receipt binding in these transport tests;
+    # only the host-specific PowerShell process is replaced by bounded fixture output.
+    from unittest.mock import patch
+
+    from scripts.dev_orchestrator.coordination_checks import begin_checks, finish_checks
+
+    scripts = config.coordination_root / "scripts"
+    scripts.mkdir(exist_ok=True)
+    (scripts / "check-coordination.ps1").write_text("param([string]$Role)\n", encoding="utf-8")
+    actual_run = subprocess.run
+
+    def coordination_command(command, **kwargs):
+        if command[0] == "powershell.exe":
+            return subprocess.CompletedProcess(command, 0, b"fixture coordination output", b"")
+        return actual_run(command, **kwargs)
+
+    with patch("scripts.dev_orchestrator.coordination_checks.subprocess.run", coordination_command):
+        begin_checks(config, "backend", task, head, head, recovered=True)
+        finish_checks(config, "backend", task, head, head)
     return config, repo, state, task
 
 
@@ -365,7 +384,7 @@ def test_truncated_review_evidence_requests_complete_fallback_review(
     assert caught.value.provider == "openai"
     assert caught.value.kind == "incomplete_evidence"
     assert "truncated" in caught.value.detail.lower()
-    assert events == ["prepare", "reserve", "send", "reconcile"]
+    assert events == []
     assert read_pending_result(config, "backend") is None
 
 
@@ -473,3 +492,24 @@ def test_mobile_direct_api_calls_are_denied_before_budget_or_transport(tmp_path:
     assert review.value.kind == "policy"
     assert plan.value.kind == "policy"
     assert events == []
+
+
+def test_missing_coordination_evidence_rejects_before_api_dispatch(tmp_path: Path) -> None:
+    config, _repo, state, task = _leased_review(tmp_path)
+    manifests = list((config.coordination_root / "evidence" / "supervisor-checks").glob("*.json"))
+    assert len(manifests) == 1
+    manifests[0].unlink()
+    events: list[str] = []
+    worker = _worker(
+        config,
+        _FakeTransport(events, _agent_output("inv-missing-evidence")),
+        _FakeBudget(events),
+        "inv-missing-evidence",
+    )
+
+    with pytest.raises(AgentInvocationError) as caught:
+        worker.review("backend", state, task, "coordination", "gpt-5.6-terra")
+
+    assert caught.value.kind == "incomplete_evidence"
+    assert events == []
+    assert read_pending_result(config, "backend") is None
