@@ -679,7 +679,14 @@ def test_pending_planner_result_is_consumed_before_explicit_queue(
             checkpoint.supervisor.run_role("backend")
         assert len(_rejections(checkpoint)) == 1
     else:
-        checkpoint.invoker.lead("backend", planner_state, "Plan bounded work")
+
+        def interrupt_accept(*_args, **_kwargs):
+            raise SimulatedInterruption()
+
+        with monkeypatch.context() as patch:
+            patch.setattr(checkpoint.supervisor, "_accept_result", interrupt_accept)
+            with pytest.raises(SimulatedInterruption):
+                checkpoint.supervisor.run_role("backend")
     pending = read_pending_result(checkpoint.config, "backend")
     assert pending is not None and pending["phase"] == "plan"
     assert checkpoint.supervisor.load_state("backend").task is None

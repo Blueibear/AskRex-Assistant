@@ -719,6 +719,18 @@ def test_new_final_claim_retirement_recovers_durable_planner_result(
             role=role,
             invocation_id="durable-new-final-claim",
         )
+        provenance = capture_supplied_input(
+            checkpoint.config,
+            role,
+            "plan",
+            "",
+            result.invocation_id,
+            checkpoint.head,
+            context,
+            context,
+            input_kind="cli_prompt_utf8",
+        )
+        assert provenance is not None
         advance_handoff(
             checkpoint.config,
             role,
@@ -734,6 +746,7 @@ def test_new_final_claim_retirement_recovers_durable_planner_result(
                 "pre_head": checkpoint.head,
                 "post_head": checkpoint.head,
                 "result": asdict(result),
+                "input_provenance": provenance,
             },
         )
         return result
