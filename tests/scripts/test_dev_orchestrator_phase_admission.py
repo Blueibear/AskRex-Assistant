@@ -473,3 +473,73 @@ def test_default_role_lease_lock_still_rejects_immediately(active_config, monkey
             with ControlPlaneLock(path):
                 pytest.fail("competing lease owner was admitted")
         assert isinstance(failure.value.__cause__, BlockingIOError)
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
+def test_interrupted_process_wait_releases_thread_lock(active_config, monkeypatch, interruption):
+    from scripts.dev_orchestrator import lifecycle
+
+    path = active_config.coordination_root / "control-plane.lock"
+    lock = ControlPlaneLock(path, timeout_seconds=2.0)
+
+    def interrupt(_seconds):
+        raise interruption("interrupted while waiting for OS ownership")
+
+    with _held_by_another_process(path):
+        with monkeypatch.context() as patch:
+            patch.setattr(lifecycle.time, "sleep", interrupt)
+            with pytest.raises(interruption):
+                with lock:
+                    pytest.fail("contended transaction acquired the lock")
+
+    def reacquire():
+        with lock:
+            return "peer acquired after interrupted wait"
+
+    worker, values = _thread(reacquire)
+    worker.join(5)
+    assert not worker.is_alive(), "interrupted acquisition leaked the thread lock"
+    assert values == ["peer acquired after interrupted wait"]
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("stage", ["os_acquire", "metadata_fsync"])
+def test_interrupted_lock_acquisition_releases_local_handle(
+    active_config, monkeypatch, interruption, stage
+):
+    from scripts.dev_orchestrator import lifecycle
+
+    path = active_config.coordination_root / "control-plane.lock"
+    lock = ControlPlaneLock(path)
+    actual_acquire = lifecycle._acquire_os_file_lock
+
+    def interrupted_acquire(handle):
+        actual_acquire(handle)
+        raise interruption("interrupted after OS acquisition")
+
+    def interrupted_fsync(_descriptor):
+        raise interruption("interrupted before handle ownership was assigned")
+
+    with monkeypatch.context() as patch:
+        if stage == "os_acquire":
+            patch.setattr(lifecycle, "_acquire_os_file_lock", interrupted_acquire)
+        else:
+            patch.setattr(lifecycle.os, "fsync", interrupted_fsync)
+        with pytest.raises(interruption) as caught:
+            with lock:
+                pytest.fail("interrupted acquisition entered the transaction")
+
+    # Retain the exception traceback so garbage collection cannot hide a leaked
+    # local handle. A separate process must acquire the actual kernel lock.
+    assert "interrupted" in str(caught.value)
+    with _held_by_another_process(path):
+        pass
+
+    def reacquire():
+        with lock:
+            return "thread and OS ownership both released"
+
+    worker, values = _thread(reacquire)
+    worker.join(5)
+    assert not worker.is_alive(), "interrupted acquisition leaked thread ownership"
+    assert values == ["thread and OS ownership both released"]

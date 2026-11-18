@@ -99,7 +99,7 @@ class SupervisorLock:
         except BlockingIOError as exc:
             handle.close()
             raise RuntimeError("development orchestrator is already running") from exc
-        except Exception:
+        except BaseException:
             handle.close()
             raise
 
@@ -109,7 +109,7 @@ class SupervisorLock:
             handle.truncate()
             handle.flush()
             os.fsync(handle.fileno())
-        except Exception:
+        except BaseException:
             try:
                 _release_os_file_lock(handle)
             finally:
@@ -168,7 +168,7 @@ class ControlPlaneLock:
                         if not isinstance(exc.__cause__, BlockingIOError) or remaining <= 0:
                             raise
                         time.sleep(min(0.01, remaining))
-            except Exception:
+            except BaseException:
                 self._thread_lock.release()
                 raise
             self._outermost = True
