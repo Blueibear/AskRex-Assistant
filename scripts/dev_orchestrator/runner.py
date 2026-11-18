@@ -36,6 +36,13 @@ from .handoff import (
 )
 from .lifecycle import ControlPlaneLock
 from .paths import validate_runtime_paths
+from .postprocessing import (
+    ScratchGateFailure,
+    capture_completed_result,
+    journal_prepublication_failure,
+    record_postprocessing_error,
+    repository_changes_allowed,
+)
 from .provider_policy import (
     ProviderPolicyError,
     require_configured_provider,
@@ -224,11 +231,13 @@ def _write_bound_codex_schema(
     return path
 
 
-def build_codex_command(kind: str, repo: Path, prompt: str, model: str) -> list[str]:
+def build_codex_command(
+    kind: str, repo: Path, prompt: str, model: str, *, read_only: bool = False
+) -> list[str]:
     _require_model_policy(model)
     if kind not in {"implement", "review", "lead"}:
         raise ValueError(f"unsupported Codex role: {kind}")
-    sandbox = "workspace-write" if kind == "implement" else "read-only"
+    sandbox = "workspace-write" if kind == "implement" and not read_only else "read-only"
     git_check = ["--skip-git-repo-check"] if kind == "implement" else []
     return [
         "codex.cmd" if os.name == "nt" else "codex",
@@ -620,10 +629,24 @@ def _append_extra_dir(command: list[str], directory: Path) -> list[str]:
 
 def _task_prompt(role: str, task, coordination_root: Path, context: str, invocation_id: str) -> str:
     feedback = f"\nReviewer feedback to address:\n{task.feedback}" if task.feedback else ""
+    instruction = (
+        "Read CLAUDE.md first, then inspect the repository without changing any files. "
+        "The original task's repository prohibition overrides any suggested edit in feedback. "
+        "Perform only the requested inspection and reporting. Preserve the original task recipients "
+        "and deliverables; return requested evidence through structured coordination, with each body "
+        "at most 5,500 characters and Related to the exact task ID. "
+        "Do not add unrelated deliverables or duplicate existing requests. "
+        "Do not run tests, builds, formatters, dependency installs, or check-coordination.ps1; "
+        "the host performs the unchanged canonical validation and coordination captures. "
+        "Report checks as unrun unless supplied host evidence proves otherwise. "
+        if not repository_changes_allowed(task)
+        else "Read CLAUDE.md in this repository first, then edit the implementation and tests needed for the task. "
+    )
     return (
         f"You are the {role} AskRex implementation worker. Work only in the current repository. "
-        f"Task {task.task_id}: {task.prompt}.{feedback} Read CLAUDE.md in this repository first, then edit "
-        "the implementation and tests needed for the task. Shell/Bash/Web/MCP tools are intentionally unavailable; "
+        f"Task {task.task_id}: {task.prompt}.{feedback} "
+        + instruction
+        + "Shell/Bash/Web/MCP tools are intentionally unavailable; "
         "do not attempt to run tests or create commits because the deterministic supervisor owns validation and Git checkpointing. "
         "Do not modify the other repository or the frozen "
         "rex-ai-pc-test worktree. You cannot directly run Windows-local coordination checks or write "
@@ -631,8 +654,12 @@ def _task_prompt(role: str, task, coordination_root: Path, context: str, invocat
         "Never claim a check was run unless its result is present in the supplied evidence. "
         "Use structured coordination_messages for shared-state changes; issue_updates must be an empty array "
         "during implementation and may only be requested by independent review. "
-        f"The supervisor will create the Git checkpoint with invocation identity {invocation_id}; do not alter Git metadata. "
-        f"For continue or ready_for_review, return task_id={task.task_id!r}, role={role!r}, and invocation_id={invocation_id!r} exactly. "
+        + (
+            "This read-only task has no repository checkpoint to publish; do not alter Git metadata. "
+            if not repository_changes_allowed(task)
+            else f"The supervisor will create the Git checkpoint with invocation identity {invocation_id}; do not alter Git metadata. "
+        )
+        + f"For continue or ready_for_review, return task_id={task.task_id!r}, role={role!r}, and invocation_id={invocation_id!r} exactly. "
         "Return only the required structured result.\n\n"
         f"Coordination root reference: {coordination_root}\n"
         "Authoritative bounded review evidence:\n"
@@ -649,6 +676,11 @@ def _codex_task_prompt(
         "Use only Codex workspace-local repository and terminal tools inside the disposable scratch clone to inspect and edit files. Git metadata is intentionally hidden during your run, so do not rely on Git commands. Do not use web/network/MCP access or create commits; the deterministic supervisor owns authoritative validation and Git checkpointing. ",
         1,
     )
+    if not repository_changes_allowed(task):
+        prompt = prompt.replace(
+            "inside the disposable scratch clone to inspect and edit files.",
+            "inside the read-only disposable scratch clone to inspect files without edits.",
+        )
     return (
         prompt
         + "\n\nCodex scratch-boundary rule: reviewer feedback may request supervisor-owned artifacts such as a Git diff, shared coordination mailbox/check output, or authoritative validation command output. Do not attempt to access or produce those artifacts from the disposable scratch clone; the supervisor supplies them after you return. If implementation/source inspection is complete, return ready_for_review so deterministic supervisor validation can decide whether the task passes. If an authoritative validation command cannot run only because untracked dependencies (for example node_modules) or shared coordination state are intentionally absent from the scratch clone, do not report blocked_system solely for that reason."
@@ -770,7 +802,9 @@ def _hide_scratch_git_metadata(scratch: Path):
             raise HandoffRequired("Codex modified the hidden Git metadata guard")
 
 
-def _create_scratch_commit(scratch: Path, pre_head: str, invocation_id: str) -> str | None:
+def _create_scratch_commit(
+    scratch: Path, pre_head: str, invocation_id: str, *, repository_mutation_allowed: bool = True
+) -> str | None:
     head = _git_run(scratch, "git", "rev-parse", "HEAD")
     if head.returncode != 0 or head.stdout.strip() != pre_head:
         raise HandoffRequired("Claude scratch clone changed Git HEAD")
@@ -782,11 +816,17 @@ def _create_scratch_commit(scratch: Path, pre_head: str, invocation_id: str) -> 
         return None
     if changed.returncode != 1:
         raise HandoffRequired("cannot inspect Claude scratch changes")
-    diff_check = _git_run(scratch, "git", "diff", "--cached", "--check")
+    diff_command = ["git", "diff", "--cached", "--check"]
+    diff_check = subprocess.run(diff_command, cwd=scratch, capture_output=True, check=False)
     if diff_check.returncode != 0:
-        raise HandoffRequired(
-            f"Claude scratch changes failed git diff --check: {diff_check.stdout.strip()}"
-        )
+        raise ScratchGateFailure("scratch_diff_check", diff_command, diff_check, scratch)
+    if not repository_mutation_allowed:
+        status_command = ["git", "diff", "--cached", "--name-status", pre_head, "--"]
+        status = subprocess.run(status_command, cwd=scratch, capture_output=True, check=False)
+        if status.returncode != 0:
+            raise HandoffRequired("cannot inspect prohibited scratch changes")
+        # The command succeeded; the task boundary rejects its proposed changes.
+        raise ScratchGateFailure("task_scope", status_command, status, scratch)
     commit = _git_run(
         scratch,
         "git",
@@ -1071,6 +1111,8 @@ class CliAgentInvoker:
         *,
         phase: str = "",
         task_id: str = "",
+        task: TaskItem | None = None,
+        task_base_head: str = "",
     ) -> ProcessResult:
         if provider == "claude" and phase in {"plan", "review"}:
             require_configured_provider("Claude planning or review delegation")
@@ -1100,6 +1142,9 @@ class CliAgentInvoker:
                 "pre_head": pre_head,
             }
             parsed: AgentResult | None = None
+            completed_result = None
+            bound_task = task or TaskItem(task_id, "")
+            mutation_allowed = repository_changes_allowed(bound_task)
             with _temporary_scratch_root(
                 prefix=f"askrex-{role}-{provider}-",
                 parent=scratch_parent,
@@ -1140,7 +1185,7 @@ class CliAgentInvoker:
                             else None
                         )
                         sandbox_kwargs = {"container_name": container_name}
-                        if phase != "implement":
+                        if phase != "implement" or not mutation_allowed:
                             sandbox_kwargs["read_only"] = True
                         if oauth_token:
                             sandbox_kwargs["use_oauth_token_env"] = True
@@ -1201,12 +1246,6 @@ class CliAgentInvoker:
                             ) from exc
                         if self._production_executor:
                             scratch_cleanup["remove"] = False
-                        if self._production_executor and parsed.outcome in {
-                            "continue",
-                            "ready_for_review",
-                        }:
-                            scratch_head = _create_scratch_commit(scratch, pre_head, invocation_id)
-                            _publish_scratch_commit(repo, scratch, pre_head, scratch_head)
                 else:
                     codex_is_implementation = phase == "implement"
                     scratch_command = [
@@ -1279,13 +1318,57 @@ class CliAgentInvoker:
                             ) from exc
                         if self._production_executor and codex_is_implementation:
                             scratch_cleanup["remove"] = False
-                        if (
-                            self._production_executor
-                            and codex_is_implementation
-                            and parsed.outcome in {"continue", "ready_for_review"}
-                        ):
-                            scratch_head = _create_scratch_commit(scratch, pre_head, invocation_id)
+                if (
+                    self._production_executor
+                    and phase == "implement"
+                    and result.returncode == 0
+                    and parsed is not None
+                ):
+                    # Preserve the actual bound result before any Git gate. A capture
+                    # alone never authorizes marker removal or publication recovery.
+                    completed_result = capture_completed_result(
+                        self.config,
+                        role,
+                        bound_task,
+                        task_base_head=task_base_head or pre_head,
+                        pre_head=pre_head,
+                        provider=provider,
+                        result=parsed,
+                        stdout=result.stdout,
+                        stderr=result.stderr,
+                        scratch=scratch,
+                    )
+                    if parsed.outcome in {"continue", "ready_for_review"}:
+                        try:
+                            scratch_head = _create_scratch_commit(
+                                scratch,
+                                pre_head,
+                                invocation_id,
+                                repository_mutation_allowed=mutation_allowed,
+                            )
                             _publish_scratch_commit(repo, scratch, pre_head, scratch_head)
+                        except ScratchGateFailure as exc:
+                            record_postprocessing_error(self.config, completed_result, exc)
+                            try:
+                                journal_prepublication_failure(
+                                    self.config,
+                                    role,
+                                    bound_task,
+                                    task_base_head=task_base_head or pre_head,
+                                    completed_result=completed_result,
+                                    failure=exc,
+                                )
+                            except Exception as journal_error:
+                                record_postprocessing_error(
+                                    self.config, completed_result, journal_error
+                                )
+                                raise
+                            # Keep marker and scratch until the supervisor consumes
+                            # the typed host failure. Original messages stay audit-only.
+                            return result
+                        except Exception as exc:
+                            record_postprocessing_error(self.config, completed_result, exc)
+                            raise
                 if not self._production_executor:
                     if _custom_executor_repository_state(self.config) != custom_state_before:
                         raise HandoffRequired("custom executor modified the leased repository")
@@ -1308,16 +1391,21 @@ class CliAgentInvoker:
                             "post_head": post_head,
                             "result": asdict(parsed),
                         }
-                    advance_handoff(
-                        self.config,
-                        role,
-                        pre_head=pre_head,
-                        post_head=post_head,
-                        invocation_id=invocation_id,
-                        provider=provider,
-                        pending_result=pending_result,
-                    )
-                    activity_file.unlink(missing_ok=True)
+                    try:
+                        advance_handoff(
+                            self.config,
+                            role,
+                            pre_head=pre_head,
+                            post_head=post_head,
+                            invocation_id=invocation_id,
+                            provider=provider,
+                            pending_result=pending_result,
+                        )
+                        activity_file.unlink(missing_ok=True)
+                    except Exception as exc:
+                        if completed_result is not None:
+                            record_postprocessing_error(self.config, completed_result, exc)
+                        raise
                     scratch_cleanup["remove"] = True
                     return result
             post_head, post_dirty = repo_snapshot(repo)
@@ -1544,7 +1632,9 @@ class CliAgentInvoker:
         prompt = _codex_task_prompt(
             role, task, self.config.coordination_root, context, invocation_id
         )
-        command = build_codex_command("implement", repo, prompt, TERRA_MODEL)
+        command = build_codex_command(
+            "implement", repo, prompt, TERRA_MODEL, read_only=not repository_changes_allowed(task)
+        )
         try:
             return self._finish(
                 "codex",
@@ -1556,6 +1646,8 @@ class CliAgentInvoker:
                     invocation_id,
                     phase="implement",
                     task_id=task.task_id,
+                    task=task,
+                    task_base_head=state.task_base_head,
                 ),
             )
         except AgentInvocationError as exc:
@@ -1578,6 +1670,8 @@ class CliAgentInvoker:
                 fallback_id,
                 phase="implement",
                 task_id=task.task_id,
+                task=task,
+                task_base_head=state.task_base_head,
             ),
         )
 

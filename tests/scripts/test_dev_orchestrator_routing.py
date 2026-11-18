@@ -1281,6 +1281,8 @@ def test_production_claude_rejects_concurrent_live_repo_change(tmp_path: Path, m
     _git_repo(mobile)
     config = initialize_runtime(coord, backend, mobile, frozen)
     acknowledge_handoff(config, "backend", source="test")
+    lease_path = coord / "handoff/backend.json"
+    lease_before = lease_path.read_bytes()
 
     def fake_run(
         command,
@@ -1311,11 +1313,13 @@ def test_production_claude_rejects_concurrent_live_repo_change(tmp_path: Path, m
     monkeypatch.setattr(runner, "run_command", fake_run)
     monkeypatch.setattr(runner, "ensure_claude_sandbox_image", lambda: None)
     invoker = runner.CliAgentInvoker(config)
-    with pytest.raises(HandoffRequired, match="live repository changed"):
+    with pytest.raises(HandoffRequired, match="worktree changed after handoff and is not clean"):
         invoker.implement(
             "backend", WorkerState("backend"), TaskItem("B-RACE", "Race"), "ctx", "sonnet"
         )
     assert not (backend / "claude-only.txt").exists()
+    assert (backend / "foreign-writer.txt").read_text(encoding="utf-8") == "external\n"
+    assert lease_path.read_bytes() == lease_before
 
 
 @pytest.mark.parametrize("phase", ["review", "lead"])

@@ -36,6 +36,7 @@ from .handoff import (
     validate_handoff,
 )
 from .lifecycle import ControlPlaneLock
+from .postprocessing import failure_feedback, retire_prepublication_marker
 from .provider_routing import (
     FABLE_REVIEW_MODEL,
     temporary_fable_policy_active,
@@ -374,13 +375,14 @@ class Supervisor:
         if role not in {"backend", "mobile"}:
             raise ValueError(f"unsupported workstream: {role}")
         message = f"supervisor workstream failure: {error}"
+        # Preserve the first cause before a retry can replace its state reason.
+        self.alerts.emit(role=role, kind="workstream_failure", message=message)
         with ControlPlaneLock(self.root / "control-plane.lock"):
             state = self.load_state(role)
             if state.status is WorkerStatus.BLOCKED_USER or (
                 state.status is WorkerStatus.BLOCKED_SYSTEM and state.resume_status is None
             ):
                 self._save_state_preserving_pending_result(state)
-                self.alerts.emit(role=role, kind="workstream_failure", message=message)
                 return
             resume_status = (
                 state.resume_status if state.status is WorkerStatus.BLOCKED_SYSTEM else state.status
@@ -451,6 +453,8 @@ class Supervisor:
         return False
 
     def _run_role(self, role: str) -> None:
+        if self.recover_postprocessing_failure(role):
+            return
         state = self.load_state(role)
         if state.status is WorkerStatus.BLOCKED_SYSTEM:
             if state.blocker_kind in {"review_fallback_wait", "review_fallback_invalid"}:
@@ -984,6 +988,87 @@ class Supervisor:
             return
         self._save_block_or_failure(state, result)
 
+    def recover_postprocessing_failure(self, role: str) -> bool:
+        """Consume only a proven host rejection; never invoke a model or publish its messages."""
+        with ControlPlaneLock(role_lease_lock_path(self.config, role)):
+            pending = read_pending_result(self.config, role)
+            if not pending or "postprocessing_failure" not in pending:
+                return False
+            state = self.load_state(role)
+            # A journal must not override unrelated human or hard system gates.
+            allowed = state.status is WorkerStatus.IMPLEMENTING or (
+                state.status is WorkerStatus.BLOCKED_SYSTEM
+                and (
+                    state.blocker_kind == "postprocessing_evidence"
+                    or (
+                        state.blocker_kind == "system"
+                        and state.resume_status is WorkerStatus.IMPLEMENTING
+                    )
+                    or (
+                        state.blocker_kind == "coordination_evidence"
+                        and state.blocked_reason
+                        == f"initial coordination evidence unavailable: unresolved active-agents writer activity for {role}"
+                    )
+                )
+            )
+            if not allowed:
+                return True
+            try:
+                manifest, record, directory = retire_prepublication_marker(
+                    self.config, role, state, pending
+                )
+                invocation_id = record["invocation_id"]
+                if state.last_result_invocation_id == invocation_id:
+                    if (
+                        state.status is WorkerStatus.BLOCKED_SYSTEM
+                        and state.blocker_kind == "postprocessing_evidence"
+                    ):
+                        self._save_state_preserving_pending_result(
+                            replace(
+                                state,
+                                status=WorkerStatus.IMPLEMENTING,
+                                blocked_reason="",
+                                blocker_kind="",
+                                resume_status=None,
+                            )
+                        )
+                    clear_pending_result(self.config, role, invocation_id=invocation_id)
+                    return True
+                assert state.task is not None
+                feedback = failure_feedback(self.config, state.task, manifest, record, directory)
+                result = validate_agent_result(pending["result"])
+                self._set_result_context(role, result)
+                self.save_state(
+                    replace(
+                        state,
+                        status=WorkerStatus.IMPLEMENTING,
+                        task=replace(state.task, feedback=feedback),
+                        iteration=state.iteration + 1,
+                        implementation_failures=state.implementation_failures + 1,
+                        blocked_reason="",
+                        blocker_kind="",
+                        resume_status=None,
+                    )
+                )
+            except (OSError, ValueError, RuntimeError, KeyError, TypeError) as exc:
+                # Reload in case the state commit succeeded but journal cleanup
+                # failed. Its invocation ledger prevents a second counter update.
+                current = self.load_state(role)
+                if current.last_result_invocation_id == pending.get("invocation_id"):
+                    self.alerts.emit(role=role, kind="postprocessing_cleanup", message=str(exc))
+                    self._save_state_preserving_pending_result(current)
+                    return True
+                self._save_state_preserving_pending_result(
+                    replace(
+                        current,
+                        status=WorkerStatus.BLOCKED_SYSTEM,
+                        blocked_reason=f"postprocessing failure evidence unavailable: {exc}",
+                        blocker_kind="postprocessing_evidence",
+                        resume_status=None,
+                    )
+                )
+            return True
+
     def _has_current_green_validation(self, role: str, state: WorkerState) -> bool:
         if state.task is None or not state.task_base_head:
             return False
@@ -1001,6 +1086,8 @@ class Supervisor:
         return True
 
     def _implement(self, role: str, state: WorkerState, context: str) -> None:
+        if self.recover_postprocessing_failure(role):
+            return
         assert state.task is not None
         model = select_implementer_model(state, self.config)
         recovering_cloud = (self.root / "cloud-sessions" / f"{role}.json").exists()
@@ -1039,6 +1126,8 @@ class Supervisor:
             )
         except AgentInvocationError as exc:
             self._handle_invocation_error(role, state, "implement", exc, context)
+            return
+        if self.recover_postprocessing_failure(role):
             return
         if result.outcome == "ready_for_review":
             validation_head = self._capture_task_base_head(role)
