@@ -991,3 +991,113 @@ def test_review_evidence_prioritizes_explicit_validated_artifact_and_receipt_pat
     assert "EXPLICIT-VALIDATED-CONTENT" in bundle.text
     receipt_path = config.coordination_root / "validation" / f"backend-{task_id}.json"
     assert str(receipt_path.resolve()) in bundle.text
+
+
+@pytest.fixture
+def canonical_issue_packet(tmp_path: Path):
+    repo = tmp_path / "backend"
+    base = _git_repo(repo)
+    head = _commit(repo, "base\nPACKET-DIFF-END\n")
+    config = _config(tmp_path, repo, [sys.executable, "-c", "print('PACKET-VALIDATION-END')"])
+    task = TaskItem("B-MULTI-ISSUE", "Review ROADMAP-FIRST and ROADMAP-SECOND")
+    state = WorkerState(role="backend", task=task, task_base_head=base)
+    assert run_iteration_validation(
+        config, "backend", task.task_id, base_head=base, head=head
+    ).passed
+    issues = config.coordination_root / "issues"
+    issues.mkdir()
+
+    def write_issues(first_chars: int, second_chars: int) -> tuple[str, str]:
+        bodies = []
+        for name, size in (("ROADMAP-FIRST", first_chars), ("ROADMAP-SECOND", second_chars)):
+            start = f"# {name}\nBEGIN-{name}\n"
+            end = f"\nEND-{name}\n"
+            body = start + ("acceptance detail\n" * size)[: size - len(start) - len(end)] + end
+            (issues / f"{name}.md").write_text(body, encoding="utf-8")
+            bodies.append(body)
+        return bodies[0], bodies[1]
+
+    return config, state, write_issues
+
+
+def _default_packet_bound() -> int:
+    # Preserve the existing aggregate ceiling, including fixed rendering overhead.
+    from scripts.dev_orchestrator.evidence import _DEFAULT_SECTION_LIMITS
+
+    content_budget = sum(_DEFAULT_SECTION_LIMITS.values())
+    assert content_budget == 228_000
+    headers = sum(len(f"## {name}\n") for name in _DEFAULT_SECTION_LIMITS)
+    separators = 2 * (len(_DEFAULT_SECTION_LIMITS) - 1)
+    return content_budget + headers + separators
+
+
+@pytest.mark.parametrize("sizes", [(7_984, 5_840), (90_000, 90_000)])
+def test_task_issues_share_unused_packet_capacity(canonical_issue_packet, sizes) -> None:
+    config, state, write_issues = canonical_issue_packet
+    bodies = write_issues(*sizes)
+
+    bundle = build_review_evidence(
+        config, "backend", state, state.task, "C" * 20_000, "inv-shared-budget"
+    )
+
+    assert bundle.truncated is False
+    assert bundle.truncation_reasons == ()
+    for body in bodies:
+        assert body in bundle.text
+    assert "[truncated coordination]" in bundle.text
+    assert "PACKET-DIFF-END" in bundle.text
+    assert "PACKET-VALIDATION-END" in bundle.text
+    assert len(bundle.text) <= _default_packet_bound()
+
+
+def test_task_issues_keep_explicit_section_override(canonical_issue_packet) -> None:
+    config, state, write_issues = canonical_issue_packet
+    write_issues(7_984, 5_840)
+
+    bundle = build_review_evidence(
+        config,
+        "backend",
+        state,
+        state.task,
+        "coordination",
+        "inv-restrictive-budget",
+        max_section_chars=12_000,
+    )
+
+    assert bundle.truncated is True
+    assert bundle.truncation_reasons == ("task_issues",)
+    issues = bundle.text.split("## task_issues\n", 1)[1].split("\n\n## coordination\n", 1)[0]
+    assert len(issues) == 12_000
+    assert "[truncated task_issues]" in issues
+    assert "PACKET-VALIDATION-END" in bundle.text
+
+
+def test_task_issues_over_packet_capacity_block_review(
+    canonical_issue_packet, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts.dev_orchestrator.runner import AgentInvocationError, CliAgentInvoker
+
+    config, state, write_issues = canonical_issue_packet
+    write_issues(160_000, 160_000)
+
+    bundle = build_review_evidence(
+        config, "backend", state, state.task, "C" * 20_000, "inv-over-budget"
+    )
+
+    assert bundle.truncated is True
+    assert bundle.truncation_reasons == ("task_issues",)
+    assert "[truncated task_issues]" in bundle.text
+    assert "PACKET-DIFF-END" in bundle.text
+    assert "PACKET-VALIDATION-END" in bundle.text
+    assert len(bundle.text) == _default_packet_bound()
+
+    invoker = object.__new__(CliAgentInvoker)
+    invoker.config = config
+
+    def unexpected_dispatch(*args, **kwargs):
+        pytest.fail("incomplete issue evidence must be rejected before model dispatch")
+
+    monkeypatch.setattr(invoker, "_execute_agent", unexpected_dispatch)
+    with pytest.raises(AgentInvocationError, match="task_issues") as exc:
+        invoker.review("backend", state, state.task, "C" * 20_000, "gpt-5.6-terra")
+    assert exc.value.kind == "incomplete_evidence"

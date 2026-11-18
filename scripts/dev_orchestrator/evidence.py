@@ -499,14 +499,31 @@ def build_review_evidence(
         ("validated_artifacts", validated_artifacts),
         ("validation", "receipt_path: " + str(receipt_path) + "\n" + _receipt_text(receipt)),
     )
+    safe_sections = {name: _redact(raw, config) for name, raw in sections}
+    bounded_sections = {
+        name: _bound(
+            name,
+            safe,
+            max_section_chars if max_section_chars is not None else _DEFAULT_SECTION_LIMITS[name],
+        )
+        for name, safe in safe_sections.items()
+        if name != "task_issues"
+    }
+    issue_limit = max_section_chars
+    if issue_limit is None:
+        # Issue files may use unused packet capacity without shrinking any other
+        # section or increasing the original aggregate content budget. Account
+        # for the actual redacted, bounded text, including truncation markers.
+        issue_limit = sum(_DEFAULT_SECTION_LIMITS.values()) - sum(
+            len(bounded) for bounded, _truncated in bounded_sections.values()
+        )
+    bounded_sections["task_issues"] = _bound(
+        "task_issues", safe_sections["task_issues"], issue_limit
+    )
     rendered: list[str] = []
     reasons: list[str] = []
-    for name, raw in sections:
-        safe = _redact(raw, config)
-        limit = (
-            max_section_chars if max_section_chars is not None else _DEFAULT_SECTION_LIMITS[name]
-        )
-        bounded, truncated = _bound(name, safe, limit)
+    for name in safe_sections:
+        bounded, truncated = bounded_sections[name]
         if truncated and (max_section_chars is not None or name in _REVIEW_CRITICAL_SECTIONS):
             reasons.append(name)
         rendered.append(f"## {name}\n{bounded}")
