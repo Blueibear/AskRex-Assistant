@@ -93,7 +93,13 @@ class SupervisorLock:
         if self._handle is not None:
             raise RuntimeError("development orchestrator lock is already owned by this instance")
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        handle = self.path.open("a+b", buffering=0)
+        # Do not change existing diagnostic bytes before OS ownership is held.
+        handle = open(
+            self.path,
+            "r+b",
+            buffering=0,
+            opener=lambda name, flags: os.open(name, flags | os.O_CREAT, 0o666),
+        )
         try:
             _acquire_os_file_lock(handle)
         except BlockingIOError as exc:
