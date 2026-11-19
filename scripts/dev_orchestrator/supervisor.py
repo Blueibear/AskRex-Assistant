@@ -33,6 +33,7 @@ from .coordination_checks import (
     begin_checks,
     final_preparation_checkpoint,
     finish_checks,
+    publication_preparation_checkpoint,
     retire_final_preparation,
 )
 from .evidence import EvidenceError, build_review_evidence
@@ -987,6 +988,11 @@ class Supervisor:
             return
         if self.config.observe_only:
             return
+        from .publication_review import is_publication_review
+
+        if state.task is not None and is_publication_review(state.task):
+            self._publication_verify(role, state)
+            return
         if state.task is not None and state.task.task_id == f"FINAL-VERIFY-{role}":
             # The reserved phase owns malformed/partial checkpoint classification.
             # Do not let generic context reads preempt its preserving failure gate.
@@ -1019,6 +1025,9 @@ class Supervisor:
             return
         if state.task.task_id == f"FINAL-VERIFY-{role}":
             self._final_verify(role, state, context)
+            return
+        if is_publication_review(state.task):
+            self._publication_verify(role, state)
             return
         if state.status is WorkerStatus.REVIEWING:
             self._review(role, state, context)
@@ -1302,6 +1311,32 @@ class Supervisor:
         result = self._publish_completion(
             state.role, gate.acceptance_reasons, resume_denied=resume_denied
         )
+        if result.status == "review_required":
+            from .github_publication import PublicationResult, _Stop
+            from .publication_review import designate_next_review
+
+            try:
+                task, base = designate_next_review(self.config, state.role)
+            except _Stop as exc:
+                result = PublicationResult(exc.status, str(exc))
+            except (OSError, ValueError, RuntimeError) as exc:
+                result = PublicationResult(
+                    "system_error", f"Publication review preparation blocked: {exc}"
+                )
+            else:
+                self.save_state(
+                    replace(
+                        state,
+                        status=WorkerStatus.IMPLEMENTING,
+                        task=task,
+                        task_base_head=base,
+                        completion_host_action="",
+                        blocked_reason="",
+                        blocker_kind="",
+                        resume_status=None,
+                    )
+                )
+                return
         if result.status in {"published", "already_published"}:
             refreshed = completion_preflight(self.config, state.role)
             if refreshed.publication_reasons and not refreshed.system_error:
@@ -1605,6 +1640,101 @@ class Supervisor:
             raise EvidenceError(
                 "review-critical evidence truncated: " + ", ".join(bundle.truncation_reasons)
             )
+
+    def _publication_remediation(self, state: WorkerState, feedback: str, identity: str) -> None:
+        head = self._capture_task_base_head(state.role)
+        self.save_state(
+            replace(
+                state,
+                status=WorkerStatus.IMPLEMENTING,
+                task=TaskItem(
+                    f"PUBLICATION-REMEDIATE-{state.role}-{head[:12]}-{identity}",
+                    "Correct only the actual publication review or canonical gate findings below. "
+                    "Use normal implementation and validation. Do not push, create a PR, or claim "
+                    "physical/final acceptance. A fresh exhaustive publication review remains required.\n\n"
+                    + feedback,
+                    feedback=feedback,
+                ),
+                task_base_head=head,
+                completion_host_action="",
+                blocked_reason="",
+                blocker_kind="",
+                resume_status=None,
+                review_failures=state.review_failures + 1,
+            )
+        )
+
+    def _publication_verify(self, role: str, state: WorkerState) -> None:
+        from .publication_review import prepare_part, validate_review_task
+
+        assert state.task is not None
+        context = ""
+        remediation = None
+        try:
+            with ControlPlaneLock(role_lease_lock_path(self.config, role)):
+                head = self._capture_task_base_head(role)
+                validate_review_task(self.config, role, state.task, state.task_base_head, head)
+                checkpoint = publication_preparation_checkpoint(
+                    self.config, role, state.task, state.task_base_head, head
+                )
+                if state.status is WorkerStatus.IMPLEMENTING:
+                    if checkpoint == "new":
+                        begin_checks(
+                            self.config,
+                            role,
+                            state.task,
+                            state.task_base_head,
+                            head,
+                            recovered=True,
+                        )
+                        checkpoint = "open"
+                    if checkpoint == "open":
+                        report = run_iteration_validation(
+                            self.config,
+                            role,
+                            state.task.task_id,
+                            base_head=state.task_base_head,
+                            head=head,
+                        )
+                        if report.system_error:
+                            raise CoordinationCheckError(report.system_error)
+                        if not report.passed:
+                            remediation = report.feedback
+                        else:
+                            checkpoint = publication_preparation_checkpoint(
+                                self.config, role, state.task, state.task_base_head, head
+                            )
+                    if checkpoint == "validated":
+                        finish_checks(self.config, role, state.task, state.task_base_head, head)
+                        checkpoint = publication_preparation_checkpoint(
+                            self.config, role, state.task, state.task_base_head, head
+                        )
+                if remediation is None:
+                    if checkpoint != "complete":
+                        raise CoordinationCheckError(
+                            "publication review lacks complete canonical preparation"
+                        )
+                    if read_pending_result(self.config, role) is None:
+                        context = self._worker_context(role, state)
+                    prepare_part(self.config, role, state, context)
+                    if state.status is WorkerStatus.IMPLEMENTING:
+                        state = replace(state, status=WorkerStatus.REVIEWING)
+                        self.save_state(state)
+        except (CoordinationCheckError, EvidenceError, OSError, ValueError) as exc:
+            self._handle_invocation_error(
+                role,
+                state,
+                "review",
+                AgentInvocationError("supervisor", "incomplete_evidence", str(exc)),
+                context,
+            )
+            return
+        # Result consumption can already have committed a new state before journal
+        # cleanup fails. Let run_role reload that state, never rewrite this old one.
+        if remediation is not None:
+            self._publication_remediation(state, remediation, "validation")
+            return
+        self._review(role, state, context)
 
     def _final_verify(self, role: str, state: WorkerState, context: str | None) -> None:
         assert state.task is not None and state.task.task_id == f"FINAL-VERIFY-{role}"
@@ -2107,10 +2237,13 @@ class Supervisor:
 
     def _review(self, role: str, state: WorkerState, context: str) -> None:
         assert state.task is not None
+        from .publication_review import is_publication_review, record_review_result
+
+        publication = is_publication_review(state.task)
         # An active delegation suspends ChatGPT receipts even when this task
         # requires a protected Codex gate. Never substitute Fable for that gate.
         fable_policy_active = temporary_fable_policy_active(self.config, role)
-        using_fable = temporary_fable_review_active(
+        using_fable = not publication and temporary_fable_review_active(
             self.config, role, state.task, self._last_provider(role)
         )
         # Ineligible checkpoints retain their mandatory Codex review route.
@@ -2176,7 +2309,7 @@ class Supervisor:
                 if using_fable
                 else (
                     SOL_MODEL
-                    if self._last_provider(role) == "codex"
+                    if publication or self._last_provider(role) == "codex"
                     else select_reviewer_model(state, self.config)
                 )
             )
@@ -2192,6 +2325,8 @@ class Supervisor:
             except AgentInvocationError as exc:
                 self._handle_invocation_error(role, state, "review", exc, context)
                 return
+        if publication:
+            record_review_result(self.config, role, state, result, persist=False)
         if not self._accept_result(
             role,
             state,
@@ -2200,6 +2335,8 @@ class Supervisor:
             allow_issue_updates=result.outcome == "pass",
         ):
             return
+        if publication:
+            record_review_result(self.config, role, state, result)
         if result.outcome == "pass":
             self._record_completed_task(
                 role,
@@ -2231,6 +2368,9 @@ class Supervisor:
             return
         if result.outcome == "changes_required":
             feedback = "\n\n".join(part for part in (result.summary, result.next_action) if part)
+            if publication:
+                self._publication_remediation(state, feedback, result.invocation_id)
+                return
             failures = state.review_failures + 1
             failed_state = replace(
                 state,

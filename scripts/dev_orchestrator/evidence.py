@@ -22,6 +22,7 @@ class ReviewEvidenceBundle:
     truncation_reasons: tuple[str, ...]
     base_head: str
     head: str
+    task_diff_capacity: int = 0
 
 
 _SECRET_PATTERNS = (
@@ -430,6 +431,7 @@ def build_review_evidence(
     *,
     max_section_chars: int | None = None,
     coordination_config: OrchestratorConfig | None = None,
+    _publication_candidate: dict | None = None,
 ) -> ReviewEvidenceBundle:
     authoritative = coordination_config or config
     if authoritative.coordination_root.resolve() != config.coordination_root.resolve():
@@ -455,12 +457,27 @@ def build_review_evidence(
     except (FileNotFoundError, ValueError) as exc:
         raise EvidenceError("matching validation receipt is required") from exc
 
-    task_diff = _git(repo, "diff", f"{base_head}..{head}", "--")
+    from .publication_review import is_publication_review, review_evidence
+
+    publication = (
+        review_evidence(
+            authoritative, role, task, base_head, head, candidate=_publication_candidate
+        )
+        if is_publication_review(task)
+        else None
+    )
+    if _publication_candidate is not None and publication is None:
+        raise EvidenceError("publication sizing requires a designated review task")
+    task_diff = (
+        publication["text"]
+        if publication is not None
+        else _git(repo, "diff", f"{base_head}..{head}", "--")
+    )
     changed_file_contents = _changed_file_contents(
         repo,
         base_head,
         head,
-        task_diff,
+        publication["full_diff"] if publication is not None else task_diff,
     )
 
     validated_artifacts = _validated_artifact_contents(config, receipt, task)
@@ -502,7 +519,11 @@ def build_review_evidence(
             ),
         ),
         ("task", f"prompt:\n{task.prompt}\n\nhistorical_feedback_context_only:\n{task.feedback}"),
-        ("task_issues", _task_issue_contents(config, task)),
+        (
+            "task_issues",
+            _task_issue_contents(config, task)
+            + ("\n\n" + publication["context"] if publication is not None else ""),
+        ),
         ("coordination", getattr(coordination_context, "critical_text", coordination_context)),
         ("outgoing_coordination", _outgoing_coordination(config, role, task)),
         ("supervisor_coordination", _supervisor_coordination(config, role, task)),
@@ -522,6 +543,12 @@ def build_review_evidence(
         if protected_coordination
         else ("task_diff", "task_issues")
     )
+    if publication is not None:
+        # Reserve the actual complete critical context before selecting a part.
+        # This changes no aggregate limit and never truncates an accepted part.
+        shared_sections = tuple(name for name in shared_sections if name != "task_diff") + (
+            "task_diff",
+        )
     bounded_sections = {
         name: _bound(
             name,
@@ -534,8 +561,11 @@ def build_review_evidence(
     remaining = sum(_DEFAULT_SECTION_LIMITS.values()) - sum(
         len(bounded) for bounded, _truncated in bounded_sections.values()
     )
+    task_diff_capacity = 0
     for name in shared_sections:
         limit = max_section_chars if max_section_chars is not None else max(0, remaining)
+        if name == "task_diff":
+            task_diff_capacity = limit
         bounded_sections[name] = (
             ("", bool(safe_sections[name]))
             if max_section_chars is None and limit == 0
@@ -559,4 +589,5 @@ def build_review_evidence(
         truncation_reasons=tuple(reasons),
         base_head=base_head,
         head=head,
+        task_diff_capacity=task_diff_capacity,
     )

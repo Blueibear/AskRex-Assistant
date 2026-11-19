@@ -20,7 +20,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .completed_tasks import CompletedTaskLedger
 from .coordination_checks import read_check_summary
 from .handoff import role_lease_lock_path, validate_handoff, validate_worker_checkout
 from .lifecycle import ControlPlaneLock, _process_started_filetime
@@ -181,7 +180,9 @@ def _url_matches(value: str, repository: str) -> bool:
     return path.casefold() == repository.casefold()
 
 
-def _proof(config: OrchestratorConfig, role: str) -> tuple[Path, dict, list[str]]:
+def _checkpoint_identity(
+    config: OrchestratorConfig, role: str, *, allow_pending: bool = False
+) -> tuple[Path, dict]:
     root = config.coordination_root.resolve()
     validate_runtime_paths(
         config.coordination_root, config.backend_root, config.mobile_root, config.frozen_worktree
@@ -204,25 +205,35 @@ def _proof(config: OrchestratorConfig, role: str) -> tuple[Path, dict, list[str]
     ):
         raise ValueError("publication requires the leased non-base branch")
     lease = _read(root, root / "handoff" / f"{role}.json")
-    if lease.get("pending_result") is not None:
+    if lease.get("pending_result") is not None and not allow_pending:
         raise ValueError("publication cannot consume an unhandled model result")
     for directory in ("active-agents", "cloud-sessions"):
         if (root / directory / f"{role}.json").exists():
             raise ValueError("publication has unresolved worker activity")
-    ledger_path = _trusted(root, root / "completed-tasks" / f"{role}.json")
-    if ledger_path.stat().st_size > 2_000_000:
-        raise ValueError("completed task ledger exceeds its bound")
-    records = CompletedTaskLedger(root).records(role)
-    matches = [
-        r
-        for r in records
-        if r.get("completed_head") == checkout.head and r.get("source") == "independent_review"
-    ]
-    if not matches:
-        raise ValueError("publication requires an accepted independent review at current HEAD")
-    record = max(matches, key=lambda r: _stamp(r.get("completed_at")))
+    return checkout.root, {
+        "role": role,
+        "repository": repository,
+        "branch": checkout.branch,
+        "base_branch": checkout.base_branch,
+        "head": checkout.head,
+        "lease_id": lease["lease_id"],
+        "worktree": str(checkout.root),
+        **urls,
+    }
+
+
+def _accepted_review(
+    config: OrchestratorConfig, role: str, identity: dict, record: dict, task: TaskItem, base: str
+) -> tuple[dict, list[str], dict, bytes]:
+    """Validate one exact designated review, never select a same-HEAD task."""
+    root = config.coordination_root.resolve()
     task_id, invocation = record.get("task_id"), record.get("invocation_id")
-    if not isinstance(task_id, str) or not _TASK.fullmatch(task_id):
+    if (
+        task_id != task.task_id
+        or not _TASK.fullmatch(task_id)
+        or record.get("completed_head") != identity["head"]
+        or record.get("source") != "independent_review"
+    ):
         raise ValueError("publication reviewed task identity is invalid")
     if str(uuid.UUID(str(invocation))) != invocation:
         raise ValueError("publication review invocation is invalid")
@@ -230,9 +241,9 @@ def _proof(config: OrchestratorConfig, role: str) -> tuple[Path, dict, list[str]
     input_path = root / "model-inputs" / f"{role}-{digest}" / "manifest.json"
     supplied = _read(root, input_path)
     admission = supplied.get("admission")
-    if not isinstance(admission, dict) or admission.get("head") != checkout.head:
+    if not isinstance(admission, dict) or admission.get("head") != identity["head"]:
         raise ValueError("accepted review did not receive this exact HEAD")
-    supplied, _ = read_supplied_input(
+    supplied, actual_input = read_supplied_input(
         config,
         role,
         "review",
@@ -242,22 +253,21 @@ def _proof(config: OrchestratorConfig, role: str) -> tuple[Path, dict, list[str]
     )
     receipt_path = root / "validation" / f"{role}-{task_id}.json"
     payload = _read(root, receipt_path)
-    base = payload.get("base_head")
-    if not isinstance(base, str) or not _SHA.fullmatch(base):
+    if payload.get("base_head") != base or not _SHA.fullmatch(base):
         raise ValueError("publication validation base is invalid")
-    receipt = load_validation_receipt(config, role, task_id, base_head=base, head=checkout.head)
+    receipt = load_validation_receipt(config, role, task_id, base_head=base, head=identity["head"])
     if not receipt.gates or any(not gate.command for gate in receipt.gates):
         raise ValueError("publication requires actual successful canonical gates")
     checks_path = root / "evidence/supervisor-checks" / f"{role}-{task_id}.json"
     checks = _read(root, checks_path)
     if not isinstance(checks.get("initial"), dict) or not isinstance(checks.get("final"), dict):
         raise ValueError("publication requires complete opening and closing evidence")
-    read_check_summary(config, role, TaskItem(task_id, ""), base, checkout.head, strict=True)
+    read_check_summary(config, role, task, base, identity["head"], strict=True)
     script_hash = _sha(_trusted(root, root / "scripts/check-coordination.ps1").read_bytes())
     for capture in (checks["initial"], checks["final"]):
         if capture.get("script_sha256") != script_hash:
             raise ValueError("publication coordination script changed since validation")
-        if capture.get("lease", {}).get("lease_id") != lease["lease_id"]:
+        if capture.get("lease", {}).get("lease_id") != identity["lease_id"]:
             raise ValueError("publication review belongs to a different lease")
     if not (
         _stamp(checks["initial"]["observed_at"])
@@ -269,23 +279,24 @@ def _proof(config: OrchestratorConfig, role: str) -> tuple[Path, dict, list[str]
     ):
         raise ValueError("publication review/validation timing is inconsistent")
     proof = {
-        "role": role,
-        "repository": repository,
-        "branch": checkout.branch,
-        "base_branch": checkout.base_branch,
-        "head": checkout.head,
+        **identity,
         "task_id": task_id,
         "base_head": base,
-        "lease_id": lease["lease_id"],
-        "worktree": str(checkout.root),
         "review": record,
         "review_input_sha256": _sha(input_path.read_bytes()),
         "validation_sha256": _sha(receipt_path.read_bytes()),
         "coordination_checks_sha256": _sha(checks_path.read_bytes()),
-        **urls,
     }
     gates = [f"{gate.name}: exit 0" for gate in receipt.gates]
-    return checkout.root, proof, gates
+    return proof, gates, supplied, actual_input
+
+
+def _proof(config: OrchestratorConfig, role: str) -> tuple[Path, dict, list[str]]:
+    from .publication_review import accepted_publication_proof
+
+    repo, identity = _checkpoint_identity(config, role)
+    proof, gates = accepted_publication_proof(config, role, identity)
+    return repo, proof, gates
 
 
 def _run(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -468,10 +479,10 @@ def _prs(runner: Runner, repo: Path, proof: dict) -> list[dict]:
     return values
 
 
-def _remote_head(runner: Runner, repo: Path, proof: dict) -> str:
-    raw = _query(
-        runner, ["git", "ls-remote", "--heads", "origin", "refs/heads/" + proof["branch"]], repo
-    ).strip()
+def _parse_remote_head(raw: str, proof: dict) -> str:
+    if not isinstance(raw, str):
+        raise ValueError("remote branch query is malformed")
+    raw = raw.strip()
     if not raw:
         return ""
     fields = raw.split()
@@ -482,6 +493,86 @@ def _remote_head(runner: Runner, repo: Path, proof: dict) -> str:
     ):
         raise ValueError("remote branch query is ambiguous")
     return fields[0]
+
+
+def _remote_observation(runner: Runner, repo: Path, proof: dict) -> dict:
+    command = ["git", "ls-remote", "--heads", "origin", "refs/heads/" + proof["branch"]]
+    raw = _query(runner, command, repo)
+    return {
+        "command": command,
+        "stdout": raw,
+        "head": _parse_remote_head(raw, proof),
+        "observed_at": datetime.now(UTC).isoformat(),
+    }
+
+
+def _remote_head(runner: Runner, repo: Path, proof: dict) -> str:
+    return _remote_observation(runner, repo, proof)["head"]
+
+
+def _review_intent_guard(config, identity: dict, observation: dict, runner: Runner) -> None:
+    """A new review cannot erase or bypass an unresolved earlier remote action."""
+    from .publication_review import _directory
+
+    root = config.coordination_root
+    directory = _trusted(root, _directory(root, identity))
+    pointer_path = directory / "latest-push.json"
+    if pointer_path.exists():
+        pointer = _read(root, pointer_path)
+        old_head = pointer.get("head")
+        if pointer.get("schema_version") != 1 or not _SHA.fullmatch(str(old_head)):
+            raise ValueError("prior push pointer is malformed")
+        prior = _read(root, directory / (old_head + ".json"))
+        proof = prior.get("proof", {})
+        attempts = [prior.get("push"), *prior.get("push_history", [])]
+        matches = [
+            a
+            for a in attempts
+            if isinstance(a, dict) and a.get("admission_id") == pointer.get("admission_id")
+        ]
+        if (
+            len(matches) != 1
+            or any(proof.get(k) != identity[k] for k in ("role", "repository", "branch"))
+            or proof.get("head") != old_head
+        ):
+            raise ValueError("prior push journal differs from its pointer")
+        if not _retryable_denial(matches[0]) and observation["head"] not in {
+            old_head,
+            identity["head"],
+        }:
+            raise _Stop(
+                "waiting", "Prior push is unresolved; a new review cannot replace its intent."
+            )
+    create_path = directory / "create.json"
+    if create_path.exists():
+        create = _read(root, create_path)
+        if (
+            create.get("kind") != "draft_creation"
+            or create.get("repository") != identity["repository"]
+            or create.get("branch") != identity["branch"]
+            or not isinstance(create.get("create"), dict)
+        ):
+            raise ValueError("prior draft creation intent is malformed")
+        _check_body(root, create)
+        if not any(
+            p["state"] == "OPEN" for p in _prs(runner, Path(identity["worktree"]), identity)
+        ):
+            raise _Stop(
+                "waiting",
+                "Prior draft creation requires read-only reconciliation before a new review.",
+            )
+
+
+def _require_reviewed_remote(config, proof: dict, remote_head: str) -> None:
+    from .publication_review import read_scope_artifact
+
+    scope, _ = read_scope_artifact(config.coordination_root, proof["publication_review"]["scope"])
+    expected = scope["baseline"]["observation"]["head"]
+    if remote_head not in {expected, proof["head"]}:
+        raise _Stop(
+            "waiting",
+            "Remote branch moved outside the designated publication baseline; review authority was not rebased.",
+        )
 
 
 def _retryable_denial(action: object) -> bool:
@@ -587,10 +678,14 @@ def _admit(
     args: list[str],
     *,
     resumed_denial_id: str = "",
+    runner: Runner | None = None,
 ) -> None:
     _, current, _ = _proof(config, role)
     if current != proof:
         raise ValueError("publication proof changed before action admission")
+    _require_reviewed_remote(
+        config, proof, _remote_head(runner or _run, Path(proof["worktree"]), proof)
+    )
     with ControlPlaneLock(config.coordination_root / "control-plane.lock", timeout_seconds=10):
         heartbeat = _active(config, role)
         if resumed_denial_id:
@@ -678,7 +773,10 @@ def _body(proof: dict, gates: list[str], unresolved: tuple[str, ...]) -> str:
     return (
         "## Reviewed checkpoint at draft creation\n\n"
         f"Task: {proof['task_id']}\n\nCommit: {proof['head']}\n\n"
-        f"Independent review: {proof['review']['invocation_id']} at {proof['review']['completed_at']}\n\n"
+        f"Exhaustive publication review: {len(proof['publication_review']['parts'])} accepted parts, "
+        f"baseline {proof['base_head']} through {proof['head']}.\n\n"
+        f"Final part review: {proof['review']['invocation_id']} at {proof['review']['completed_at']}\n\n"
+        "This review covers the complete designated delta, not history before its observed baseline.\n\n"
         f"Canonical validation receipt SHA-256: {proof['validation_sha256']}\n\n"
         "Host validation at that commit:\n\n"
         + "\n".join("- " + g for g in gates)
@@ -700,7 +798,15 @@ def _publish(
     root = config.coordination_root.resolve()
     with ControlPlaneLock(root / "control-plane.lock", timeout_seconds=10):
         _active(config, role)
-    repo, proof, gates = _proof(config, role)
+    try:
+        repo, proof, gates = _proof(config, role)
+    except _Stop as exc:
+        if exc.status != "review_required":
+            raise
+        repo, identity = _checkpoint_identity(config, role)
+        observation = _remote_observation(runner, repo, identity)
+        _review_intent_guard(config, identity, observation, runner)
+        raise
     body = _body(proof, gates, unresolved)
     if len(body) > 20_000:
         raise ValueError("draft body exceeds its complete evidence bound")
@@ -743,6 +849,7 @@ def _publish(
     prs = _prs(runner, repo, proof)
     opened = next((p for p in prs if p["state"] == "OPEN"), None)
     remote_head = _remote_head(runner, repo, proof)
+    _require_reviewed_remote(config, proof, remote_head)
     remote_observed_at = datetime.now(UTC).isoformat()
     common = dict(info)
     resumed_denial_id = ""
@@ -845,7 +952,15 @@ def _publish(
             proof["head"] + ":refs/heads/" + proof["branch"],
         ]
         _admit(
-            config, role, proof, path, state, "push", command, resumed_denial_id=resumed_denial_id
+            config,
+            role,
+            proof,
+            path,
+            state,
+            "push",
+            command,
+            resumed_denial_id=resumed_denial_id,
+            runner=runner,
         )
         _act(config, path, state, "push", runner, repo)
         remote_head = _remote_head(runner, repo, proof)
@@ -923,7 +1038,7 @@ def _publish(
         "--body-file",
         str(body_path),
     ]
-    _admit(config, role, proof, create_path, create, "create", args)
+    _admit(config, role, proof, create_path, create, "create", args, runner=runner)
     _act(config, create_path, create, "create", runner, repo)
     prs = _prs(runner, repo, proof)
     current = next((p for p in prs if p["state"] == "OPEN"), None)

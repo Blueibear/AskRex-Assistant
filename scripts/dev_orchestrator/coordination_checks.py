@@ -394,6 +394,32 @@ def final_preparation_checkpoint(
     """
     if task.task_id != f"FINAL-VERIFY-{role}":
         raise CoordinationCheckError("final preparation requires the reserved final task")
+    return _preparation_checkpoint(config, role, task, head, head, final=True)
+
+
+def publication_preparation_checkpoint(
+    config: OrchestratorConfig,
+    role: str,
+    task: TaskItem,
+    base_head: str,
+    head: str,
+) -> Literal["new", "open", "validated", "complete"]:
+    """Resume real canonical preparation for a host-designated publication part."""
+    from .publication_review import validate_review_task
+
+    validate_review_task(config, role, task, base_head, head)
+    return _preparation_checkpoint(config, role, task, base_head, head, final=False)
+
+
+def _preparation_checkpoint(
+    config: OrchestratorConfig,
+    role: str,
+    task: TaskItem,
+    base_head: str,
+    head: str,
+    *,
+    final: bool,
+) -> Literal["new", "open", "validated", "complete"]:
     path = _manifest_path(config, role, task)
     receipt_path = config.coordination_root / "validation" / f"{role}-{task.task_id}.json"
     try:
@@ -420,7 +446,7 @@ def final_preparation_checkpoint(
                 raise CoordinationCheckError("completed final checkpoint has no validation receipt")
             # This verifies identity, capture timestamps, stream paths/hashes and,
             # when complete, the exact successful receipt digest.
-            read_check_summary(config, role, task, head, head, strict=complete)
+            read_check_summary(config, role, task, base_head, head, strict=complete)
             current = _writer_state(config, role, head)
             script_hash = hashlib.sha256(_check_script(config).read_bytes()).hexdigest()
             command = _check_command(config, role)
@@ -441,7 +467,13 @@ def final_preparation_checkpoint(
                 raise CoordinationCheckError("final opening observation is in the future")
             if not receipt_present:
                 return "open"
-            receipt = load_final_validation_receipt(config, role, head=head)
+            receipt = (
+                load_final_validation_receipt(config, role, head=head)
+                if final
+                else load_validation_receipt(
+                    config, role, task.task_id, base_head=base_head, head=head
+                )
+            )
             passed_at = datetime.fromisoformat(receipt.passed_at)
             if passed_at < initial_at or passed_at > now:
                 raise CoordinationCheckError(

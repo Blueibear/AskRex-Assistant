@@ -32,7 +32,9 @@ from tests.scripts.test_dev_orchestrator_completion import _config
 
 @pytest.fixture
 def reviewed(tmp_path, monkeypatch, request):
-    role = getattr(request, "param", "backend")
+    parameter = getattr(request, "param", "backend")
+    role = parameter["role"] if isinstance(parameter, dict) else parameter
+    designated = not isinstance(parameter, dict) or parameter.get("publication_review", True)
     config = _config(tmp_path)
     task = TaskItem("publish-reviewed-checkpoint", "Implement the assigned bounded change.")
     gate = {"name": "real fixture check", "command": [sys.executable, "-c", "print('checked')"]}
@@ -41,7 +43,16 @@ def reviewed(tmp_path, monkeypatch, request):
         metadata={
             "host_publication": {"enabled": True},
             "iteration_validation": {
-                role: {"overrides": [{"task_prefix": task.task_id, "gates": [gate]}]}
+                role: {
+                    "overrides": [
+                        {"task_prefix": prefix, "gates": [gate]}
+                        for prefix in (
+                            task.task_id,
+                            "FINAL-VERIFY-PUBLICATION-",
+                            "PUBLICATION-REMEDIATE-",
+                        )
+                    ]
+                }
             },
         },
     )
@@ -56,6 +67,20 @@ def reviewed(tmp_path, monkeypatch, request):
         "_check_command",
         lambda *_: [sys.executable, "-c", "print('actual host capture')"],
     )
+    remote_base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    content = (
+        "x" * parameter["publication_content_chars"] + "\n"
+        if isinstance(parameter, dict) and "publication_content_chars" in parameter
+        else "new unpublished checkpoint\n"
+    )
+    (repo / "publication-fixture.txt").write_text(content)
+    for index, size in enumerate(
+        parameter.get("publication_file_sizes", ()) if isinstance(parameter, dict) else ()
+    ):
+        (repo / f"publication-part-{index}.txt").write_text(str(index) * size + "\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "fixture unpublished checkpoint"], cwd=repo, check=True)
+    acknowledge_handoff(config, role, source="test")
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
     coordination_checks.begin_checks(config, role, task, head, head)
     report = run_iteration_validation(config, role, task.task_id, base_head=head, head=head)
@@ -64,43 +89,84 @@ def reviewed(tmp_path, monkeypatch, request):
     invoker = object.__new__(CliAgentInvoker)
     invoker.config = config
     invocation = str(uuid.uuid4())
+    calls = []
+    outcomes = []
 
     def execute(arguments, repo, role, provider, invocation_id, **kwargs):
-        nonlocal invocation
+        nonlocal invocation, task, head
+        task = supervisor.load_state(role).task
+        phase = kwargs.get("phase")
+        assert phase in {"plan", "review", "implement"}
+        task_id = task.task_id if task else ""
         invocation = invocation_id
+        prompt = arguments[-1]
+        if phase == "review" and len(calls) and getattr(checkpoint, "prompt_transform", None):
+            prompt = checkpoint.prompt_transform(prompt)
+        calls.append(
+            {"task_id": task_id, "invocation_id": invocation_id, "prompt": prompt, "phase": phase}
+        )
+        pre_head = head
         provenance = capture_supplied_input(
             config,
             role,
-            "review",
-            task.task_id,
+            phase,
+            task_id,
             invocation_id,
             head,
             kwargs["input_context"],
-            arguments[-1],
+            prompt,
             input_kind="cli_prompt_utf8",
         )
         assert provenance is not None
+        outcome = (
+            outcomes.pop(0)
+            if outcomes
+            else {"plan": "done", "review": "pass", "implement": "ready_for_review"}[phase]
+        )
+        if phase == "implement":
+            assert task_id.startswith("PUBLICATION-REMEDIATE-")
+            (repo / "publication-fixture.txt").write_text("corrected actual publication finding\n")
+            subprocess.run(["git", "add", "publication-fixture.txt"], cwd=repo, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "commit",
+                    "-qm",
+                    "fixture publication remediation\n\nAskRex-Orchestrator-Invocation: "
+                    + invocation_id,
+                ],
+                cwd=repo,
+                check=True,
+            )
+            head = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=repo, text=True
+            ).strip()
+            checkpoint.head = head
         result = AgentResult(
-            "pass",
-            "Independent review passed.",
-            "",
+            outcome,
+            (
+                "Correct the actual publication finding."
+                if outcome == "changes_required"
+                else "The bounded phase completed."
+            ),
+            "Repair publication-fixture.txt." if outcome == "changes_required" else "",
             role=role,
-            task_id=task.task_id,
+            task_id=task_id if phase != "plan" else "publication-planner-done",
             invocation_id=invocation_id,
         )
         advance_handoff(
             config,
             role,
-            pre_head=head,
+            pre_head=pre_head,
             post_head=head,
             invocation_id=invocation_id,
-            provider="codex",
+            provider=provider,
             pending_result={
-                "phase": "review",
+                "phase": phase,
                 "role": role,
-                "task_id": task.task_id,
+                "task_id": task_id,
                 "invocation_id": invocation_id,
-                "pre_head": head,
+                "pre_head": pre_head,
                 "post_head": head,
                 "result": asdict(result),
                 "input_provenance": provenance,
@@ -125,10 +191,36 @@ def reviewed(tmp_path, monkeypatch, request):
         role=role,
         supervisor=supervisor,
         ledger=ledger,
+        remote_base=remote_base,
+        calls=calls,
+        outcomes=outcomes,
     )
+    ordinary_ids = ["publish-reviewed-checkpoint"]
 
-    def review_again(*, changed_head=False):
+    def ensure_publication_review():
+        from scripts.dev_orchestrator.github_publication import _proof, _Stop
+        from scripts.dev_orchestrator.publication_review import designate_next_review
+
+        nonlocal task
+        transport = getattr(checkpoint, "network", None) or Transport(checkpoint)
+        checkpoint.network = transport
+        for _ in range(30):
+            try:
+                _proof(config, role)
+                return
+            except _Stop as exc:
+                assert exc.status == "review_required"
+            task, base = designate_next_review(config, role, runner=transport)
+            supervisor.save_state(WorkerState(role, WorkerStatus.IMPLEMENTING, task, base))
+            supervisor.run_role(role)
+            current = supervisor.load_state(role)
+            assert current.status is WorkerStatus.IDLE, current.to_dict()
+            checkpoint.task, checkpoint.invocation = task, invocation
+        raise AssertionError("fixture publication review did not complete")
+
+    def review_again(*, changed_head=False, full_scope=False):
         nonlocal task, head
+        old_head = head
         if changed_head:
             implementation_id = str(uuid.uuid4())
             (repo / "README.md").write_text("reviewed next change\n")
@@ -149,17 +241,29 @@ def reviewed(tmp_path, monkeypatch, request):
             # This fixture models a newly acknowledged external checkpoint.
             # Its subsequent host gates and independent review are still real.
             acknowledge_handoff(config, role, source="test")
-        task = TaskItem(task.task_id + "-again", "Review another authorized checkpoint.")
-        coordination_checks.begin_checks(config, role, task, head, head)
-        report = run_iteration_validation(config, role, task.task_id, base_head=head, head=head)
+        ordinary_ids.append(ordinary_ids[-1] + "-again")
+        task = TaskItem(ordinary_ids[-1], "Review another authorized checkpoint.")
+        base = old_head if full_scope else head
+        coordination_checks.begin_checks(config, role, task, base, head)
+        report = run_iteration_validation(config, role, task.task_id, base_head=base, head=head)
         assert report.passed and report.receipt is not None
-        coordination_checks.finish_checks(config, role, task, head, head)
-        supervisor.save_state(WorkerState(role, WorkerStatus.REVIEWING, task, head))
+        coordination_checks.finish_checks(config, role, task, base, head)
+        supervisor.save_state(WorkerState(role, WorkerStatus.REVIEWING, task, base))
         supervisor.run_role(role)
         assert supervisor.load_state(role).status == WorkerStatus.IDLE
         checkpoint.task, checkpoint.head, checkpoint.invocation = task, head, invocation
+        if designated and changed_head:
+            from scripts.dev_orchestrator.github_publication import _Stop
+
+            try:
+                ensure_publication_review()
+            except _Stop as exc:
+                assert exc.status == "waiting"
 
     checkpoint.review_again = review_again
+    checkpoint.ensure_publication_review = ensure_publication_review
+    if designated:
+        ensure_publication_review()
     return checkpoint
 
 
@@ -168,7 +272,7 @@ class Transport:
 
     def __init__(self, checkpoint):
         self.checkpoint = checkpoint
-        self.remote_head = "a" * 40
+        self.remote_head = checkpoint.remote_base
         self.prs = []
         self.calls = []
         self.callback = None
@@ -244,7 +348,36 @@ class Transport:
 def publish(checkpoint, transport, **kwargs):
     from scripts.dev_orchestrator.github_publication import publish_reviewed_draft
 
+    checkpoint.network = transport
     return publish_reviewed_draft(checkpoint.config, checkpoint.role, runner=transport, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "reviewed", [{"role": "backend", "publication_review": False}], indirect=True
+)
+def test_unrelated_same_head_review_cannot_authorize_branch_publication(reviewed):
+    base = reviewed.head
+    reviewed.review_again(changed_head=True, full_scope=True)
+    substantive = reviewed.supervisor.completed_tasks.records("backend")[-1]
+    substantive_receipt = AtomicJsonStore(
+        reviewed.config.coordination_root / "validation" / f"backend-{substantive['task_id']}.json"
+    ).read()
+    assert substantive_receipt["base_head"] == base
+    assert substantive_receipt["head"] == reviewed.head != base
+    reviewed.review_again()
+    unrelated = reviewed.supervisor.completed_tasks.records("backend")[-1]
+    unrelated_receipt = AtomicJsonStore(
+        reviewed.config.coordination_root / "validation" / f"backend-{unrelated['task_id']}.json"
+    ).read()
+    assert unrelated["invocation_id"] != substantive["invocation_id"]
+    assert unrelated_receipt["base_head"] == unrelated_receipt["head"] == reviewed.head
+    transport = Transport(reviewed)
+
+    result = publish(reviewed, transport)
+
+    assert result.status == "review_required"
+    assert not transport.mutations
+    assert not (reviewed.config.coordination_root / "github-publication").exists()
 
 
 def test_reviewed_checkpoint_publishes_only_truthful_draft(reviewed):
@@ -648,6 +781,7 @@ def test_publication_junction_is_rejected_before_outside_directory_creation(revi
     outside = tmp_path / "outside"
     outside.mkdir()
     link = reviewed.config.coordination_root / "github-publication"
+    link.rename(reviewed.config.coordination_root / "retained-publication-proof")
     if os.name == "nt":
         subprocess.run(
             ["cmd", "/c", "mklink", "/J", str(link), str(outside)], check=True, capture_output=True
